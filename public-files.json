@@ -1,0 +1,23 @@
+{
+    "files": [
+        ".editorconfig",
+        ".gitignore",
+        ".prettierignore",
+        ".prettierrc.json",
+        "README.md",
+        "eslint.config.mjs",
+        "package.json",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "tsconfig.json",
+        "public-files.json",
+        "scripts/check-publication.py",
+        "docs/PUBLISHING.md",
+        "docs/deployments/openshell-dsh.md",
+        "docs/research/README.md",
+        "docs/research/architecture.md",
+        "docs/research/capabilities.md",
+        "docs/research/implementation.md"
+    ],
+    "patterns": ["src/**/*.ts"]
+}

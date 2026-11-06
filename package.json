@@ -13,7 +13,8 @@
         "lint:fix": "eslint . --fix",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
-        "check": "pnpm typecheck && pnpm lint && pnpm format:check"
+        "check": "pnpm check:publication && pnpm typecheck && pnpm lint && pnpm format:check",
+        "check:publication": "python3 scripts/check-publication.py"
     },
     "devDependencies": {
         "@eslint/js": "^10.0.1",
@@ -26,5 +27,16 @@
     },
     "dependencies": {
         "dsh-sandbox-openshell": "0.1.0-rc.1"
-    }
+    },
+    "files": [
+        "src",
+        "docs/research/README.md",
+        "docs/research/architecture.md",
+        "docs/research/capabilities.md",
+        "docs/research/implementation.md",
+        "docs/deployments/openshell-dsh.md",
+        "docs/PUBLISHING.md",
+        "scripts/check-publication.py",
+        "public-files.json"
+    ]
 }
