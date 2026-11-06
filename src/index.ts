@@ -1,2 +1,10 @@
-// Implementation will follow the execution design.
-export {};
+export { Authority } from './openshell/authority.ts';
+export { ExecutionController } from './openshell/controller.ts';
+export type { ExecutionControl } from './openshell/controller.ts';
+export { WorkerGate } from './openshell/worker-gate.ts';
+export type { WorkerGrant } from './openshell/worker-gate.ts';
+export { PersistenceFence } from './openshell/persistence-fence.ts';
+export { relaySsh } from './openshell/ssh-relay.ts';
+export { createSshIngress } from './openshell/ssh-ingress.ts';
+export { createPersistenceIngress } from './openshell/persistence-ingress.ts';
+export { SandboxManagement } from './openshell/management.ts';
