@@ -8,3 +8,6 @@ export { relaySsh } from './openshell/ssh-relay.ts';
 export { createSshIngress } from './openshell/ssh-ingress.ts';
 export { createPersistenceIngress } from './openshell/persistence-ingress.ts';
 export { SandboxManagement } from './openshell/management.ts';
+
+export { installOpenShellProvider } from './openshell/provider.ts';
+export type { OpenShellProviderConfig } from './openshell/provider.ts';
