@@ -72,6 +72,8 @@ node --experimental-strip-types src/execution-service/start.ts
 
 启动成功时输出回环地址，监听端口可由 `BENTO_PORT` 设置。导入项目后先确认项目为 `ready`，再提交 Run，记录 Run ID 与 Session ID。用同一账号重新读取状态及 diff。使用 `SIGTERM` 停止服务，重启时沿用同一状态目录及宿主绑定。只验证本机服务时可用独立的状态目录，清除两种宿主配置并在命令末尾加 `--local`，此模式使用确定性夹具。
 
+启用 Temporal 调度时，按 [Temporal 开发环境](HOW-TO-TEMPORAL-DEV.md#接入-bento)为执行服务配置独占 Task Queue。
+
 遇到 worker 失联时，Two 撤销旧代授权并在原卷上恢复 Session。恢复 worker 只对账会话历史，原 prompt 不重发。Run 进入 `needs_review` 时，可信部署端先独立核对预期修改，再通过[进程内 `reviewRun`](../../src/execution-service/service.ts) 提供代次、稳定操作 ID 和预期整卷哈希。Two 核对恢复回执、绑定、UNKNOWN 操作及卷快照，原子保存确认记录和 diff。核对失败时，Run 继续等待可信核对，diff 暂不可用。
 
 2026-11-09 的纵向验收使用单控制器、单执行宿主、一个受邀账号和固定文本编辑工具。经真实 OpenShell 和模型完成 Two HTTP 与 One 页面两轮验证，覆盖工具回执前的 worker SIGKILL、同一 Session 和原卷恢复、旧代拒绝、UNKNOWN 保留及页面 diff 下载。命令隔离为 `partial`。真实多账号负载、任意工具、控制器各阶段故障及 HA 仍按[验收门槛](../research/implementation.md#验收门槛)验证。

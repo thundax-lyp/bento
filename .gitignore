@@ -52,6 +52,7 @@
 /docs/40-readiness/*
 !/docs/40-readiness/README.md
 !/docs/40-readiness/MVP-PREFLIGHT-EVIDENCE.md
+!/docs/40-readiness/TEMPORAL-DEV-EVIDENCE.md
 !/docs/research/
 !/docs/deployments/
 /docs/research/*
@@ -61,6 +62,7 @@
 !/docs/research/implementation.md
 /docs/deployments/*
 !/docs/deployments/openshell-dsh.md
+!/docs/deployments/HOW-TO-TEMPORAL-DEV.md
 /scripts/*
 !/scripts/check-publication.py
 

@@ -252,6 +252,15 @@ export class Store {
             .run(status, id);
     }
 
+    schedulableRuns() {
+        return this.db
+            .prepare(
+                "SELECT id FROM runs WHERE status IN ('queued','running','recovering') ORDER BY status='queued', rowid",
+            )
+            .all()
+            .map((row) => row.id as string);
+    }
+
     next(status: 'active' | 'queued') {
         const condition =
             status === 'active' ? "IN ('running','recovering')" : "= 'queued'";

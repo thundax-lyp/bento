@@ -27,6 +27,10 @@
     },
     "dependencies": {
         "@deepseek-ai/dsh-session-persistence": "0.2.1-rc.4",
+        "@temporalio/activity": "1.25.0",
+        "@temporalio/client": "1.25.0",
+        "@temporalio/worker": "1.25.0",
+        "@temporalio/workflow": "1.25.0",
         "dsh-sandbox-openshell": "0.1.0-rc.1"
     },
     "files": [

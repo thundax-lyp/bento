@@ -10,6 +10,7 @@ import { unifiedDiff } from './diff.ts';
 import { executionHttp } from './http.ts';
 import { conflict, textSnapshot } from './input.ts';
 import { projectBinding, Store } from './store.ts';
+import type { TemporalRunOptions, temporalRuns } from './temporal.ts';
 import type {
     Binding,
     ExecutionHost,
@@ -42,6 +43,7 @@ type Options = {
     workerTimeoutMs?: number;
     retryMs?: number;
     host: ExecutionHost;
+    temporal?: TemporalRunOptions;
 };
 
 export async function serveExecution(options: Options) {
@@ -67,6 +69,8 @@ export async function serveExecution(options: Options) {
     let control: SingleHostExecution | undefined;
     let scheduled: NodeJS.Timeout | undefined;
     let active: Promise<void> | undefined;
+    let hostWork: Promise<void> | undefined;
+    let scheduler: Awaited<ReturnType<typeof temporalRuns>> | undefined;
 
     async function close() {
         if (stop.signal.aborted) return;
@@ -78,6 +82,7 @@ export async function serveExecution(options: Options) {
         );
         for (const socket of sockets) socket.destroy();
         await active;
+        await scheduler?.close();
         await Promise.all(closed);
         control?.close();
         store?.close();
@@ -331,50 +336,50 @@ export async function serveExecution(options: Options) {
             }
         }
 
-        async function work() {
-            const unfinished = db.next('active');
-            if (unfinished) {
-                await settle(unfinished);
-                return;
-            }
-            const project = db.importing();
-            if (project) {
-                const binding = projectBinding(project);
+        async function importProject(
+            project: NonNullable<ReturnType<Store['importing']>>,
+        ) {
+            const binding = projectBinding(project);
+            try {
+                const files = textSnapshot(
+                    JSON.parse(project.source ?? 'null'),
+                );
+                const observation = await host.provision(binding, files);
+                const imported = textSnapshot(await host.snapshot(binding));
+                if (JSON.stringify(imported) !== JSON.stringify(files))
+                    throw new Error('Imported snapshot differs');
                 try {
-                    const files = textSnapshot(
-                        JSON.parse(project.source ?? 'null'),
-                    );
-                    const observation = await host.provision(binding, files);
-                    const imported = textSnapshot(await host.snapshot(binding));
-                    if (JSON.stringify(imported) !== JSON.stringify(files))
-                        throw new Error('Imported snapshot differs');
-                    try {
-                        execution.bind(binding, observation);
-                    } catch (error) {
-                        // An earlier process may have bound the project before committing its business state.
-                        const existing = execution.inspect(binding.session);
-                        if (
-                            existing.state !== 'READY' ||
-                            existing.generation !== 1 ||
-                            !observation.installed ||
-                            !observation.running ||
-                            observation.sandbox !== binding.sandbox ||
-                            observation.volume !== binding.volume ||
-                            Object.entries(binding).some(
-                                ([key, value]) =>
-                                    existing[key as keyof Binding] !== value,
-                            )
+                    execution.bind(binding, observation);
+                } catch (error) {
+                    // An earlier process may have bound the project before committing its business state.
+                    const existing = execution.inspect(binding.session);
+                    if (
+                        existing.state !== 'READY' ||
+                        existing.generation !== 1 ||
+                        !observation.installed ||
+                        !observation.running ||
+                        observation.sandbox !== binding.sandbox ||
+                        observation.volume !== binding.volume ||
+                        Object.entries(binding).some(
+                            ([key, value]) =>
+                                existing[key as keyof Binding] !== value,
                         )
-                            throw error;
-                    }
-                    db.importResult(project.id, 'ready');
-                } catch {
-                    db.importResult(project.id, 'failed');
+                    )
+                        throw error;
                 }
+                db.importResult(project.id, 'ready');
+            } catch {
+                db.importResult(project.id, 'failed');
+            }
+        }
+
+        async function driveRun(run: Run) {
+            if (run.status === 'running' || run.status === 'recovering') {
+                await settle(run);
                 return;
             }
-            const queued = db.next('queued');
-            if (!queued) return;
+            if (run.status !== 'queued') return;
+            const queued = run;
             const binding = db.binding(queued);
             let before: FileText[];
             try {
@@ -396,6 +401,59 @@ export async function serveExecution(options: Options) {
                 // Worker failure is ambiguous once admission may have occurred.
             }
             if (!stop.signal.aborted) await settle(db.findRun(queued.id));
+        }
+
+        function onHost(action: () => Promise<void>) {
+            stop.signal.throwIfAborted();
+            if (hostWork) throw new Error('Execution host is occupied');
+            hostWork = action().finally(() => {
+                hostWork = undefined;
+            });
+            return hostWork;
+        }
+
+        if (options.temporal) {
+            const { temporalRuns } = await import('./temporal.ts');
+            scheduler = await temporalRuns(options.temporal, (runId) =>
+                onHost(async () => {
+                    const unfinished = db.next('active');
+                    if (unfinished && unfinished.id !== runId)
+                        throw new Error(
+                            'Another Run is recovering on this host',
+                        );
+                    // The durable running state precedes worker admission. A
+                    // retried Activity can settle it, but cannot dispatch again.
+                    await driveRun(db.findRun(runId));
+                    stop.signal.throwIfAborted();
+                }),
+            );
+        }
+        let enqueued = new Set<string>();
+
+        async function work() {
+            if (scheduler) {
+                const pending = db.schedulableRuns();
+                const previous = enqueued;
+                enqueued = new Set(pending.filter((id) => previous.has(id)));
+                for (const id of pending) {
+                    if (stop.signal.aborted) return;
+                    if (!enqueued.has(id)) {
+                        await scheduler.enqueue(id);
+                        enqueued.add(id);
+                    }
+                }
+                // The publisher can run while a Temporal Activity occupies the host.
+                if (hostWork) return;
+            } else {
+                const unfinished = db.next('active');
+                if (unfinished) return driveRun(unfinished);
+            }
+            const project = db.importing();
+            if (project) return onHost(() => importProject(project));
+            if (!scheduler) {
+                const queued = db.next('queued');
+                if (queued) await driveRun(queued);
+            }
         }
 
         function wake(delay = 0) {

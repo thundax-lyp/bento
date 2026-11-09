@@ -2,7 +2,7 @@
 
 基于 DSH 与 OpenShell 的云端异步 Agent 平台，提供在线 Agent 工作空间。用户提交任务后，Agent 在云端隔离环境中后台执行，并交付结果。
 
-主线源码提供单执行宿主的 Session 执行与接管入口。可信部署端提供 OpenShell 沙盒生命周期和观察，Bento 负责 Run 授权、会话持久化和接管。接入方式见[部署说明](docs/deployments/openshell-dsh.md#单执行宿主接入)。
+主线源码提供单执行宿主的 Session 执行与接管入口。可信部署端提供 OpenShell 沙盒生命周期和观察，Bento 负责 Run 授权、会话持久化和接管。接入方式见[部署说明](docs/deployments/openshell-dsh.md#单执行宿主接入)。 单执行宿主的 Temporal Run 调度见 [Temporal 开发环境](docs/deployments/HOW-TO-TEMPORAL-DEV.md)。
 
 [Bento One 任务入口](src/task-entry/README.md)提供受邀登录、文本项目导入、任务提交、状态查看和 diff 下载。可以在本地模拟，也可以连接 Two 执行服务。
 
