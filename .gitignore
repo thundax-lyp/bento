@@ -51,6 +51,7 @@
 !/docs/40-readiness/
 /docs/40-readiness/*
 !/docs/40-readiness/README.md
+!/docs/40-readiness/MVP-PREFLIGHT-EVIDENCE.md
 !/docs/research/
 !/docs/deployments/
 /docs/research/*
