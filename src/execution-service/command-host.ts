@@ -27,6 +27,7 @@ type Settings = {
     control: Launch;
     worker: Launch;
     prewarmWorker?: boolean;
+    workerSlots?: 1 | 2;
     controlTimeoutMs?: number;
 };
 
@@ -91,6 +92,12 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
         typeof settings.prewarmWorker !== 'boolean'
     )
         throw new Error('Invalid worker prewarm setting');
+    const slots = settings.workerSlots ?? 1;
+    if (
+        (slots !== 1 && slots !== 2) ||
+        (slots === 2 && !settings.prewarmWorker)
+    )
+        throw new Error('Invalid host worker slots');
     const timeout = settings.controlTimeoutMs ?? 60_000;
     if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 300_000)
         throw new Error('Invalid host command timeout');
@@ -148,7 +155,7 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
         stopped: async (binding) => (await call('stopped', binding)) === true,
         running: async (binding) => observation(await call('running', binding)),
         ...(settings.prewarmWorker
-            ? prewarmedWorker(settings.worker)
+            ? prewarmedWorker(settings.worker, slots)
             : { worker: processWorker(settings.worker) }),
     };
 }

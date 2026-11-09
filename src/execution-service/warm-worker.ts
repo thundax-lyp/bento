@@ -59,9 +59,31 @@ function startSlot({ command, args = [], cwd, env = {} }: Launch) {
 }
 
 /** The launcher must own the complete worker lifetime, including its container. */
-export function prewarmedWorker(
+export function prewarmedWorker(launch: Launch, count: 1 | 2 = 1) {
+    const slots = Array.from({ length: count }, () => warmSlot(launch));
+    return {
+        workerSlots: count,
+        warmWorker(signal: AbortSignal) {
+            const close = slots.map((slot) => slot.warmWorker(signal));
+            return async () => {
+                await Promise.all(close.map((stop) => stop()));
+            };
+        },
+        async worker(
+            request: Parameters<ExecutionHost['worker']>[0],
+            signal: AbortSignal,
+            index = 0,
+        ) {
+            const slot = slots[index];
+            if (!slot) throw new Error('Invalid warm worker slot');
+            return slot.worker(request, signal);
+        },
+    };
+}
+
+function warmSlot(
     launch: Launch,
-): Pick<ExecutionHost, 'worker' | 'warmWorker'> {
+): Required<Pick<ExecutionHost, 'worker' | 'warmWorker'>> {
     let slot: ReturnType<typeof startSlot> | undefined;
     let busy = false;
     let lifetime: AbortSignal | undefined;

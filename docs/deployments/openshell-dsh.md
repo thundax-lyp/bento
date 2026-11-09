@@ -59,7 +59,7 @@ worker 经服务端执行入口访问 OpenShell；入口校验业务 capability 
 
 ## Two 执行服务
 
-Two 在回环地址提供 HTTP v1，供受信的 One 服务调用。One 从认证后的账号派生 `X-Bento-Owner-Id`，并在服务间请求携带独立的 bearer。Two 按 owner 限定项目、Run 和 diff 的访问，每个执行宿主串行处理 Run。
+Two 在回环地址提供 HTTP v1，供受信的 One 服务调用。One 从认证后的账号派生 `X-Bento-Owner-Id`，并在服务间请求携带独立的 bearer。Two 按 owner 限定项目、Run 和 diff 的访问，每个执行宿主默认串行处理 Run。
 
 在仓库根目录执行 `pnpm install --frozen-lockfile`。部署端为每个控制器配置独占的私有 `BENTO_STATE_DIR`，注入 `BENTO_SERVICE_BEARER`，并选择一种宿主接入方式。
 
@@ -76,7 +76,9 @@ node --experimental-strip-types src/execution-service/start.ts
 
 在私有 `BENTO_HOST_CONFIG` 中设置 `"prewarmWorker": true`，并给 [DSH Worker 入口](../../src/execution-service/run-worker.ts)传入 `--warm`，即可启用单槽预热。Worker 导入 bootstrap 后进入空闲状态，每次收到 Run 才绑定当次 Session、Workspace 和授权。bootstrap 必须为每次调用创建独立运行时，并在回执前关闭该次运行的 Agent、连接和监听器。bootstrap 模块可预加载依赖，运行数据与授权只放在该次调用内。
 
-受信启动器负责隔离 Worker 及其子进程，并将终止信号传给整个容器或进程组。异常退出、租约超时或需要人工核对的回执会淘汰该 Worker。执行服务在旧进程关闭后补位。关闭服务时等待预热进程退出，随后释放控制器锁。停用预热时移除私有配置中的 `prewarmWorker` 和 Worker 命令的 `--warm`，再重启执行服务。
+启用 Temporal 和预热后，在同一份宿主配置中设置 `"workerSlots": 2` 可开启两个槽位。每个 Run 占用一个槽位直到执行或恢复结束，两槽都占用时其他 Run 留在队列。项目与 Session、Workspace 一一绑定，同一项目仍只接受一个未结束的 Run。调低槽位数或回退到旧版本前，先排空执行宿主。
+
+受信启动器负责隔离 Worker 及其子进程，并将终止信号传给整个容器或进程组。异常退出、租约超时或需要人工核对的回执会淘汰该 Worker。执行服务在旧进程关闭后补位。关闭服务时等待预热进程退出，随后释放控制器锁。停用预热时，排空后移除私有配置中的 `prewarmWorker` 和 `workerSlots`，移除 Worker 命令的 `--warm`，再重启执行服务。
 
 遇到 worker 失联时，Two 撤销旧代授权并在原卷上恢复 Session。恢复 worker 只对账会话历史，原 prompt 不重发。Run 进入 `needs_review` 时，可信部署端先独立核对预期修改，再通过[进程内 `reviewRun`](../../src/execution-service/service.ts) 提供代次、稳定操作 ID 和预期整卷哈希。Two 核对恢复回执、绑定、UNKNOWN 操作及卷快照，原子保存确认记录和 diff。核对失败时，Run 继续等待可信核对，diff 暂不可用。
 
