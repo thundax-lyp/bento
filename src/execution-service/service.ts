@@ -48,6 +48,11 @@ type Options = {
 
 export async function serveExecution(options: Options) {
     const { host, token } = options;
+    const slots = host.workerSlots ?? 1;
+    if (slots !== 1 && (slots !== 2 || !host.warmWorker || !options.temporal))
+        throw new Error(
+            'Two worker slots require Temporal and a warm worker pool',
+        );
     const workerTimeoutMs = options.workerTimeoutMs ?? 120_000;
     const retryMs = options.retryMs ?? 500;
     if (!/^[!-~]{16,1024}$/.test(token))
@@ -69,7 +74,7 @@ export async function serveExecution(options: Options) {
     let control: SingleHostExecution | undefined;
     let scheduled: NodeJS.Timeout | undefined;
     let active: Promise<void> | undefined;
-    let hostWork: Promise<void> | undefined;
+    let importing = false;
     let closeWarmWorker: (() => Promise<void>) | undefined;
     let scheduler: Awaited<ReturnType<typeof temporalRuns>> | undefined;
 
@@ -119,15 +124,13 @@ export async function serveExecution(options: Options) {
         );
         const db = store;
         const execution = control;
-        let live:
-            | { grant: WorkerRequest['grant']; mode: WorkerRequest['mode'] }
-            | undefined;
-        // Only a worker dispatched by this process is active. On restart an
-        // old token is unusable even before takeover reaches the authority DB.
+        const live = new Map<string, WorkerRequest['mode']>();
+        // Authority resolves the token to its Session, Run and generation.
+        // This map admits only grants dispatched by this controller.
         const canPersist = (grant: WorkerRequest['grant']) =>
-            live?.grant.token === grant.token;
+            live.has(grant.token);
         const canExecute = (grant: WorkerRequest['grant']) =>
-            live?.mode === 'execute' && canPersist(grant);
+            live.get(grant.token) === 'execute';
         const persistenceUrl = await listen(
             execution.persistenceIngress(canPersist),
             options.workerPort?.persistence,
@@ -225,6 +228,7 @@ export async function serveExecution(options: Options) {
             run: Run,
             binding: Binding,
             mode: WorkerRequest['mode'],
+            slot: number,
         ) {
             const current = execution.inspect(binding.session);
             const grant = execution.admit(
@@ -233,7 +237,7 @@ export async function serveExecution(options: Options) {
                 run.id,
                 workerTimeoutMs,
             );
-            live = { grant, mode };
+            live.set(grant.token, mode);
             const signal = AbortSignal.any([
                 stop.signal,
                 AbortSignal.timeout(workerTimeoutMs),
@@ -255,10 +259,11 @@ export async function serveExecution(options: Options) {
                         ...(mode === 'execute' ? { prompt: run.prompt } : {}),
                     },
                     signal,
+                    slot,
                 );
                 return await Promise.race([task, aborted]);
             } finally {
-                live = undefined;
+                live.delete(grant.token);
                 signal.removeEventListener('abort', onAbort);
                 // A replacement must wait for the single slot to close on lease expiry.
                 if (closeWarmWorker && signal.aborted)
@@ -293,7 +298,7 @@ export async function serveExecution(options: Options) {
             }
         }
 
-        async function settle(run: Run) {
+        async function settle(run: Run, slot: number) {
             if (!run.receipt && run.status !== 'recovering')
                 db.status(
                     run.id,
@@ -311,7 +316,12 @@ export async function serveExecution(options: Options) {
                 db.reconciled(run.id);
                 let result: WorkerResult | undefined;
                 try {
-                    result = await worker(run, db.binding(run), 'recover');
+                    result = await worker(
+                        run,
+                        db.binding(run),
+                        'recover',
+                        slot,
+                    );
                 } catch {
                     // The prior operation and any interrupted reconciliation stay subject to trusted review.
                 }
@@ -375,9 +385,9 @@ export async function serveExecution(options: Options) {
             }
         }
 
-        async function driveRun(run: Run) {
+        async function driveRun(run: Run, slot: number) {
             if (run.status === 'running' || run.status === 'recovering') {
-                await settle(run);
+                await settle(run, slot);
                 return;
             }
             if (run.status !== 'queued') return;
@@ -395,40 +405,43 @@ export async function serveExecution(options: Options) {
                 return;
             }
             if (stop.signal.aborted) return;
-            db.start(queued.id, before);
+            if (!db.start(queued.id, before, slots))
+                throw new Error('Execution host has pending recovery work');
             try {
-                if ((await worker(queued, binding, 'execute')) === 'completed')
+                if (
+                    (await worker(queued, binding, 'execute', slot)) ===
+                    'completed'
+                )
                     db.received(queued.id);
             } catch {
                 // Worker failure is ambiguous once admission may have occurred.
             }
-            if (!stop.signal.aborted) await settle(db.findRun(queued.id));
+            if (!stop.signal.aborted) await settle(db.findRun(queued.id), slot);
         }
 
-        function onHost(action: () => Promise<void>) {
-            stop.signal.throwIfAborted();
-            if (hostWork) throw new Error('Execution host is occupied');
-            hostWork = action().finally(() => {
-                hostWork = undefined;
-            });
-            return hostWork;
-        }
-
+        const assigned = new Map<number, string>();
         closeWarmWorker = host.warmWorker?.(stop.signal);
         if (options.temporal) {
             const { temporalRuns } = await import('./temporal.ts');
-            scheduler = await temporalRuns(options.temporal, (runId) =>
-                onHost(async () => {
-                    const unfinished = db.next('active');
-                    if (unfinished && unfinished.id !== runId)
-                        throw new Error(
-                            'Another Run is recovering on this host',
-                        );
-                    // The durable running state precedes worker admission. A
-                    // retried Activity can settle it, but cannot dispatch again.
-                    await driveRun(db.findRun(runId));
+            scheduler = await temporalRuns(
+                options.temporal,
+                slots,
+                async (runId) => {
                     stop.signal.throwIfAborted();
-                }),
+                    if (importing || [...assigned.values()].includes(runId))
+                        throw new Error('Execution host is occupied');
+                    const slot = assigned.has(0) ? 1 : 0;
+                    if (slot >= slots || assigned.has(slot))
+                        throw new Error('Execution host is occupied');
+                    assigned.set(slot, runId);
+                    try {
+                        // Keep the same slot through execution and recovery.
+                        await driveRun(db.findRun(runId), slot);
+                        stop.signal.throwIfAborted();
+                    } finally {
+                        assigned.delete(slot);
+                    }
+                },
             );
         }
         let enqueued = new Set<string>();
@@ -446,16 +459,24 @@ export async function serveExecution(options: Options) {
                     }
                 }
                 // The publisher can run while a Temporal Activity occupies the host.
-                if (hostWork) return;
+                if (assigned.size) return;
             } else {
                 const unfinished = db.next('active');
-                if (unfinished) return driveRun(unfinished);
+                if (unfinished) return driveRun(unfinished, 0);
             }
             const project = db.importing();
-            if (project) return onHost(() => importProject(project));
+            if (project) {
+                importing = true;
+                try {
+                    await importProject(project);
+                } finally {
+                    importing = false;
+                }
+                return;
+            }
             if (!scheduler) {
                 const queued = db.next('queued');
-                if (queued) await driveRun(queued);
+                if (queued) await driveRun(queued, 0);
             }
         }
 

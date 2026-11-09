@@ -15,6 +15,7 @@ export type TemporalRunOptions = {
 
 export async function temporalRuns(
     { address, namespace = 'default', taskQueue }: TemporalRunOptions,
+    slots: 1 | 2,
     advance: (runId: string) => Promise<void>,
 ) {
     if (!address || !/^[a-zA-Z0-9_-]{1,128}$/.test(taskQueue))
@@ -34,7 +35,7 @@ export async function temporalRuns(
             workflowsPath: fileURLToPath(
                 new URL('./run-workflow.ts', import.meta.url),
             ),
-            maxConcurrentActivityTaskExecutions: 1,
+            maxConcurrentActivityTaskExecutions: slots,
             activities: {
                 async advanceRun(runId: string) {
                     const context = Context.current();

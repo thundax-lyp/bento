@@ -270,14 +270,15 @@ if (process.argv[2] === '--effect-worker') {
         assert.equal(completedTurn([unknown, completed]), false);
         assert.equal(completedTurn([]), false);
     });
-    test('one warm worker serves consecutive grants and is replaced after abort', async () => {
+    test('aborting one warm slot preserves the other worker and replaces only the aborted slot', async () => {
         const state = await mkdtemp(join(tmpdir(), 'bento-warm-test-'));
         const dispatched = join(state, 'dispatched');
-        const pool = prewarmedWorker({
-            command: process.execPath,
-            args: [
-                '-e',
-                `
+        const pool = prewarmedWorker(
+            {
+                command: process.execPath,
+                args: [
+                    '-e',
+                    `
                 const { createInterface } = require('node:readline');
                 const { writeFileSync } = require('node:fs');
                 let completed = 0;
@@ -294,16 +295,23 @@ if (process.argv[2] === '--effect-worker') {
                     }
                 })();
             `,
-                dispatched,
-            ],
-        });
+                    dispatched,
+                ],
+            },
+            2,
+        );
         const lifetime = new AbortController();
-        const close = pool.warmWorker!(lifetime.signal);
-        const run = (prompt: string, signal = lifetime.signal) =>
-            pool.worker({ mode: 'execute', prompt } as WorkerRequest, signal);
+        const close = pool.warmWorker(lifetime.signal);
+        const run = (prompt: string, signal = lifetime.signal, slot = 0) =>
+            pool.worker(
+                { mode: 'execute', prompt } as WorkerRequest,
+                signal,
+                slot,
+            );
         try {
             assert.equal(await run('1'), 'completed');
             assert.equal(await run('2'), 'completed');
+            assert.equal(await run('1', lifetime.signal, 1), 'completed');
             const lease = new AbortController();
             const blocked = run('block', lease.signal);
             await until(
@@ -316,8 +324,10 @@ if (process.argv[2] === '--effect-worker') {
                 'warm worker received request',
             );
             await assert.rejects(run('3'), /occupied/);
+            assert.equal(await run('2', lifetime.signal, 1), 'completed');
             lease.abort();
             await assert.rejects(blocked);
+            assert.equal(await run('3', lifetime.signal, 1), 'completed');
             assert.equal(await run('1'), 'completed');
         } finally {
             lifetime.abort();

@@ -89,8 +89,7 @@ export class Store {
             );
             CREATE UNIQUE INDEX IF NOT EXISTS one_pending_run_per_project
                 ON runs(projectId) WHERE status IN ${pending};
-            CREATE UNIQUE INDEX IF NOT EXISTS one_active_host_run
-                ON runs((1)) WHERE status IN ('running','recovering');
+            DROP INDEX IF EXISTS one_active_host_run;
             CREATE TABLE IF NOT EXISTS run_reviews (
                 runId TEXT PRIMARY KEY REFERENCES runs(id), proof TEXT NOT NULL, reviewedAt TEXT NOT NULL
             );
@@ -278,12 +277,18 @@ export class Store {
         return projectBinding(row);
     }
 
-    start(id: string, baseline: readonly FileText[]) {
-        this.db
-            .prepare(
-                "UPDATE runs SET status='running', baseline=?, updatedAt=? WHERE id=? AND status='queued'",
-            )
-            .run(JSON.stringify(baseline), now(), id);
+    start(id: string, baseline: readonly FileText[], slots: number) {
+        return (
+            this.db
+                .prepare(
+                    `
+                UPDATE runs SET status='running', baseline=?, updatedAt=?
+                WHERE id=? AND status='queued'
+                    AND (SELECT COUNT(*) FROM runs WHERE status IN ('running','recovering')) < ?
+            `,
+                )
+                .run(JSON.stringify(baseline), now(), id, slots).changes === 1
+        );
     }
 
     received(id: string) {
