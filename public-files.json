@@ -1,5 +1,14 @@
 {
     "files": [
+        ".agents/skills/bento-codex-comment-fix/SKILL.md",
+        ".agents/skills/bento-codex-comment-fix/agents/openai.yaml",
+        ".agents/skills/bento-pr-review/SKILL.md",
+        ".agents/skills/bento-pr-review/agents/openai.yaml",
+        ".agents/skills/bento-pr-review/references/coverage-and-output.md",
+        ".agents/skills/bento-pr-review/references/evidence-matrix.md",
+        ".agents/skills/bento-pr-review/references/review-checks.md",
+        ".agents/skills/bento-pr-review/references/review-dimensions.md",
+        ".agents/skills/bento-pr-review/scripts/collect-review-context.mjs",
         ".editorconfig",
         ".gitignore",
         ".prettierignore",

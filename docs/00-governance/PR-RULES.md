@@ -62,3 +62,8 @@
 - workflow 直接展示必过检查，各 job 按实际改动覆盖格式、lint、类型、测试、构建与 package 契约；本地聚合脚本不替代清晰可见的 CI 结果。
 - 修改 workflow 或仓库保护配置时核对 job 名称与 required checks 一致，避免缺失检查阻塞或无检查放行；远端变更仍需独立授权。
 - 治理或 workflow 变化须执行能验证其有效性的检查。检查结果记录在对应交付证据中，不把当前配置或运行版本复制回规则。
+
+## Repository Skills
+
+- [Bento PR Review](../../.agents/skills/bento-pr-review/SKILL.md)：只读审查分支或 PR。
+- [Bento Codex Comment Fix](../../.agents/skills/bento-codex-comment-fix/SKILL.md)：显式调用后处理 Codex 评论与 review summary 中的 findings。
