@@ -5,6 +5,27 @@
 !/.prettierignore
 !/.prettierrc.json
 !/README.md
+!/.agents/
+/.agents/*
+!/.agents/skills/
+/.agents/skills/*
+!/.agents/skills/bento-codex-comment-fix/
+/.agents/skills/bento-codex-comment-fix/**
+!/.agents/skills/bento-pr-review/
+/.agents/skills/bento-pr-review/**
+!/.agents/skills/bento-codex-comment-fix/SKILL.md
+!/.agents/skills/bento-codex-comment-fix/agents/
+!/.agents/skills/bento-codex-comment-fix/agents/openai.yaml
+!/.agents/skills/bento-pr-review/SKILL.md
+!/.agents/skills/bento-pr-review/agents/
+!/.agents/skills/bento-pr-review/agents/openai.yaml
+!/.agents/skills/bento-pr-review/references/
+!/.agents/skills/bento-pr-review/references/coverage-and-output.md
+!/.agents/skills/bento-pr-review/references/evidence-matrix.md
+!/.agents/skills/bento-pr-review/references/review-checks.md
+!/.agents/skills/bento-pr-review/references/review-dimensions.md
+!/.agents/skills/bento-pr-review/scripts/
+!/.agents/skills/bento-pr-review/scripts/collect-review-context.mjs
 !/eslint.config.mjs
 !/package.json
 !/pnpm-lock.yaml
@@ -18,6 +39,9 @@
 # Only reviewed public documents and tooling are eligible.
 /docs/*
 !/docs/PUBLISHING.md
+!/docs/00-governance/
+/docs/00-governance/*
+!/docs/00-governance/*-RULES.md
 !/docs/research/
 !/docs/deployments/
 /docs/research/*
