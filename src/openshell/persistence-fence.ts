@@ -21,12 +21,13 @@ export class PersistenceFence {
         `,
             )
             .run(revoked, session, generation, owner, revoked);
-        if (Number(result.changes) !== 1)
+        if (Number(result.changes) !== 1 && this.hasHistory(session))
             throw new Error('write revocation CAS denied');
     }
 
     isRevoked(session: string, generation: number) {
         return (
+            !this.hasHistory(session) ||
             this.db
                 .prepare(
                     `
@@ -57,8 +58,16 @@ export class PersistenceFence {
                 generation,
                 owner,
             );
-        if (Number(result.changes) !== 1)
+        if (Number(result.changes) !== 1 && this.hasHistory(session))
             throw new Error('new writer CAS denied');
+    }
+
+    private hasHistory(session: string) {
+        return (
+            this.db
+                .prepare('SELECT 1 FROM sessions WHERE id=?')
+                .get(session) !== undefined
+        );
     }
 
     close() {

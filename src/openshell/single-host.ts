@@ -6,11 +6,12 @@ import { createPersistenceIngress } from './persistence-ingress.ts';
 import { SessionHistory } from './session-history.ts';
 import { createSdkIngress } from './sdk-ingress.ts';
 import type { SdkIngressOptions } from './sdk-ingress.ts';
-import { WorkerGate } from './worker-gate.ts';
+import { WorkerGate, type WorkerGrant } from './worker-gate.ts';
 
 type Binding = Parameters<Authority['bind']>[0];
 type Session = ReturnType<Authority['inspect']>;
 type Running = Parameters<SandboxManagement['confirmStart']>[2];
+type GrantFilter = (grant: WorkerGrant) => boolean;
 
 /** Adapter owned by the trusted OpenShell/Docker host. Observations must be independent of command acknowledgements. */
 export interface SingleHostSandbox {
@@ -149,39 +150,43 @@ export class SingleHostExecution {
         return this.inspect(session);
     }
 
-    private grant(authorization: string | undefined) {
+    private grant(authorization: string | undefined, allow?: GrantFilter) {
         if (!authorization?.startsWith('Bearer '))
             throw new Error('worker credential required');
         const token = authorization.slice(7);
-        return { ...this.authority.authorize(token), token };
+        const grant = { ...this.authority.authorize(token), token };
+        if (allow && !allow(grant)) throw new Error('execution denied');
+        return grant;
     }
 
-    persistenceIngress() {
+    persistenceIngress(allow?: GrantFilter) {
         return createPersistenceIngress(
             this.gate,
             (authorization) => ({
-                ...this.grant(authorization),
+                ...this.grant(authorization, allow),
                 backendToken: '',
             }),
-            async (body, _backendToken, grant) =>
-                this.history.dispatch(body, grant),
+            async (body, _backendToken, grant) => {
+                if (allow && !allow(grant)) throw new Error('execution denied');
+                return this.history.dispatch(body, grant);
+            },
         );
     }
 
-    sdkIngress(options: SdkIngressOptions) {
+    sdkIngress(options: SdkIngressOptions, allow?: GrantFilter) {
         return createSdkIngress(
             this.gate,
-            (authorization) => this.grant(authorization),
+            (authorization) => this.grant(authorization, allow),
             options,
         );
     }
 
-    operationIngress() {
+    operationIngress(allow?: GrantFilter) {
         const server = createServer(async (request, response) => {
             try {
                 if (request.method !== 'POST' || request.url !== '/operations')
                     throw new Error('unexpected operation request');
-                const grant = this.grant(request.headers.authorization);
+                const grant = this.grant(request.headers.authorization, allow);
                 let body = '';
                 for await (const chunk of request) {
                     body += chunk;
@@ -199,6 +204,7 @@ export class SingleHostExecution {
                     typeof input !== 'string'
                 )
                     throw new Error('invalid operation');
+                if (allow && !allow(grant)) throw new Error('execution denied');
                 const reserved = this.authority.reserveOperation(
                     grant.token,
                     id,
