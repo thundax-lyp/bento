@@ -14,7 +14,7 @@ import { PersistenceFence } from '../openshell/persistence-fence.ts';
 import { SingleHostExecution } from '../openshell/single-host.ts';
 import { localHost } from './local.ts';
 import { completedTurn } from './dsh-worker.ts';
-import { serveExecution } from './service.ts';
+import { serveExecution, snapshotSha256 } from './service.ts';
 import type { ExecutionHost, FileText, WorkerRequest } from './types.ts';
 import { processWorker, reserveOperation } from './worker.ts';
 
@@ -556,6 +556,47 @@ if (process.argv[2] === '--effect-worker') {
             assert.deepEqual(await base.snapshot(old.binding), [
                 { path: 'README.md', text: '# Fixture\nonce\n' },
             ]);
+            const proof = {
+                runId: old.grant.run,
+                failedGeneration: old.grant.generation,
+                readyGeneration: next.grant.generation + 1,
+                stableOperationId: 'fault-effect',
+                expectedSnapshotSha256: snapshotSha256([
+                    { path: 'README.md', text: '# Fixture\nonce\n' },
+                ]),
+            };
+            assert.equal(
+                (await restarted(run + '/review', 'POST', proof)).status,
+                404,
+            );
+            await assert.rejects(
+                service.reviewRun({
+                    ...proof,
+                    readyGeneration: proof.readyGeneration + 1,
+                }),
+                /not awaiting/,
+            );
+            await assert.rejects(
+                service.reviewRun({
+                    ...proof,
+                    expectedSnapshotSha256: '0'.repeat(64),
+                }),
+                /does not match/,
+            );
+            await Promise.all([
+                service.reviewRun(proof),
+                service.reviewRun(proof),
+            ]);
+            const patch = await restarted(run + '/diff');
+            assert.equal(patch.status, 200);
+            assert.equal(patch.text.match(/^\+once$/gm)?.length, 1);
+            await assert.rejects(
+                service.reviewRun({
+                    ...proof,
+                    expectedSnapshotSha256: '0'.repeat(64),
+                }),
+                /different review/,
+            );
             const ledger = new DatabaseSync(join(state, 'authority.sqlite'), {
                 readOnly: true,
             });
@@ -574,6 +615,47 @@ if (process.argv[2] === '--effect-worker') {
             controller.kill('SIGKILL');
             await exited;
             await service?.close();
+            await rm(state, { recursive: true, force: true });
+        }
+    });
+
+    test('attempted recovery without a recovered receipt cannot publish a verified diff', async () => {
+        const state = await mkdtemp(
+            join(tmpdir(), 'bento-unconfirmed-recovery-'),
+        );
+        const base = localHost(join(state, 'volume'));
+        const service = await start(state, {
+            ...base,
+            async worker(request, signal) {
+                if (request.mode === 'recover') return 'completed';
+                await base.worker(request, signal);
+                return 'review';
+            },
+        });
+        try {
+            const api = client(service.url);
+            const path = await project(api);
+            const run = await submit(api, path, 'once', 'unconfirmed');
+            const pending = await until(
+                () => api(run),
+                (r) => r.json().status === 'needs_review',
+                'unconfirmed recovery',
+            );
+            await assert.rejects(
+                service.reviewRun({
+                    runId: pending.json().id,
+                    failedGeneration: 1,
+                    readyGeneration: 3,
+                    stableOperationId: 'local-demo',
+                    expectedSnapshotSha256: snapshotSha256([
+                        { path: 'README.md', text: '# Fixture\nonce\n' },
+                    ]),
+                }),
+                /not awaiting/,
+            );
+            assert.equal((await api(run + '/diff')).status, 409);
+        } finally {
+            await service.close();
             await rm(state, { recursive: true, force: true });
         }
     });

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdir, realpath } from 'node:fs/promises';
 import type { Http2Server } from 'node:http2';
 import type { Server as HttpServer } from 'node:http';
@@ -7,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { SingleHostExecution } from '../openshell/single-host.ts';
 import { unifiedDiff } from './diff.ts';
 import { executionHttp } from './http.ts';
-import { textSnapshot } from './input.ts';
+import { conflict, textSnapshot } from './input.ts';
 import { projectBinding, Store } from './store.ts';
 import type {
     Binding,
@@ -16,9 +17,23 @@ import type {
     WorkerRequest,
     WorkerResult,
 } from './types.ts';
+import { operationId } from './worker.ts';
 
 type Run = ReturnType<Store['findRun']>;
 type Server = HttpServer | Http2Server;
+type Review = {
+    runId: string;
+    failedGeneration: number;
+    readyGeneration: number;
+    stableOperationId: string;
+    expectedSnapshotSha256: string;
+};
+
+export function snapshotSha256(files: readonly FileText[]) {
+    return createHash('sha256')
+        .update(JSON.stringify(textSnapshot(files)))
+        .digest('hex');
+}
 type Options = {
     state: string;
     token: string;
@@ -126,6 +141,79 @@ export async function serveExecution(options: Options) {
             ...(gateway === undefined ? {} : { gateway }),
         };
 
+        // Trusted deployment API. No HTTP v1 route exposes this capability.
+        async function reviewRun(review: Review) {
+            const {
+                runId,
+                failedGeneration,
+                readyGeneration,
+                stableOperationId,
+                expectedSnapshotSha256,
+            } = review;
+            if (
+                !Number.isSafeInteger(failedGeneration) ||
+                failedGeneration < 1 ||
+                !Number.isSafeInteger(readyGeneration) ||
+                readyGeneration <= failedGeneration ||
+                typeof stableOperationId !== 'string' ||
+                !stableOperationId ||
+                !/^[0-9a-f]{64}$/.test(expectedSnapshotSha256)
+            )
+                throw new Error('Invalid review proof');
+            const op = operationId(runId, stableOperationId);
+            const proof = JSON.stringify({
+                failedGeneration,
+                readyGeneration,
+                operationId: op,
+                expectedSnapshotSha256,
+            });
+            if (db.reviewReceipt(runId, proof)) return;
+            const run = db.findRun(runId);
+            if (
+                run.status !== 'needs_review' ||
+                run.receipt ||
+                db.recoveryGeneration(runId) !== failedGeneration + 1 ||
+                readyGeneration !== failedGeneration + 2
+            )
+                throw conflict(
+                    'review_unavailable',
+                    'Run is not awaiting recovery review.',
+                );
+            const binding = db.binding(run);
+            const checkBinding = () => {
+                const current = execution.inspect(run.sessionId);
+                if (
+                    current.state !== 'READY' ||
+                    current.generation !== readyGeneration ||
+                    current.volume !== binding.volume ||
+                    current.sandbox !== binding.sandbox ||
+                    current.project !== binding.project ||
+                    current.tenant !== binding.tenant ||
+                    execution.operation(run.sessionId, failedGeneration, op)
+                        ?.state !== 'UNKNOWN'
+                )
+                    throw conflict(
+                        'review_unavailable',
+                        'Run execution or operation evidence changed.',
+                    );
+            };
+            checkBinding();
+            const after = textSnapshot(await host.snapshot(binding));
+            if (snapshotSha256(after) !== expectedSnapshotSha256)
+                throw conflict(
+                    'review_mismatch',
+                    'Workspace does not match the reviewed snapshot.',
+                );
+            const diff = await unifiedDiff(
+                textSnapshot(JSON.parse(run.baseline ?? 'null')),
+                after,
+            );
+            stop.signal.throwIfAborted();
+            if (db.reviewReceipt(runId, proof)) return;
+            checkBinding();
+            db.confirmReview(runId, proof, diff);
+        }
+
         async function worker(
             run: Run,
             binding: Binding,
@@ -221,6 +309,11 @@ export async function serveExecution(options: Options) {
                     // The prior operation and any interrupted reconciliation stay subject to trusted review.
                 }
                 if (stop.signal.aborted) return;
+                if (result === 'recovered')
+                    db.recovered(
+                        run.id,
+                        execution.inspect(run.sessionId).generation,
+                    );
                 await fence(run);
                 db.status(
                     run.id,
@@ -322,7 +415,7 @@ export async function serveExecution(options: Options) {
 
         const url = await listen(executionHttp(db, token, wake), options.port);
         wake();
-        return { url, close };
+        return { url, close, reviewRun };
     } catch (error) {
         await close();
         throw error;

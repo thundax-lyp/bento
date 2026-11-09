@@ -91,6 +91,12 @@ export class Store {
                 ON runs(projectId) WHERE status IN ${pending};
             CREATE UNIQUE INDEX IF NOT EXISTS one_active_host_run
                 ON runs((1)) WHERE status IN ('running','recovering');
+            CREATE TABLE IF NOT EXISTS run_reviews (
+                runId TEXT PRIMARY KEY REFERENCES runs(id), proof TEXT NOT NULL, reviewedAt TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS run_recoveries (
+                runId TEXT PRIMARY KEY REFERENCES runs(id), generation INTEGER NOT NULL
+            );
         `);
     }
 
@@ -287,6 +293,18 @@ export class Store {
             .run(now(), id);
     }
 
+    recovered(id: string, generation: number) {
+        this.db
+            .prepare('INSERT INTO run_recoveries VALUES (?,?)')
+            .run(id, generation);
+    }
+
+    recoveryGeneration(id: string) {
+        return this.db
+            .prepare('SELECT generation FROM run_recoveries WHERE runId=?')
+            .get(id)?.generation;
+    }
+
     status(
         id: string,
         status: RunStatus,
@@ -298,5 +316,48 @@ export class Store {
                 'UPDATE runs SET status=?, summary=?, diff=?, updatedAt=? WHERE id=?',
             )
             .run(status, summary, diff, now(), id);
+    }
+
+    reviewReceipt(id: string, proof: string) {
+        const row = this.db
+            .prepare('SELECT proof FROM run_reviews WHERE runId=?')
+            .get(id);
+        if (row && row.proof !== proof)
+            throw conflict(
+                'review_conflict',
+                'A different review was already recorded.',
+            );
+        return row !== undefined;
+    }
+
+    confirmReview(id: string, proof: string, diff: string) {
+        this.db.exec('BEGIN IMMEDIATE');
+        try {
+            if (!this.reviewReceipt(id, proof)) {
+                const time = now();
+                const result = this.db
+                    .prepare(
+                        `
+                    UPDATE runs SET status='succeeded', diff=?, updatedAt=?,
+                        summary='Workspace changes verified after recovery.'
+                    WHERE id=? AND status='needs_review' AND receipt=0
+                        AND EXISTS(SELECT 1 FROM run_recoveries WHERE runId=runs.id)
+                `,
+                    )
+                    .run(diff, time, id);
+                if (Number(result.changes) !== 1)
+                    throw conflict(
+                        'review_unavailable',
+                        'Run is not awaiting recovery review.',
+                    );
+                this.db
+                    .prepare('INSERT INTO run_reviews VALUES (?,?,?)')
+                    .run(id, proof, time);
+            }
+            this.db.exec('COMMIT');
+        } catch (error) {
+            this.db.exec('ROLLBACK');
+            throw error;
+        }
     }
 }
