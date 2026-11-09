@@ -40,10 +40,18 @@
 
 从派发到 Worker 绑定 Run，冷启动耗时 943–971 ms，预热耗时 0–3 ms。模型请求在这八次运行中耗时 892–1,215 ms。
 
+### 双槽并发与故障隔离
+
+在同一远端 Temporal 环境启用两个预热 DSH Worker，使用真实 DeepSeek V4 Flash 和 OpenShell。三个受邀账号从浏览器导入独立项目并提交 Run。
+
+- A、B 使用不同的 Worker 和 Workspace，观测到两个 Run 同时处于 `running`。C 提交后保持 `queued`，没有收到执行授权。A、B 使用各自当代授权访问对方 Session 和 OpenShell 沙盒，分别收到 HTTP 403 和 gRPC 7。三个账号之间读取项目、Run 和 diff 的请求返回 HTTP 404。
+- A 写入落盘并持久化工具调用后，在结果回执前对其 Worker 发送 `SIGKILL`，进程退出码为 137。替换进程在 A 原槽位进入恢复。在 A 仍处于 `recovering` 时，B 在原 Worker 完成，页面成功下载 diff。C 此后才取得 B 释放的槽位。
+- A 恢复原 Session 和 Workspace，保留原会话历史前缀。旧代操作和持久化请求返回 HTTP 403，旧代 OpenShell 执行请求返回 gRPC 16。账本在可信核对前后均保持 `UNKNOWN`，A 的原写入只发生一次。A、B、C 的页面 diff 分别应用到原 Git 快照，各自只产生预期改动。
+
 ## Not Covered
 
-Temporal Server 重启或数据丢失、生产部署、多执行宿主、Worker 池容量、多账号并发负载和任意工具不在本轮覆盖内。A6 的完整门槛见 [实施与验收](../research/implementation.md)。
+Temporal Server 重启或数据丢失、生产部署、多执行宿主、超过两个槽位的容量、持续并发负载和任意工具不在本轮覆盖内。A6 的完整门槛见 [实施与验收](../research/implementation.md)。
 
 ## Closure
 
-独立冒烟、Bento 页面纵向验证、Activity 重投和三账号单槽预热验证通过。远端 Temporal 实例保留运行。临时执行服务、Worker 和 OpenShell 测试资源已清理，原 Gateway 未改动。探针与原始日志留在内部工作区。
+独立冒烟、Bento 页面纵向验证、Activity 重投、单槽预热和双槽故障隔离验证通过。远端 Temporal 实例保留运行。临时执行服务、Worker 和 OpenShell 测试资源已清理，原 Gateway 未改动。探针与原始日志留在内部工作区。
