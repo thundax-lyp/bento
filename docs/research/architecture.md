@@ -11,14 +11,14 @@
 - 可信 DSH harness 在沙盒外，用户代码在沙盒内。业务服务端决定 tenant/workspace/session/run/generation/sandbox/volume 绑定，worker 和模型不能任意选择目标。
 - Session 日志所有权与沙盒执行权分别撤销，只有 generation/owner 一致、旧执行完成停止/对账、绑定及挂载确认后才能 READY。UNKNOWN 先观察/对账，不能因未收到结果就重放副作用。
 - 优先复用固定 npm OpenShell 插件、官方 checkpoint/SessionPersistence、OpenShell 原生生命周期及认证、外部持久卷。平台层补业务授权、绑定、调度和恢复协议；当前没有必须修改 DSH 核心的实验证据。
-- Run 编排选用 Temporal、生产业务状态倾向 PostgreSQL；这是实现选型，**尚未部署验证**。实验 SQLite 事务/generation CAS/批次回执提供协议依据，不等于 PostgreSQL 版本已验收，不另造第二套持久调度队列。
+- Run 编排已接入 Temporal [单执行宿主模式](../deployments/HOW-TO-TEMPORAL-DEV.md#接入-bento)。Temporal 持有调度历史，Bento 在 SQLite 持久化 Run 状态、Session、Workspace 绑定和执行授权。Activity 重投以持久 Run 状态决定派发或恢复。生产业务状态倾向 PostgreSQL。
 
 ## 三层职责与交接
 
 | 层        | 已验证支撑                                                                                                             | 进入实现时必须补充                                                                 | 验收                                  |
 | --------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | ------------------------------------- |
 | 任务会话  | SessionPersistence/provider/checkpoint；旧代 append/flush/close 拒绝；跨主机历史恢复、批次回执、提交未知与事务故障对账 | 业务 Session/Run/审批生命周期、生产持久化与动态身份、外部工具幂等/查询契约         | A1/A2/A5；EXP-023～025                |
-| workers   | 同进程多 Session 路由；子 Agent 继承；双主机领取授权后恢复；有限 OS 凭据隔离和失权 checkpoint                          | Temporal Run 调度、长期池复用/排空、租户公平性/配额、可信控制器多副本协调          | A3/A6/A8；EXP-019/020/022             |
+| workers   | 单宿主 Temporal 调度；多 Session 路由；子 Agent 继承；双主机接管；有限 OS 凭据隔离和失权 checkpoint                    | 长期池复用/排空、租户公平性/配额、可信控制器多副本协调                             | A3/A6/A8；EXP-019/020/022             |
 | OpenShell | 单节点共享 Volume/删除重挂；SSH/PTC 分离、撤 key+断旧连接+stop；固定插件；mTLS 后端与服务端 SDK/raw 准入               | 真实项目导入、目录/卷 ACL、完整 PTY、资源/出口限制、动态能力签发、多节点存储与备份 | A1/A3/A4/A7；EXP-015～018/020/021/025 |
 
 双 worker 主机不等于双执行宿主；部分 AgentLoop 用固定模型适配器；confinement=partial。原始 Gateway 旁路已在受测 worker 权限边界封住，不能继续标成完全未验，也不能据此宣称全入口或恶意宿主隔离已完成。

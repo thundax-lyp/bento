@@ -1,4 +1,6 @@
 allowBuilds:
+    '@swc/core': false
+    protobufjs: false
     '@deepseek-ai/dsh-subprocess-local': false
     koffi: false
     node-pty: false
