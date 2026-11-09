@@ -69,11 +69,7 @@ const getBase = (root, base) => ({
 const moduleForPath = (rawPath) => {
     const parts = rawPath.split('/').filter(Boolean);
     const top = parts[0];
-    if (
-        ['.github', '.agents', 'AGENTS.md', 'TODO.md', 'README.md'].includes(
-            top,
-        )
-    )
+    if (['.github', '.agents', 'AGENTS.md', 'README.md'].includes(top))
         return 'repo-governance';
     if (top === 'docs')
         return parts[1] === '00-governance' ? 'repo-governance' : 'docs';

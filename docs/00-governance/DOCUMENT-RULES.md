@@ -9,9 +9,11 @@
 按文档职责读取最小必要范围：
 
 1. [工程治理](./DOCUMENT-RULES.md)：`docs/00-governance/` 维护稳定的开发、验证和交付规则。
-2. 已确认的需求和接口：约束可验收的产品行为、跨边界契约和兼容性；按实际文档定位，不从实现细节反推新需求。
-3. [研究与实现验收](../research/README.md)：按主题维护架构、已验证能力、实施方案和验收边界。
-4. [OpenShell 部署说明](../deployments/openshell-dsh.md)与[公开发布范围](../PUBLISHING.md)：分别维护通用运行流程和发布边界。
+2. [需求](../10-requirements/README.md)和已确认的接口：约束可验收的产品行为、跨边界契约和兼容性。
+3. [设计](../30-designs/README.md)：记录如何实现需求与契约。
+4. [Readiness](../40-readiness/README.md)：记录实现覆盖、验证结果和未覆盖范围。
+5. [研究与实现验收](../research/README.md)：按主题维护现有架构、已验证能力、实施方案和验收边界。
+6. [OpenShell 部署说明](../deployments/openshell-dsh.md)与[公开发布范围](../PUBLISHING.md)：分别维护通用运行流程和发布边界。
 
 讨论、草稿与原始验证材料用于解释背景和追溯证据。结论确认后写入对应的工程文档；原始日志及远端配置按公开发布规则保留在本地。
 
@@ -28,7 +30,7 @@
 - 暂存、提交和历史修改规则统一由 `COMMIT-RULES.md` 定义。
 - 分支、PR、Review、CI 和合并规则统一由 `PR-RULES.md` 定义。
 
-### 需求
+### `10-requirements`
 
 - 只保存已经确认、可以形成验收标准的需求。
 - 必须区分 Scope、Non-goals、业务规则和 Acceptance Criteria。
@@ -40,14 +42,14 @@
 - 契约应说明 producer、consumer、所有权、兼容策略和失败语义。
 - 可机器校验的 Schema 应与说明文档放在同一目录，并明确哪一方是真相源。
 
-### 设计
+### `30-designs`
 
 - 保存模块设计、状态机、数据所有权、依赖方向和专项设计。
 - 设计必须关联需求或契约，不能替代产品决策。
 - 复杂临时任务可以使用 `RUNBOOK-*.md`；任务关闭时必须迁移长期结论并删除 RUNBOOK。
 - RUNBOOK 的适用条件、低级 LLM 执行模型、决策完备性、颗粒度和收口规则统一由 `RUNBOOK-RULES.md` 定义。
 
-### 验证与就绪
+### `40-readiness`
 
 - 保存实现覆盖矩阵、测试结果、运行时证据、未覆盖项和交付状态。
 - 证据必须记录日期、验证范围、环境或 commit 边界、执行方式、结果和 `Not Covered`。
@@ -71,7 +73,7 @@
 
 - 实现和验证：[架构规则](./ARCHITECTURE-RULES.md)、[工程规则](./ENGINEERING-RULES.md)、[测试规则](./TEST-RULES.md)。
 - 小步交付：[Commit 规则](./COMMIT-RULES.md)、[PR 规则](./PR-RULES.md)。
-- 任务执行和关闭：[RUNBOOK 规则](./RUNBOOK-RULES.md)、[TODO 规则](./TODO-RULES.md)。
+- 临时执行手册的编写与收口见 [RUNBOOK 规则](./RUNBOOK-RULES.md)。
 
 | 文档                                                  | 维护内容                                                |
 | ----------------------------------------------------- | ------------------------------------------------------- |
@@ -84,7 +86,7 @@
 ## File Naming
 
 - 治理文件沿用 `*-RULES.md`；同主题新文档沿用现有目录的命名风格，不使用中文或空格。以下命名约定用于独立的工程文档，不要求重命名现有主题文档。
-- 固定入口文件可以使用 `README.md`、`AGENTS.md` 和 `TODO.md`。
+- 固定入口文件可以使用 `README.md` 和 `AGENTS.md`。
 - 需求文档命名为 `*-REQUIREMENTS.md`。
 - 接口文档命名为 `*-INTERFACE.md`，机器契约使用相同主题名称。
 - 模块设计命名为 `*-DESIGN.md`，专项设计命名为 `*-SPECIAL-DESIGN.md`。

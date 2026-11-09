@@ -221,7 +221,7 @@ RUNBOOK 作者在交付前必须：
 
 - RUNBOOK 只能在所有 scope 和预先固定的完整验证集合满足后关闭；不以本节临时增加与任务无关的全产品验证。
 - 长期产品行为迁移到 requirements，跨边界语义迁移到 interfaces，稳定实现方案迁移到 designs，验证事实迁移到 readiness，运行流程迁移到 operations。
-- 未覆盖项必须进入正式 coverage/readiness 或 TODO，不能仅留在即将删除的 RUNBOOK。
+- 删除 RUNBOOK 前，把未覆盖项迁移到对应的验收或验证文档。
 - 迁移完成后删除 RUNBOOK，并使用 `rg` 删除所有仅用于指向该 RUNBOOK 的残留引用。
 - RUNBOOK 不得以 `completed`、`archive` 或历史文件形式长期保留在任务对应目录。
 - 删除 RUNBOOK 不等于删除 Git 历史；历史追溯使用 commit 和 readiness evidence。
@@ -231,4 +231,3 @@ RUNBOOK 作者在交付前必须：
 - [Document Rules](./DOCUMENT-RULES.md)
 - [Architecture](../research/architecture.md)
 - [Engineering Rules](./ENGINEERING-RULES.md)
-- [TODO Rules](./TODO-RULES.md)

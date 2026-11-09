@@ -36,14 +36,14 @@ node .agents/skills/bento-pr-review/scripts/collect-review-context.mjs snapshot 
 
 按 [Document Rules](../../../docs/00-governance/DOCUMENT-RULES.md) 区分文档职责和权威。只加载能解释当前 diff 的最小上下文。先读取 [PR Rules](../../../docs/00-governance/PR-RULES.md)，再按改动范围补读：
 
-| 改动范围                                    | 当前依据                                                                                                                        |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| 产品代码或设计                              | [平台架构](../../../docs/research/architecture.md)、[工程规则](../../../docs/00-governance/ENGINEERING-RULES.md)及相关需求      |
-| Session、Run、Workspace、权限、持久化与接管 | [平台架构](../../../docs/research/architecture.md)与[实现方案和验收](../../../docs/research/implementation.md)中的相关边界      |
-| 源码目录和入口                              | [架构规则](../../../docs/00-governance/ARCHITECTURE-RULES.md)                                                                   |
-| 测试与验证声明                              | [测试规则](../../../docs/00-governance/TEST-RULES.md)及[能力与证据](../../../docs/research/capabilities.md)                     |
-| 已登记 TODO、RUNBOOK                        | [TODO 规则](../../../docs/00-governance/TODO-RULES.md)或 [RUNBOOK 规则](../../../docs/00-governance/RUNBOOK-RULES.md)及任务正文 |
-| 运行、诊断、恢复或发布                      | [OpenShell 部署说明](../../../docs/deployments/openshell-dsh.md)及[公开发布范围](../../../docs/PUBLISHING.md)                   |
+| 改动范围                                    | 当前依据                                                                                                                   |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| 产品代码或设计                              | [平台架构](../../../docs/research/architecture.md)、[工程规则](../../../docs/00-governance/ENGINEERING-RULES.md)及相关需求 |
+| Session、Run、Workspace、权限、持久化与接管 | [平台架构](../../../docs/research/architecture.md)与[实现方案和验收](../../../docs/research/implementation.md)中的相关边界 |
+| 源码目录和入口                              | [架构规则](../../../docs/00-governance/ARCHITECTURE-RULES.md)                                                              |
+| 测试与验证声明                              | [测试规则](../../../docs/00-governance/TEST-RULES.md)及[能力与证据](../../../docs/research/capabilities.md)                |
+| 临时 RUNBOOK                                | [RUNBOOK 规则](../../../docs/00-governance/RUNBOOK-RULES.md)及对应手册                                                     |
+| 运行、诊断、恢复或发布                      | [OpenShell 部署说明](../../../docs/deployments/openshell-dsh.md)及[公开发布范围](../../../docs/PUBLISHING.md)              |
 
 实现与验证文档只证明其记录的范围；依据冲突或不足时记录缺口，不凭当前代码补出产品规则。
 
