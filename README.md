@@ -15,6 +15,8 @@
 
 ## 开发
 
+[工程治理规则](docs/00-governance/DOCUMENT-RULES.md)约定文档、实现、测试、提交与 PR 的做法。
+
 Node.js 22.19+ 的 22.x 或 24+，pnpm 12.15.0。
 
 ```sh
