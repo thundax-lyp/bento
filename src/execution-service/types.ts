@@ -29,6 +29,7 @@ export interface ExecutionHost extends SingleHostSandbox {
     ): Promise<Observation>;
     /** Read a quiescent volume independently of the worker. */
     snapshot(binding: Binding): Promise<readonly FileText[]>;
+    warmWorker?(signal: AbortSignal): () => Promise<void>;
     worker(request: WorkerRequest, signal: AbortSignal): Promise<WorkerResult>;
 }
 

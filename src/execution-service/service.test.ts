@@ -17,6 +17,7 @@ import { completedTurn } from './dsh-worker.ts';
 import { serveExecution, snapshotSha256 } from './service.ts';
 import type { ExecutionHost, FileText, WorkerRequest } from './types.ts';
 import { processWorker, reserveOperation } from './worker.ts';
+import { prewarmedWorker } from './warm-worker.ts';
 
 const testToken = 'fixture-only-bento-service-bearer';
 const testFile = fileURLToPath(import.meta.url);
@@ -269,6 +270,62 @@ if (process.argv[2] === '--effect-worker') {
         assert.equal(completedTurn([unknown, completed]), false);
         assert.equal(completedTurn([]), false);
     });
+    test('one warm worker serves consecutive grants and is replaced after abort', async () => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-warm-test-'));
+        const dispatched = join(state, 'dispatched');
+        const pool = prewarmedWorker({
+            command: process.execPath,
+            args: [
+                '-e',
+                `
+                const { createInterface } = require('node:readline');
+                const { writeFileSync } = require('node:fs');
+                let completed = 0;
+                console.log('ready');
+                (async () => {
+                    for await (const line of createInterface({ input: process.stdin })) {
+                        const { prompt } = JSON.parse(line);
+                        if (prompt === 'block') {
+                            writeFileSync(process.argv[1], '');
+                            await new Promise(() => {});
+                        }
+                        if (Number(prompt) !== ++completed) process.exit(2);
+                        console.log('completed');
+                    }
+                })();
+            `,
+                dispatched,
+            ],
+        });
+        const lifetime = new AbortController();
+        const close = pool.warmWorker!(lifetime.signal);
+        const run = (prompt: string, signal = lifetime.signal) =>
+            pool.worker({ mode: 'execute', prompt } as WorkerRequest, signal);
+        try {
+            assert.equal(await run('1'), 'completed');
+            assert.equal(await run('2'), 'completed');
+            const lease = new AbortController();
+            const blocked = run('block', lease.signal);
+            await until(
+                () =>
+                    readFile(dispatched).then(
+                        () => true,
+                        () => false,
+                    ),
+                Boolean,
+                'warm worker received request',
+            );
+            await assert.rejects(run('3'), /occupied/);
+            lease.abort();
+            await assert.rejects(blocked);
+            assert.equal(await run('1'), 'completed');
+        } finally {
+            lifetime.abort();
+            await close();
+            await rm(state, { recursive: true, force: true });
+        }
+    });
+
     test('private HTTP, three-account FIFO, next generation and immutable diff across restart', async () => {
         const state = await mkdtemp(join(tmpdir(), 'bento-http-test-'));
         const base = localHost(join(state, 'volume'));

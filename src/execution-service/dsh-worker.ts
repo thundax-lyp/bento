@@ -5,6 +5,7 @@ import {
 } from '../openshell/remote-session.ts';
 import { object } from './input.ts';
 import { reserveOperation } from './worker.ts';
+import { workerFrames } from './worker-frames.ts';
 import type { WorkerRequest, WorkerResult } from './types.ts';
 
 type Context = Parameters<typeof installOpenShellProvider>[0];
@@ -69,7 +70,7 @@ export type DshWorkerBootstrap = (
     effect: Effect,
 ) => Promise<Runtime>;
 
-/** One DSH turn or recovery in a dedicated worker process. */
+/** One DSH turn or recovery with a fresh runtime. */
 export async function runDshWorker(
     request: WorkerRequest,
     bootstrap: DshWorkerBootstrap,
@@ -136,6 +137,22 @@ export async function runDshWorker(
     }
 }
 
+function workerRequest(input: string) {
+    const value = object(JSON.parse(input));
+    if (value.mode !== 'execute' && value.mode !== 'recover')
+        throw new Error('Unknown worker mode');
+    return value as WorkerRequest;
+}
+
+/** Readiness and each receipt are emitted after imports and run cleanup respectively. */
+export async function runDshWorkerLoop(bootstrap: DshWorkerBootstrap) {
+    process.stdout.write('ready\n');
+    for await (const frame of workerFrames(process.stdin, 128 * 1024)) {
+        const result = await runDshWorker(workerRequest(frame), bootstrap);
+        process.stdout.write(result + '\n');
+    }
+}
+
 /** Worker launch protocol. Bootstrap configuration is private and stdout carries only the receipt. */
 export async function runDshWorkerStdio(bootstrap: DshWorkerBootstrap) {
     try {
@@ -148,10 +165,8 @@ export async function runDshWorkerStdio(bootstrap: DshWorkerBootstrap) {
                 throw new Error('Worker input exceeds size limit');
             parts.push(chunk);
         }
-        const value = object(JSON.parse(Buffer.concat(parts).toString('utf8')));
-        if (value.mode !== 'execute' && value.mode !== 'recover')
-            throw new Error('Unknown worker mode');
-        const result = await runDshWorker(value as WorkerRequest, bootstrap);
+        const request = workerRequest(Buffer.concat(parts).toString('utf8'));
+        const result = await runDshWorker(request, bootstrap);
         process.stdout.write(result + '\n');
     } catch {
         process.exitCode = 1;

@@ -70,6 +70,7 @@ export async function serveExecution(options: Options) {
     let scheduled: NodeJS.Timeout | undefined;
     let active: Promise<void> | undefined;
     let hostWork: Promise<void> | undefined;
+    let closeWarmWorker: (() => Promise<void>) | undefined;
     let scheduler: Awaited<ReturnType<typeof temporalRuns>> | undefined;
 
     async function close() {
@@ -83,6 +84,7 @@ export async function serveExecution(options: Options) {
         for (const socket of sockets) socket.destroy();
         await active;
         await scheduler?.close();
+        await closeWarmWorker?.();
         await Promise.all(closed);
         control?.close();
         store?.close();
@@ -241,26 +243,26 @@ export async function serveExecution(options: Options) {
                 onAbort = () => reject(new Error('Worker lease ended'));
                 signal.addEventListener('abort', onAbort, { once: true });
             });
+            let task: Promise<WorkerResult> | undefined;
             try {
                 signal.throwIfAborted();
-                return await Promise.race([
-                    host.worker(
-                        {
-                            mode,
-                            binding,
-                            grant,
-                            ...ingress,
-                            ...(mode === 'execute'
-                                ? { prompt: run.prompt }
-                                : {}),
-                        },
-                        signal,
-                    ),
-                    aborted,
-                ]);
+                task = host.worker(
+                    {
+                        mode,
+                        binding,
+                        grant,
+                        ...ingress,
+                        ...(mode === 'execute' ? { prompt: run.prompt } : {}),
+                    },
+                    signal,
+                );
+                return await Promise.race([task, aborted]);
             } finally {
                 live = undefined;
                 signal.removeEventListener('abort', onAbort);
+                // A replacement must wait for the single slot to close on lease expiry.
+                if (closeWarmWorker && signal.aborted)
+                    await task?.catch(() => {});
             }
         }
 
@@ -412,6 +414,7 @@ export async function serveExecution(options: Options) {
             return hostWork;
         }
 
+        closeWarmWorker = host.warmWorker?.(stop.signal);
         if (options.temporal) {
             const { temporalRuns } = await import('./temporal.ts');
             scheduler = await temporalRuns(options.temporal, (runId) =>
