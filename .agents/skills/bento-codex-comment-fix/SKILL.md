@@ -131,7 +131,7 @@ You have reached your Codex usage limits for code reviews.
 
 ## Commit 追踪
 
-每个修复 commit 都必须能回溯到触发它的评论。保持现有 commit 标题格式，并在 body 追加：
+每个修复 commit 都必须能回溯到触发它的评论。标题和归属遵循 [Commit Rules](../../../docs/00-governance/COMMIT-RULES.md#commit-message)，并在 body 追加：
 
 ```text
 Refs: PR #4, Codex comment #3859728727

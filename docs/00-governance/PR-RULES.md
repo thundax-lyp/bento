@@ -27,7 +27,7 @@
 
 ## PR Title And Description
 
-- 标题沿用 Commit Rules 的类型和范围写法，描述阶段性交付结果。
+- 标题使用 `Type(scope): <阶段性交付结果>`。类型大小写遵循 [Commit Rules](./COMMIT-RULES.md#commit-message)，scope 从 [Scope Registry](./COMMIT-RULES.md#scope-registry) 选择。
 - 描述说明变更前后的行为、影响范围和审阅所需信息；仓库提供模板时使用模板。
 - 验证说明必须填写实际命令、结果与边界；不适用时写 `N/A` 和原因。未完成检查不可勾选为通过。
 - 不写凭据、本地绝对路径、个人机器信息、临时草稿或 Agent 内部执行过程。简单变更可在各适用栏位用一句话说明，不重复展开同一结论。
@@ -48,7 +48,7 @@
 
 ## Documentation And Task Closure
 
-合并前按 [Document Sync](./DOCUMENT-RULES.md#document-sync) 核对本次变更的同步范围。涉及已登记 TODO 或临时 RUNBOOK 时，分别核对 [TODO Closure](./TODO-RULES.md#closure-rules) 和 [RUNBOOK Completion](./RUNBOOK-RULES.md#completion-and-deletion)；未涉及时不新建任务或证据文档。
+合并前按 [Document Sync](./DOCUMENT-RULES.md#document-sync) 核对本次变更的同步范围。涉及临时 RUNBOOK 时，核对 [RUNBOOK Completion](./RUNBOOK-RULES.md#completion-and-deletion)。
 
 ## Review And Merge
 

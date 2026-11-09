@@ -44,7 +44,7 @@
 - 已有证据的源码、环境和验证范围仍适用时可以复用，注明原基线；不能将历史结果描述为本次重跑。只记录实际执行的命令、断言和结果，失败或阻塞不得标为通过。
 - 自动化通过不等于业务、真实运行或发布就绪。未执行、未自动化及刻意排除的范围标为 `Not Covered`；确实不适用的验证说明 `Not Applicable` 及原因。
 - 验证如创建临时数据、进程、目录或环境变量，按 `Prepare → Execute → Assert → Restore` 管理；失败路径同样执行 Restore，不清理用户原有资源。
-- 交付前确认目标达到可审阅或可运行状态，工作区未混入无关修改，且已运行相关验证并说明边界。文档同步按 [Document Sync](./DOCUMENT-RULES.md#document-sync)；只有涉及已登记 TODO 时才应用 [TODO Rules](./TODO-RULES.md)。
+- 交付前确认目标达到可审阅或可运行状态，工作区未混入无关修改，且已运行相关验证并说明边界。文档同步遵循 [Document Sync](./DOCUMENT-RULES.md#document-sync)。
 
 ## Test Naming
 
