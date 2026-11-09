@@ -18,6 +18,9 @@
 # Only reviewed public documents and tooling are eligible.
 /docs/*
 !/docs/PUBLISHING.md
+!/docs/00-governance/
+/docs/00-governance/*
+!/docs/00-governance/*-RULES.md
 !/docs/research/
 !/docs/deployments/
 /docs/research/*
