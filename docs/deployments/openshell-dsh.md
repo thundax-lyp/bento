@@ -44,4 +44,15 @@ worker 经服务端执行入口访问 OpenShell；入口校验业务 capability 
 
 已验证单执行宿主的共享卷与删除重挂、固定插件工具循环、跨主机 Session 接管、工具结果 UNKNOWN 不盲目重放，以及服务端准入对旧代和原始 Gateway 旁路的拒绝。这些来自不同实验阶段，不等于最新入口的完整故障链已联合验收。
 
-当前 confinement=partial，授权实验使用固定 grants。动态身份签发、完整 stop/start/READY 控制器故障恢复、detached 子进程停止、多控制器、跨节点存储、数据库 HA 与容量仍按[实现验收条件](../research/implementation.md)落实。能力及证据入口见[研究总览](../research/README.md)。历史原始证据单独保留，不作为可直接套用的服务器配置模板。
+受测环境的 confinement 为 partial。生产身份集成、全阶段控制器故障、detached 子进程停止、多控制器、跨节点存储、数据库 HA 与容量仍按[实现验收条件](../research/implementation.md)落实。能力及证据入口见[研究总览](../research/README.md)。历史原始证据单独保留。
+
+## 单执行宿主接入
+
+可信进程从 [Bento 入口](../../src/index.ts)实例化 `SingleHostExecution`。每组 SQLite 文件由一个控制器实例管理。部署端提供 `SingleHostSandbox`，按绑定对指定沙盒执行 stop/start，并通过宿主独立观察进程退出、启动状态、策略与挂载卷。停止观察需要排除旧 stop 延迟生效。以 OpenShell 官方 SDK 的固定 protobuf schema 作为 `sdkIngress` 的解码器，并把 Gateway mTLS 凭据只交给服务端。
+
+1. 部署端导入项目到外部 Volume，验证沙盒挂载及策略，用 `bind` 登记 Session。用 `admit` 领取 Run，将短期 capability 与三个入口地址交给 worker。
+2. worker 安装 `remoteSessionPersistence`、官方 DSH checkpoint policy 和 `installOpenShellProvider`。执行有副作用的受控工具前，向 `POST /operations` 提交 `{id, input}`，只在收到 201 后派发。重试须沿用原操作 ID。409 表示该 ID 已登记，仍处于 UNKNOWN 的操作由可信侧查询对账。
+3. 接管已有持久历史的 Session 时，调用 `takeover(session, generation)`。入口先撤销执行和日志写权，再持久登记停启意图。回包丢失后可用同一代次重新进入 `takeover`，已有派发意图只观察。只有确认旧执行退出、新沙盒运行且策略和原卷匹配，才发布新代 READY。
+4. 新 worker 领取 Run 后调用 `reconcileSessionPersistence` 对账持久批次，再用官方 DSH AgentLoop 恢复原 Session。会话回执只确认历史已提交。工具结果保持 UNKNOWN，副作用以独立观察对账。
+
+执行入口支持 SDK 非 PTY 命令与文件操作。稳定操作 ID 由受信工具适配器提供，此门禁覆盖遵循登记协议的工具。宿主进程、模型配置和外部工具授权由部署端管理。

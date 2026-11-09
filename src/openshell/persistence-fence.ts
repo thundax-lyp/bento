@@ -37,17 +37,26 @@ export class PersistenceFence {
         );
     }
 
-    /** Called by the trusted launcher after Run admission and before handing its credential to the worker. */
+    /** Reserve the writer for this Run before handing its credential to the worker. */
     grant(session: string, generation: number, owner: string) {
         if (!owner || owner === revoked) throw new Error('invalid owner');
         const result = this.db
             .prepare(
                 `
             UPDATE sessions SET epoch=?,owner=?
-            WHERE id=? AND epoch=? AND owner=? AND handle IS NULL
+            WHERE id=? AND handle IS NULL
+              AND ((epoch=? AND owner=?) OR (epoch=? AND owner=?))
         `,
             )
-            .run(generation, owner, session, generation - 1, revoked);
+            .run(
+                generation,
+                owner,
+                session,
+                generation - 1,
+                revoked,
+                generation,
+                owner,
+            );
         if (Number(result.changes) !== 1)
             throw new Error('new writer CAS denied');
     }
