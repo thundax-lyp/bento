@@ -11,3 +11,11 @@ export { SandboxManagement } from './openshell/management.ts';
 
 export { installOpenShellProvider } from './openshell/provider.ts';
 export type { OpenShellProviderConfig } from './openshell/provider.ts';
+
+export { SingleHostExecution } from './openshell/single-host.ts';
+export type { SingleHostSandbox } from './openshell/single-host.ts';
+export type { SdkIngressOptions } from './openshell/sdk-ingress.ts';
+export {
+    remoteSessionPersistence,
+    reconcileSessionPersistence,
+} from './openshell/remote-session.ts';

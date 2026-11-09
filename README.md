@@ -2,7 +2,7 @@
 
 基于 DSH 与 OpenShell 的云端异步 Agent 平台，提供在线 Agent 工作空间。用户提交任务后，Agent 在云端隔离环境中后台执行，并交付结果。
 
-当前为 TypeScript 工程骨架，尚未实现运行服务。已完成部分 DSH / OpenShell 集成验证，范围与限制见验证记录。
+主线源码提供单执行宿主的 Session 执行与接管入口。可信部署端提供 OpenShell 沙盒生命周期和观察，Bento 负责 Run 授权、会话持久化和接管。接入方式见[部署说明](docs/deployments/openshell-dsh.md#单执行宿主接入)。
 
 ## 设计与验证
 
@@ -13,7 +13,7 @@
 
 ## 开发
 
-Node.js >=22.13.0，pnpm 12.15.0。
+Node.js 22.19+ 的 22.x 或 24+，pnpm 12.15.0。
 
 ```sh
 pnpm install

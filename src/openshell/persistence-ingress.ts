@@ -13,6 +13,7 @@ export function createPersistenceIngress(
     dispatch: (
         body: string,
         backendToken: string,
+        grant: WorkerGrant,
     ) => Promise<Result | undefined>,
 ) {
     const server = createServer(async (req, res) => {
@@ -34,7 +35,7 @@ export function createPersistenceIngress(
                     query.header?.id !== binding.session)
             )
                 throw new Error('wrong session');
-            const result = await dispatch(body, grant.backendToken);
+            const result = await dispatch(body, grant.backendToken, grant);
             if (!result) {
                 res.destroy();
                 return;
