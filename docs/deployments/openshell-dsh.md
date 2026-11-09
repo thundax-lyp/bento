@@ -42,7 +42,7 @@ worker 经服务端执行入口访问 OpenShell；入口校验业务 capability 
 
 ## 验证范围与实现入口
 
-已验证单执行宿主的共享卷与删除重挂、固定插件工具循环、跨主机 Session 接管、工具结果 UNKNOWN 不盲目重放，以及服务端准入对旧代和原始 Gateway 旁路的拒绝。这些来自不同实验阶段，不等于最新入口的完整故障链已联合验收。
+既有实验分别覆盖单执行宿主的共享卷与删除重挂、固定插件工具循环、跨主机 Session 接管、工具结果 UNKNOWN 不盲目重放，以及服务端准入对旧代和原始 Gateway 旁路的拒绝。Two 的纵向验收范围见下文。
 
 受测环境的 confinement 为 partial。生产身份集成、全阶段控制器故障、detached 子进程停止、多控制器、跨节点存储、数据库 HA 与容量仍按[实现验收条件](../research/implementation.md)落实。能力及证据入口见[研究总览](../research/README.md)。历史原始证据单独保留。
 
@@ -56,3 +56,22 @@ worker 经服务端执行入口访问 OpenShell；入口校验业务 capability 
 4. 新 worker 领取 Run 后调用 `reconcileSessionPersistence` 对账持久批次，再用官方 DSH AgentLoop 恢复原 Session。会话回执只确认历史已提交。工具结果保持 UNKNOWN，副作用以独立观察对账。
 
 执行入口支持 SDK 非 PTY 命令与文件操作。稳定操作 ID 由受信工具适配器提供，此门禁覆盖遵循登记协议的工具。宿主进程、模型配置和外部工具授权由部署端管理。
+
+## Two 执行服务
+
+Two 在回环地址提供 HTTP v1，供受信的 One 服务调用。One 从认证后的账号派生 `X-Bento-Owner-Id`，并在服务间请求携带独立的 bearer。Two 按 owner 限定项目、Run 和 diff 的访问，每个执行宿主串行处理 Run。
+
+在仓库根目录执行 `pnpm install --frozen-lockfile`。部署端为每个控制器配置独占的私有 `BENTO_STATE_DIR`，注入 `BENTO_SERVICE_BEARER`，并选择一种宿主接入方式。
+
+- `BENTO_HOST_CONFIG` 指向私有 JSON。配置包含 Gateway 和 workspace scope、mTLS 文件、固定 SDK 的 `raw.js` 以及可信 `control` 和 `worker` 命令。控制命令负责项目导入、独立读卷、沙盒停启与状态观察。使用 DSH worker 入口时，由 worker 环境的 `BENTO_DSH_BOOTSTRAP` 提供运行时、模型和工具接线。协议见[命令宿主适配器](../../src/execution-service/command-host.ts)和[worker 入口](../../src/execution-service/run-worker.ts)。
+- `BENTO_HOST_MODULE` 指向实现 [`ExecutionHost`](../../src/execution-service/types.ts) 的可信模块，默认导出工厂并提供 SDK ingress 配置。
+
+```sh
+node --experimental-strip-types src/execution-service/start.ts
+```
+
+启动成功时输出回环地址，监听端口可由 `BENTO_PORT` 设置。导入项目后先确认项目为 `ready`，再提交 Run，记录 Run ID 与 Session ID。用同一账号重新读取状态及 diff。使用 `SIGTERM` 停止服务，重启时沿用同一状态目录及宿主绑定。只验证本机服务时可用独立的状态目录，清除两种宿主配置并在命令末尾加 `--local`，此模式使用确定性夹具。
+
+遇到 worker 失联时，Two 撤销旧代授权并在原卷上恢复 Session。恢复 worker 只对账会话历史，原 prompt 不重发。Run 进入 `needs_review` 时，可信部署端先独立核对预期修改，再通过[进程内 `reviewRun`](../../src/execution-service/service.ts) 提供代次、稳定操作 ID 和预期整卷哈希。Two 核对恢复回执、绑定、UNKNOWN 操作及卷快照，原子保存确认记录和 diff。核对失败时，Run 继续等待可信核对，diff 暂不可用。
+
+2026-11-09 的纵向验收使用单控制器、单执行宿主、一个受邀账号和固定文本编辑工具。经真实 OpenShell 和模型完成 Two HTTP 与 One 页面两轮验证，覆盖工具回执前的 worker SIGKILL、同一 Session 和原卷恢复、旧代拒绝、UNKNOWN 保留及页面 diff 下载。命令隔离为 `partial`。真实多账号负载、任意工具、控制器各阶段故障及 HA 仍按[验收门槛](../research/implementation.md#验收门槛)验证。
