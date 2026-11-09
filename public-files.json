@@ -18,6 +18,7 @@
         "docs/research/architecture.md",
         "docs/research/capabilities.md",
         "docs/research/implementation.md",
+        "src/task-entry/README.md",
         "src/task-entry/client.js",
         "src/task-entry/index.html",
         "src/task-entry/style.css"
