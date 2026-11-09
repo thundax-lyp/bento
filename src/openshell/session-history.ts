@@ -132,7 +132,8 @@ export class SessionHistory {
 
         if (query.method === 'create') {
             if (row) return fail('SessionAlreadyExistsError');
-            if (generation !== 1) return fail('GrantDenied');
+            // The ingress has already checked the active execution grant. A
+            // previous worker may have died before creating any history.
             const header = materializeCreateHeader(query.header as Header);
             assertVersion(header);
             if (header.id !== session) return fail('GrantDenied');
