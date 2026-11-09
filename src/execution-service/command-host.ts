@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import type { SdkIngressOptions } from '../openshell/sdk-ingress.ts';
 import { object, textSnapshot } from './input.ts';
 import type { Binding, ExecutionHost, FileText } from './types.ts';
+import { prewarmedWorker } from './warm-worker.ts';
 import { invokeProcess, processWorker, type Launch } from './worker.ts';
 
 type Decode = SdkIngressOptions['decode'];
@@ -25,6 +26,7 @@ type Settings = {
     sdkRaw: string;
     control: Launch;
     worker: Launch;
+    prewarmWorker?: boolean;
     controlTimeoutMs?: number;
 };
 
@@ -84,6 +86,11 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
         throw new Error(
             'Host and worker commands must be absolute executable paths',
         );
+    if (
+        settings.prewarmWorker !== undefined &&
+        typeof settings.prewarmWorker !== 'boolean'
+    )
+        throw new Error('Invalid worker prewarm setting');
     const timeout = settings.controlTimeoutMs ?? 60_000;
     if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 300_000)
         throw new Error('Invalid host command timeout');
@@ -140,6 +147,8 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
         },
         stopped: async (binding) => (await call('stopped', binding)) === true,
         running: async (binding) => observation(await call('running', binding)),
-        worker: processWorker(settings.worker),
+        ...(settings.prewarmWorker
+            ? prewarmedWorker(settings.worker)
+            : { worker: processWorker(settings.worker) }),
     };
 }

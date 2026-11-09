@@ -81,6 +81,16 @@ export function invokeProcess(
     });
 }
 
+export function workerReceipt(receipt: unknown): WorkerResult {
+    if (
+        receipt === 'completed' ||
+        receipt === 'review' ||
+        receipt === 'recovered'
+    )
+        return receipt;
+    throw new Error('Worker exited without a valid receipt');
+}
+
 /** The launch command owns OS isolation, process supervision and network routing. */
 export function processWorker(launch: Launch) {
     return async (
@@ -90,12 +100,6 @@ export function processWorker(launch: Launch) {
         const receipt = (
             await invokeProcess(launch, request, signal, 128)
         ).trim();
-        if (
-            receipt === 'completed' ||
-            receipt === 'review' ||
-            receipt === 'recovered'
-        )
-            return receipt;
-        throw new Error('Worker exited without a valid receipt');
+        return workerReceipt(receipt);
     };
 }

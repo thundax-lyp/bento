@@ -74,6 +74,10 @@ node --experimental-strip-types src/execution-service/start.ts
 
 启用 Temporal 调度时，按 [Temporal 开发环境](HOW-TO-TEMPORAL-DEV.md#接入-bento)为执行服务配置独占 Task Queue。
 
+在私有 `BENTO_HOST_CONFIG` 中设置 `"prewarmWorker": true`，并给 [DSH Worker 入口](../../src/execution-service/run-worker.ts)传入 `--warm`，即可启用单槽预热。Worker 导入 bootstrap 后进入空闲状态，每次收到 Run 才绑定当次 Session、Workspace 和授权。bootstrap 必须为每次调用创建独立运行时，并在回执前关闭该次运行的 Agent、连接和监听器。bootstrap 模块可预加载依赖，运行数据与授权只放在该次调用内。
+
+受信启动器负责隔离 Worker 及其子进程，并将终止信号传给整个容器或进程组。异常退出、租约超时或需要人工核对的回执会淘汰该 Worker。执行服务在旧进程关闭后补位。关闭服务时等待预热进程退出，随后释放控制器锁。停用预热时移除私有配置中的 `prewarmWorker` 和 Worker 命令的 `--warm`，再重启执行服务。
+
 遇到 worker 失联时，Two 撤销旧代授权并在原卷上恢复 Session。恢复 worker 只对账会话历史，原 prompt 不重发。Run 进入 `needs_review` 时，可信部署端先独立核对预期修改，再通过[进程内 `reviewRun`](../../src/execution-service/service.ts) 提供代次、稳定操作 ID 和预期整卷哈希。Two 核对恢复回执、绑定、UNKNOWN 操作及卷快照，原子保存确认记录和 diff。核对失败时，Run 继续等待可信核对，diff 暂不可用。
 
 2026-11-09 的纵向验收使用单控制器、单执行宿主、一个受邀账号和固定文本编辑工具。经真实 OpenShell 和模型完成 Two HTTP 与 One 页面两轮验证，覆盖工具回执前的 worker SIGKILL、同一 Session 和原卷恢复、旧代拒绝、UNKNOWN 保留及页面 diff 下载。命令隔离为 `partial`。真实多账号负载、任意工具、控制器各阶段故障及 HA 仍按[验收门槛](../research/implementation.md#验收门槛)验证。
