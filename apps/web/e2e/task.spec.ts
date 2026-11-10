@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 
 test('登录、导入文本、提交任务、刷新找回并下载修改', async ({ page }) => {
     await page.goto('/');
@@ -48,4 +49,30 @@ test('登录、导入文本、提交任务、刷新找回并下载修改', async
         '找不到这个页面或任务。',
     );
     await expect(page.getByRole('link', { name: '下载 diff' })).toHaveCount(0);
+});
+
+test('受邀注册后用密码登录，注销后该账号无法再登录', async ({ page }) => {
+    const password = randomUUID();
+    await page.goto('/register');
+    await page.getByLabel('账号').fill('guest');
+    await page.getByLabel('邀请码').fill('demo-invite');
+    await page.getByLabel('新密码').fill(password);
+    await page.getByRole('button', { name: '注册', exact: true }).click();
+    await expect(page).toHaveURL(/\/login$/);
+
+    await page.getByLabel('账号').fill('guest');
+    await page.getByLabel('密码或邀请码').fill(password);
+    await page.getByRole('button', { name: '登录', exact: true }).click();
+    await page.getByRole('link', { name: '账号设置' }).click();
+    await page.getByLabel('密码或旧账号邀请码').fill(password);
+    await page.getByRole('checkbox', { name: '我已了解注销后果' }).check();
+    await page.getByRole('button', { name: '确认注销账号' }).click();
+    await expect(page).toHaveURL(/\/login\?closed=1/);
+    await expect(page.getByRole('status')).toContainText('账号已关闭');
+
+    await page.getByLabel('账号').fill('guest');
+    await page.getByLabel('密码或邀请码').fill(password);
+    await page.getByRole('button', { name: '登录', exact: true }).click();
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(page).toHaveURL(/\/login\?closed=1/);
 });

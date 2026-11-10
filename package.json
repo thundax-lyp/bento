@@ -26,6 +26,8 @@
         "typescript-eslint": "^8.72.1"
     },
     "dependencies": {
+        "@aws-sdk/client-s3": "3.1164.0",
+        "@aws-sdk/s3-request-presigner": "3.1164.0",
         "@deepseek-ai/cordis": "4.0.5",
         "@deepseek-ai/dsh-host-webserver": "0.2.1-rc.4",
         "@deepseek-ai/dsh-session-persistence": "0.2.1-rc.4",

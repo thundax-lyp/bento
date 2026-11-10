@@ -403,6 +403,44 @@ if (process.argv[2] === '--effect-worker') {
         }
     });
 
+    test('private project initialization replays the same project after controller restart', async () => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-project-replay-'));
+        const host = localHost(join(state, 'volume'));
+        let service = await start(state, host);
+        const key = 'space-initialization-key';
+        const input = { name: 'Space project', files: readme };
+        try {
+            const first = await client(service.url)('', 'POST', input, key);
+            assert.equal(first.status, 201);
+            await service.close();
+            service = await start(state, host);
+            const api = client(service.url);
+            const retry = await api('', 'POST', input, key);
+            assert.equal(retry.status, 200);
+            assert.equal(retry.json().id, first.json().id);
+            assert.equal(
+                (await api('', 'POST', { ...input, name: 'Other input' }, key))
+                    .status,
+                409,
+            );
+            assert.deepEqual(
+                (await api('')).json().projects?.map((row) => row.id),
+                [first.json().id],
+            );
+            const otherOwner = await client(service.url, 'account-b')(
+                '',
+                'POST',
+                input,
+                key,
+            );
+            assert.equal(otherOwner.status, 201);
+            assert.notEqual(otherOwner.json().id, first.json().id);
+        } finally {
+            await service.close();
+            await rm(state, { recursive: true, force: true });
+        }
+    });
+
     test('private HTTP, three-account FIFO, next generation and immutable diff across restart', async () => {
         const state = await mkdtemp(join(tmpdir(), 'bento-http-test-'));
         const base = localHost(join(state, 'volume'));

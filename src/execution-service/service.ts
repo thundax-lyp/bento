@@ -81,6 +81,7 @@ export async function serveExecution(options: Options) {
     let importing = false;
     let closeWarmWorker: (() => Promise<void>) | undefined;
     let scheduler: Awaited<ReturnType<typeof temporalRuns>> | undefined;
+    const purges = new Map<string, Promise<boolean>>();
 
     async function close() {
         if (stop.signal.aborted) return;
@@ -92,6 +93,7 @@ export async function serveExecution(options: Options) {
         );
         for (const socket of sockets) socket.destroy();
         await active;
+        await Promise.allSettled(purges.values());
         await scheduler?.close();
         await closeWarmWorker?.();
         await Promise.all(closed);
@@ -510,7 +512,45 @@ export async function serveExecution(options: Options) {
             }, delay);
         }
 
-        const url = await listen(executionHttp(db, token, wake), options.port);
+        function purgeOwner(owner: string) {
+            const existing = purges.get(owner);
+            if (existing) return existing;
+            stop.signal.throwIfAborted();
+            db.drainOwner(owner);
+            const task = (async () => {
+                if ((scheduler && active) || !db.ownerDrained(owner))
+                    return false;
+                const bindings = db.ownerBindings(owner);
+                for (const binding of bindings) {
+                    const runs = db.projectRunIds(binding.project);
+                    if (
+                        runs.some((run) => [...assigned.values()].includes(run))
+                    )
+                        return false;
+                    if (scheduler) {
+                        let settled = true;
+                        for (const run of runs)
+                            if (!(await scheduler.purgeClosed(run)))
+                                settled = false;
+                        if (!settled) return false;
+                    }
+                    if (!host.purge)
+                        throw new Error(
+                            'Execution host cleanup is unavailable',
+                        );
+                    await execution.purge(binding, host.purge.bind(host));
+                    db.purgeProject(binding);
+                }
+                return true;
+            })().finally(() => purges.delete(owner));
+            purges.set(owner, task);
+            return task;
+        }
+
+        const url = await listen(
+            executionHttp(db, token, wake, purgeOwner),
+            options.port,
+        );
         wake();
         return { url, close, reviewRun };
     } catch (error) {

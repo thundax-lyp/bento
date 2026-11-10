@@ -92,6 +92,23 @@ export class SessionHistory {
         }
     }
 
+    purge(session: string) {
+        for (const [key, grant] of this.readers) {
+            if (grant.session === session) this.readers.delete(key);
+        }
+        this.transaction(() => {
+            for (const table of [
+                'events',
+                'batch_receipts',
+                'batch_intents',
+                'sessions',
+            ])
+                this.db
+                    .prepare('DELETE FROM ' + table + ' WHERE id = ?')
+                    .run(session);
+        });
+    }
+
     dispatch(body: string, grant: Grant) {
         try {
             const query = JSON.parse(body) as Record<string, unknown>;

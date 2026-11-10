@@ -4,6 +4,7 @@ import {
     Client,
     Connection,
     WorkflowExecutionAlreadyStartedError,
+    WorkflowNotFoundError,
 } from '@temporalio/client';
 import { NativeConnection, Worker } from '@temporalio/worker';
 
@@ -55,6 +56,28 @@ export async function temporalRuns(
             );
         });
         return {
+            async purgeClosed(runId: string) {
+                const handle = client.workflow.getHandle('bento-run-' + runId);
+                return connection.withDeadline(Date.now() + 5000, async () => {
+                    try {
+                        const execution = await handle.describe();
+                        if (execution.status.name === 'RUNNING') return false;
+                        await connection.workflowService.deleteWorkflowExecution(
+                            {
+                                namespace,
+                                workflowExecution: {
+                                    workflowId: handle.workflowId,
+                                    runId: execution.runId,
+                                },
+                            },
+                        );
+                        return false; // Confirm absence on a subsequent pass.
+                    } catch (error) {
+                        if (error instanceof WorkflowNotFoundError) return true;
+                        throw error;
+                    }
+                });
+            },
             async enqueue(runId: string) {
                 try {
                     await connection.withDeadline(Date.now() + 5000, () =>

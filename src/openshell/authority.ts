@@ -70,6 +70,50 @@ export class Authority {
         this.db.close();
     }
 
+    checkPurge(binding: Binding) {
+        const row = this.db
+            .prepare('SELECT * FROM execution_sessions WHERE session = ?')
+            .get(binding.session) as Session | undefined;
+        if (
+            row &&
+            (row.state !== 'READY' ||
+                row.capability !== null ||
+                row.tenant !== binding.tenant ||
+                row.project !== binding.project ||
+                row.sandbox !== binding.sandbox ||
+                row.volume !== binding.volume)
+        )
+            throw new Error('Session is not safe to purge');
+        if (
+            this.db
+                .prepare(
+                    'SELECT 1 FROM execution_sessions WHERE session <> ? AND (sandbox = ? OR volume = ?)',
+                )
+                .get(binding.session, binding.sandbox, binding.volume)
+        )
+            throw new Error('Workspace is shared');
+        return row?.generation;
+    }
+
+    purge(session: string) {
+        this.db.exec('BEGIN IMMEDIATE');
+        try {
+            for (const table of [
+                'operations',
+                'management_starts',
+                'management_stops',
+                'execution_sessions',
+            ])
+                this.db
+                    .prepare('DELETE FROM ' + table + ' WHERE session = ?')
+                    .run(session);
+            this.db.exec('COMMIT');
+        } catch (error) {
+            this.db.exec('ROLLBACK');
+            throw error;
+        }
+    }
+
     bind(binding: Binding, evidence: PolicyEvidence) {
         if (
             !evidence.installed ||

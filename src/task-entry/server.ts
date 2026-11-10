@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { Server } from 'node:http';
 import { Server as TcpServer } from 'node:net';
 import { Context } from '@deepseek-ai/cordis';
@@ -13,13 +12,14 @@ import {
     runPrompt,
 } from './protocol.ts';
 import type { Backend, Operation } from './protocol.ts';
+import type { mySpace } from './space.ts';
 
 type Options = {
-    mode: 'mock' | 'http';
     port: number;
     origin: string;
     auth: ReturnType<typeof sessionAuth>;
     backend: Backend;
+    space?: ReturnType<typeof mySpace>;
 };
 
 const maxJsonBytes = 8 * 1024 * 1024;
@@ -158,56 +158,59 @@ async function route(
 }
 
 export async function taskEntryServer({
-    mode,
     port,
     origin,
     auth,
     backend,
+    space,
 }: Options) {
-    const assets = new Map([
-        [
-            '/',
-            {
-                type: 'text/html',
-                body: readFileSync(
-                    new URL('./index.html', import.meta.url),
-                    'utf8',
-                ).replace('__MODE__', mode),
-            },
-        ],
-        [
-            '/client.js',
-            {
-                type: 'text/javascript',
-                body: readFileSync(
-                    new URL('./client.js', import.meta.url),
-                    'utf8',
-                ),
-            },
-        ],
-        [
-            '/style.css',
-            {
-                type: 'text/css',
-                body: readFileSync(
-                    new URL('./style.css', import.meta.url),
-                    'utf8',
-                ),
-            },
-        ],
-    ]);
-
+    const inFlight = new Map<string, number>();
+    let cleaning: Promise<void> | undefined;
     let closing = false;
+    function sweepAccounts() {
+        if (closing || cleaning) return;
+        cleaning = (async () => {
+            for (const {
+                ownerId: owner,
+                spaceRequired,
+            } of auth.pendingPurges()) {
+                if (closing) return;
+                if (space && !space.drain(owner)) continue;
+                if (inFlight.has(owner)) continue;
+                try {
+                    const result = await backend(owner, { kind: 'purgeOwner' });
+                    if (
+                        !('json' in result) ||
+                        !('complete' in result.json) ||
+                        !result.json.complete
+                    )
+                        continue;
+                    if (space ? !(await space.purge(owner)) : spaceRequired)
+                        continue;
+                    auth.finishPurge(owner);
+                } catch {
+                    // Retain the durable cleanup request and retry dependencies independently of login.
+                }
+            }
+        })()
+            .catch(() => undefined)
+            .finally(() => {
+                cleaning = undefined;
+            });
+    }
     const handle = async (
         request: IncomingMessage,
         response: ServerResponse,
     ) => {
+        let activeOwner: string | undefined;
         response.setHeader('Cache-Control', 'no-store');
         response.setHeader('X-Content-Type-Options', 'nosniff');
         response.setHeader('Referrer-Policy', 'no-referrer');
         response.setHeader(
             'Content-Security-Policy',
-            "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; " +
+            "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'" +
+                (space ? ' ' + space.origin : '') +
+                '; ' +
                 "base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
         );
 
@@ -215,9 +218,6 @@ export async function taskEntryServer({
             const url = request.url ?? '';
             if (!url.startsWith('/') || url.startsWith('//')) throw notFound();
             const [path = '', query] = url.split('?', 2);
-            const asset =
-                request.method === 'GET' ? assets.get(path) : undefined;
-            if (asset) return reply(response, 200, asset.type, asset.body);
             if (!path.startsWith('/api/')) throw notFound();
 
             if (
@@ -231,20 +231,63 @@ export async function taskEntryServer({
                 );
             }
             if (request.method === 'POST' && path === '/api/login') {
-                const login = auth.login(
+                const login = await auth.login(
                     request,
                     await readJson(request, 4096),
                 );
                 response.setHeader('Set-Cookie', login.cookie);
                 return json(response, 200, { account: login.account });
             }
+            if (request.method === 'POST' && path === '/api/register') {
+                return json(
+                    response,
+                    201,
+                    await auth.register(await readJson(request, 4096)),
+                );
+            }
             if (request.method === 'POST' && path === '/api/logout') {
                 response.setHeader('Set-Cookie', auth.logout(request));
                 return json(response, 200, {});
             }
+            if (request.method === 'POST' && path === '/api/account/close') {
+                const cookie = await auth.closeAccount(
+                    request,
+                    await readJson(request, 4096),
+                    !!space,
+                );
+                response.setHeader('Set-Cookie', cookie);
+                sweepAccounts();
+                return json(response, 200, {});
+            }
             const account = auth.account(request);
+            activeOwner = account.ownerId;
+            inFlight.set(activeOwner, (inFlight.get(activeOwner) ?? 0) + 1);
             if (request.method === 'GET' && path === '/api/session') {
                 return json(response, 200, { account: account.account });
+            }
+            if (
+                space &&
+                (path === '/api/space' || path.startsWith('/api/space/'))
+            ) {
+                const result = await space.route(
+                    account.ownerId,
+                    request.method,
+                    path,
+                    () => readJson(request, 32 * 1024),
+                    request.headersDistinct['idempotency-key'],
+                );
+                if ('executionStatus' in result)
+                    return json(
+                        response,
+                        result.executionStatus,
+                        result.execution,
+                    );
+                if ('redirect' in result && result.redirect) {
+                    response.writeHead(302, { Location: result.redirect });
+                    response.end();
+                    return;
+                }
+                return json(response, 200, result);
             }
             const operation = await route(request, path);
             const result = await backend(account.ownerId, operation);
@@ -270,18 +313,30 @@ export async function taskEntryServer({
                       );
             request.resume();
             json(response, failure.status, {
-                error: { code: failure.code, message: failure.message },
+                error: {
+                    code: failure.code,
+                    message: failure.message,
+                    ...(failure.issues ? { issues: failure.issues } : {}),
+                },
             });
+        } finally {
+            if (activeOwner) {
+                const count = inFlight.get(activeOwner) ?? 0;
+                if (count <= 1) inFlight.delete(activeOwner);
+                else inFlight.set(activeOwner, count - 1);
+            }
         }
     };
 
     const context = new Context();
+    let cleanupTimer: ReturnType<typeof setInterval> | undefined;
     const requests = new Set<Promise<void>>();
     let listener: Server | undefined;
     let stopping: Promise<void> | undefined;
     function close() {
         return (stopping ??= (async () => {
             closing = true;
+            clearInterval(cleanupTimer);
             if (listener?.listening) {
                 const server = listener;
                 // HTTP close stops its timeout scanner immediately. Keep it
@@ -293,7 +348,16 @@ export async function taskEntryServer({
             }
             // An aborted client can close its socket before its handler has finished.
             await Promise.allSettled(requests);
-            await context.fiber.dispose();
+            await cleaning;
+            try {
+                await context.fiber.dispose();
+            } finally {
+                try {
+                    await space?.close();
+                } finally {
+                    auth.close();
+                }
+            }
         })());
     }
 
@@ -323,10 +387,10 @@ export async function taskEntryServer({
             requests.add(work);
             return work;
         }
-        for (const path of assets.keys())
-            web.register({ kind: 'exact', path, handler: dispatch });
         web.register({ kind: 'prefix', path: '/api', handler: dispatch });
         web.registerFallback(dispatch);
+        cleanupTimer = setInterval(sweepAccounts, 2000).unref();
+        sweepAccounts();
         return { origin: web.getOrigin(), close };
     } catch (error) {
         await close();

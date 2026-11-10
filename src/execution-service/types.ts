@@ -29,6 +29,8 @@ export interface ExecutionHost extends SingleHostSandbox {
     ): Promise<Observation>;
     /** Read a quiescent volume independently of the worker. */
     snapshot(binding: Binding): Promise<readonly FileText[]>;
+    /** Delete this binding's sandbox and volume, and confirm both are absent. */
+    purge?(binding: Binding): Promise<void>;
     workerSlots?: 1 | 2;
     warmWorker?(signal: AbortSignal): () => Promise<void>;
     worker(

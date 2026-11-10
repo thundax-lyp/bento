@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { conflict, missing, RequestError } from './input.ts';
 import type { Binding, FileText, ProjectStatus, RunStatus } from './types.ts';
@@ -83,6 +83,11 @@ export class Store {
                 sandbox TEXT NOT NULL UNIQUE, volume TEXT NOT NULL UNIQUE, source TEXT
             );
             CREATE INDEX IF NOT EXISTS projects_owner ON projects(owner);
+            CREATE TABLE IF NOT EXISTS draining_owners (owner TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS project_requests (
+                owner TEXT NOT NULL, key TEXT NOT NULL, digest TEXT NOT NULL,
+                projectId TEXT NOT NULL REFERENCES projects(id), PRIMARY KEY(owner,key)
+            );
             CREATE TABLE IF NOT EXISTS runs (
                 id TEXT PRIMARY KEY, projectId TEXT NOT NULL REFERENCES projects(id), sessionId TEXT NOT NULL,
                 key TEXT NOT NULL, prompt TEXT NOT NULL, status TEXT NOT NULL,
@@ -109,7 +114,121 @@ export class Store {
         this.db.close();
     }
 
+    drainOwner(owner: string) {
+        this.db
+            .prepare('INSERT OR IGNORE INTO draining_owners VALUES (?)')
+            .run(owner);
+    }
+
+    private requireOpenOwner(owner: string) {
+        if (
+            this.db
+                .prepare('SELECT 1 FROM draining_owners WHERE owner = ?')
+                .get(owner)
+        )
+            throw conflict('owner_closed', 'Account is closed.');
+    }
+
+    ownerDrained(owner: string) {
+        return !this.db
+            .prepare(
+                `SELECT 1 FROM projects p WHERE p.owner = ? AND
+              (p.status = 'importing' OR EXISTS (SELECT 1 FROM runs r WHERE r.projectId = p.id AND r.status IN ${pending}))`,
+            )
+            .get(owner);
+    }
+
+    ownerBindings(owner: string) {
+        return (
+            this.db
+                .prepare('SELECT * FROM projects WHERE owner = ?')
+                .all(owner) as Project[]
+        ).map(projectBinding);
+    }
+
+    projectRunIds(project: string) {
+        return this.db
+            .prepare('SELECT id FROM runs WHERE projectId = ?')
+            .all(project)
+            .map((row) => row.id as string);
+    }
+
+    purgeProject(binding: Binding) {
+        this.db.exec('BEGIN IMMEDIATE');
+        try {
+            this.ownedProject(binding.tenant, binding.project);
+            for (const table of [
+                'run_dispatches',
+                'run_reviews',
+                'run_recoveries',
+            ])
+                this.db
+                    .prepare(
+                        'DELETE FROM ' +
+                            table +
+                            ' WHERE runId IN (SELECT id FROM runs WHERE projectId = ?)',
+                    )
+                    .run(binding.project);
+            this.db
+                .prepare('DELETE FROM runs WHERE projectId = ?')
+                .run(binding.project);
+            this.db
+                .prepare('DELETE FROM project_requests WHERE projectId = ?')
+                .run(binding.project);
+            this.db
+                .prepare('DELETE FROM projects WHERE id = ? AND owner = ?')
+                .run(binding.project, binding.tenant);
+            this.db.exec('COMMIT');
+        } catch (error) {
+            this.db.exec('ROLLBACK');
+            throw error;
+        }
+    }
+
+    createProject(
+        owner: string,
+        name: string,
+        files: FileText[],
+        key?: string,
+    ) {
+        if (!key)
+            return {
+                replay: false,
+                project: this.addProject(owner, name, files),
+            };
+        const digest = createHash('sha256')
+            .update(JSON.stringify({ name, files }))
+            .digest('hex');
+        this.db.exec('BEGIN IMMEDIATE');
+        try {
+            const prior = this.db
+                .prepare(
+                    'SELECT digest, projectId FROM project_requests WHERE owner = ? AND key = ?',
+                )
+                .get(owner, key) as
+                { digest: string; projectId: string } | undefined;
+            if (prior && prior.digest !== digest)
+                throw conflict(
+                    'idempotency_conflict',
+                    'Idempotency-Key already belongs to a different input.',
+                );
+            const project = prior
+                ? this.project(owner, prior.projectId)
+                : this.addProject(owner, name, files);
+            if (!prior)
+                this.db
+                    .prepare('INSERT INTO project_requests VALUES (?,?,?,?)')
+                    .run(owner, key, digest, project.id);
+            this.db.exec('COMMIT');
+            return { replay: !!prior, project };
+        } catch (error) {
+            this.db.exec('ROLLBACK');
+            throw error;
+        }
+    }
+
     addProject(owner: string, name: string, files: FileText[]) {
+        this.requireOpenOwner(owner);
         const id = randomUUID();
         const row: Project = {
             id,
@@ -159,6 +278,7 @@ export class Store {
     }
 
     addRun(owner: string, projectId: string, key: string, prompt: string) {
+        this.requireOpenOwner(owner);
         const project = this.ownedProject(owner, projectId);
         const previous = this.db
             .prepare('SELECT * FROM runs WHERE projectId=? AND key=?')
@@ -242,7 +362,8 @@ export class Store {
     }
 
     run(owner: string, project: string, id: string) {
-        return runView(this.ownedRun(owner, project, id));
+        const run = this.ownedRun(owner, project, id);
+        return { ...runView(run), prompt: run.prompt };
     }
 
     diff(owner: string, project: string, id: string) {

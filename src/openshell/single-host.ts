@@ -53,6 +53,15 @@ export class SingleHostExecution {
         return this.authority.inspect(session);
     }
 
+    async purge(binding: Binding, remove: (binding: Binding) => Promise<void>) {
+        const generation = this.authority.checkPurge(binding);
+        if (generation !== undefined)
+            this.gate.revokeChannels(binding.session, generation);
+        await remove(binding);
+        this.history.purge(binding.session);
+        this.authority.purge(binding.session);
+    }
+
     operation(session: string, generation: number, id: string) {
         return this.authority.operation(session, generation, id);
     }

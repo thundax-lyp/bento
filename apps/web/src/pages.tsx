@@ -15,6 +15,8 @@ import {
 } from 'react-router';
 import {
     ApiError,
+    closeAccount,
+    register,
     createProject,
     createRun,
     diffQuery,
@@ -31,6 +33,7 @@ import {
 import type { Run, Session } from './api';
 import { loadDraft, prepareSubmission, saveDraft } from './draft';
 import type { Draft } from './draft';
+import { SpaceList } from './space';
 import { Button, DiffPreview, Notice } from './ui';
 
 const errorMessage = (error: unknown) =>
@@ -83,7 +86,7 @@ export function Login() {
                     <p className="font-semibold">◇ Bento</p>
                     <h1 className="text-2xl font-semibold">登录工作台</h1>
                     <p className="text-sm text-zinc-600">
-                        使用受邀账号和邀请码登录。
+                        使用密码登录。尚未注册的旧账号可以继续使用邀请码。
                     </p>
                 </div>
                 <label>
@@ -96,7 +99,7 @@ export function Login() {
                     />
                 </label>
                 <label>
-                    邀请码
+                    密码或邀请码
                     <input
                         className={fieldClass}
                         name="invite"
@@ -115,6 +118,137 @@ export function Login() {
                 >
                     {mutation.isPending ? '正在登录…' : '登录'}
                 </Button>
+                <Link
+                    className="block text-sm underline"
+                    to={'/register' + (search.size ? '?' + search : '')}
+                >
+                    使用邀请码注册
+                </Link>
+                {search.get('closed') === '1' && (
+                    <p role="status" className="text-sm">
+                        账号已关闭，已提交的任务结束后会清理数据。
+                    </p>
+                )}
+            </form>
+        </main>
+    );
+}
+
+export function Register() {
+    const navigate = useNavigate();
+    const [search] = useSearchParams();
+    const loginUrl = '/login' + (search.size ? '?' + search : '');
+    const mutation = useMutation({
+        mutationFn: (data: FormData) =>
+            register(
+                String(data.get('account') ?? ''),
+                String(data.get('invite') ?? ''),
+                String(data.get('password') ?? ''),
+            ),
+        onSuccess() {
+            return navigate(loginUrl, { replace: true });
+        },
+    });
+    function submit(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        mutation.mutate(new FormData(event.currentTarget));
+    }
+    return (
+        <main className="grid min-h-screen place-items-center bg-zinc-50 px-5">
+            <form
+                onSubmit={submit}
+                className="w-full max-w-sm space-y-5 rounded-2xl border border-zinc-200 bg-white p-8"
+            >
+                <h1 className="text-2xl font-semibold">受邀注册</h1>
+                <label>
+                    账号
+                    <input
+                        className={fieldClass}
+                        name="account"
+                        autoComplete="username"
+                        required
+                    />
+                </label>
+                <label>
+                    邀请码
+                    <input className={fieldClass} name="invite" required />
+                </label>
+                <label>
+                    新密码
+                    <input
+                        className={fieldClass}
+                        type="password"
+                        name="password"
+                        autoComplete="new-password"
+                        minLength={15}
+                        maxLength={128}
+                        required
+                    />
+                </label>
+                <p className="text-sm text-zinc-600">
+                    使用至少 15 个字符且不同于邀请码的密码。
+                </p>
+                {mutation.error && (
+                    <Notice message={errorMessage(mutation.error)} />
+                )}
+                <Button primary disabled={mutation.isPending}>
+                    注册
+                </Button>
+                <Link className="ml-3 text-sm underline" to={loginUrl}>
+                    返回登录
+                </Link>
+            </form>
+        </main>
+    );
+}
+
+export function AccountSettings() {
+    const client = useQueryClient();
+    const navigate = useNavigate();
+    const close = useMutation({
+        mutationFn: closeAccount,
+        async onSuccess() {
+            await client.cancelQueries();
+            client.clear();
+            await navigate('/login?closed=1', { replace: true });
+        },
+    });
+    function submit(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+        const data = new FormData(event.currentTarget);
+        if (data.get('confirm') === 'on')
+            close.mutate(String(data.get('password') ?? ''));
+    }
+    return (
+        <main className="mx-auto max-w-3xl space-y-5 px-5 py-10">
+            <h1 className="text-2xl font-semibold">账号设置</h1>
+            <form
+                onSubmit={submit}
+                className="space-y-4 rounded-xl border border-zinc-200 p-5"
+            >
+                <h2 className="text-lg font-semibold">注销账号</h2>
+                <p className="text-sm text-zinc-700">
+                    确认后立即失去登录权限。已提交的任务会先结束，随后清理项目、工作区、文件、任务记录和
+                    diff。清理完成后无法恢复。
+                </p>
+                <label>
+                    密码或旧账号邀请码
+                    <input
+                        className={fieldClass}
+                        name="password"
+                        type="password"
+                        autoComplete="current-password"
+                        required
+                    />
+                </label>
+                <label className="flex items-center gap-2">
+                    <input name="confirm" type="checkbox" required />
+                    我已了解注销后果
+                </label>
+                <Button primary disabled={close.isPending}>
+                    确认注销账号
+                </Button>
+                {close.error && <Notice message={errorMessage(close.error)} />}
             </form>
         </main>
     );
@@ -181,7 +315,13 @@ export function Workbench() {
                 <header className="flex min-h-15 items-center justify-between gap-3 border-b border-zinc-200 px-5 md:px-8">
                     <span className="text-sm text-zinc-600">云端工作台</span>
                     <div className="flex items-center gap-3 text-sm">
-                        <span>{account}</span>
+                        <Link
+                            className="underline"
+                            to="/account"
+                            aria-label="账号设置"
+                        >
+                            {account}
+                        </Link>
                         <Button
                             type="button"
                             disabled={exit.isPending}
@@ -437,6 +577,7 @@ export function Workspace() {
     return (
         <main className="mx-auto max-w-4xl space-y-6 px-5 py-10">
             <h1 className="text-2xl font-semibold">Workspace</h1>
+            <SpaceList />
             {projects.error && (
                 <Notice message={errorMessage(projects.error)} />
             )}
@@ -551,6 +692,14 @@ export function RunDetails() {
             <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
                 <section className="space-y-3 rounded-xl border border-zinc-200 p-4">
                     <h2 className="font-semibold">任务记录</h2>
+                    {run.data?.prompt && (
+                        <div className="rounded-lg bg-zinc-50 p-3 text-sm">
+                            <p className="mb-1 font-medium">任务要求</p>
+                            <p className="whitespace-pre-wrap break-words">
+                                {run.data.prompt}
+                            </p>
+                        </div>
+                    )}
                     <p aria-live="polite" className="text-sm text-zinc-700">
                         {run.data?.summary ??
                             (status ? runLabels[status] : '正在读取任务…')}
