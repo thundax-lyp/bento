@@ -22,7 +22,7 @@ function origin(value: string): URL {
     return url;
 }
 
-function main() {
+async function main() {
     const env = process.env;
     const mode = env.BENTO_ONE_MODE ?? 'mock';
     if (mode !== 'mock' && mode !== 'http')
@@ -81,30 +81,34 @@ function main() {
         );
     }
     const auth = sessionAuth(accounts, publicUrl.protocol === 'https:');
-    const server = taskEntryServer({
+    const server = await taskEntryServer({
         mode,
+        port,
         origin: publicUrl.origin,
         backend,
         auth,
     });
-    server.on('error', () => {
-        console.error(
-            'Bento task entry could not listen. Check its configured port.',
-        );
-        process.exitCode = 1;
-    });
-    server.listen(port, '127.0.0.1', () => {
-        console.log(
-            'Bento task entry (' + mode + ') listening on 127.0.0.1:' + port,
-        );
-    });
+    const stop = () => {
+        void server.close().catch(() => {
+            console.error('Bento task entry did not shut down cleanly.');
+            process.exitCode = 1;
+        });
+    };
+    process.on('SIGINT', stop);
+    process.on('SIGTERM', stop);
+    console.log(
+        'Bento task entry (' +
+            mode +
+            ') listening on ' +
+            new URL(server.origin).host,
+    );
 }
 
 try {
-    main();
+    await main();
 } catch {
     console.error(
-        'Invalid Bento task entry configuration. See src/task-entry/README.md.',
+        'Invalid Bento task entry configuration or listener unavailable. See src/task-entry/README.md.',
     );
     process.exitCode = 1;
 }

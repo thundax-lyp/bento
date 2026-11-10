@@ -29,3 +29,9 @@ node --env-file=runtime/task-entry.env src/task-entry/main.ts
 ```
 
 关闭页面再打开时，任务列表会从服务端重新加载。提交结果暂未确认时，浏览器只存账号及项目范围内的提交键与描述摘要。用原任务描述重试会沿用该键。空 diff 可以预览状态并下载为空文件。
+
+## HTTP 服务生命周期
+
+任务入口使用 `@deepseek-ai/dsh-host-webserver@0.2.1-rc.4` 监听回环地址和分发路由，继续使用上文的反向代理和 Web API 配置。请求头和完整请求的接收超时均设为 30 秒。
+
+收到 `SIGINT` 或 `SIGTERM` 后，任务入口停止接收新连接，等待已进入处理器的请求结束，再释放 WebServer。
