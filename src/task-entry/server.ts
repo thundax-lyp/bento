@@ -1,5 +1,8 @@
 import { readFileSync } from 'node:fs';
-import { createServer } from 'node:http';
+import { Server } from 'node:http';
+import { Server as TcpServer } from 'node:net';
+import { Context } from '@deepseek-ai/cordis';
+import WebServer from '@deepseek-ai/dsh-host-webserver';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { sessionAuth } from './auth.ts';
 import {
@@ -13,12 +16,30 @@ import type { Backend, Operation } from './protocol.ts';
 
 type Options = {
     mode: 'mock' | 'http';
+    port: number;
     origin: string;
     auth: ReturnType<typeof sessionAuth>;
     backend: Backend;
 };
 
 const maxJsonBytes = 8 * 1024 * 1024;
+const requestReceiveTimeoutMs = 30_000;
+const connectionsCheckingIntervalMs = 500;
+
+function configureReceiveTimeout(server: Server) {
+    // DSH has already called listen(). Restart Node's existing scanner so the
+    // new interval takes effect without rebinding or replacing HTTP parsing.
+    const setup = server
+        .listeners('listening')
+        .find((listener) => listener.name === 'setupConnectionsTracking');
+    if (!setup || !('connectionsCheckingInterval' in server)) {
+        throw new Error('Node HTTP connection timeout scanner is unavailable');
+    }
+    server.requestTimeout = requestReceiveTimeoutMs;
+    server.headersTimeout = requestReceiveTimeoutMs;
+    server.connectionsCheckingInterval = connectionsCheckingIntervalMs;
+    setup.call(server);
+}
 
 function reply(
     response: ServerResponse,
@@ -136,7 +157,13 @@ async function route(
     throw notFound();
 }
 
-export function taskEntryServer({ mode, origin, auth, backend }: Options) {
+export async function taskEntryServer({
+    mode,
+    port,
+    origin,
+    auth,
+    backend,
+}: Options) {
     const assets = new Map([
         [
             '/',
@@ -170,81 +197,139 @@ export function taskEntryServer({ mode, origin, auth, backend }: Options) {
         ],
     ]);
 
-    return createServer(
-        { requestTimeout: 30_000 },
-        async (request, response) => {
-            response.setHeader('Cache-Control', 'no-store');
-            response.setHeader('X-Content-Type-Options', 'nosniff');
-            response.setHeader('Referrer-Policy', 'no-referrer');
-            response.setHeader(
-                'Content-Security-Policy',
-                "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; " +
-                    "base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
-            );
+    let closing = false;
+    const handle = async (
+        request: IncomingMessage,
+        response: ServerResponse,
+    ) => {
+        response.setHeader('Cache-Control', 'no-store');
+        response.setHeader('X-Content-Type-Options', 'nosniff');
+        response.setHeader('Referrer-Policy', 'no-referrer');
+        response.setHeader(
+            'Content-Security-Policy',
+            "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; " +
+                "base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+        );
 
-            try {
-                const url = request.url ?? '';
-                if (!url.startsWith('/') || url.startsWith('//'))
-                    throw notFound();
-                const [path = '', query] = url.split('?', 2);
-                const asset =
-                    request.method === 'GET' ? assets.get(path) : undefined;
-                if (asset) return reply(response, 200, asset.type, asset.body);
-                if (!path.startsWith('/api/')) throw notFound();
+        try {
+            const url = request.url ?? '';
+            if (!url.startsWith('/') || url.startsWith('//')) throw notFound();
+            const [path = '', query] = url.split('?', 2);
+            const asset =
+                request.method === 'GET' ? assets.get(path) : undefined;
+            if (asset) return reply(response, 200, asset.type, asset.body);
+            if (!path.startsWith('/api/')) throw notFound();
 
-                if (
-                    request.method === 'POST' &&
-                    request.headers.origin !== origin
-                ) {
-                    throw new RequestError(
-                        400,
-                        'invalid_origin',
-                        '请从任务入口提交请求。',
+            if (
+                request.method === 'POST' &&
+                request.headers.origin !== origin
+            ) {
+                throw new RequestError(
+                    400,
+                    'invalid_origin',
+                    '请从任务入口提交请求。',
+                );
+            }
+            if (request.method === 'POST' && path === '/api/login') {
+                const login = auth.login(
+                    request,
+                    await readJson(request, 4096),
+                );
+                response.setHeader('Set-Cookie', login.cookie);
+                return json(response, 200, { account: login.account });
+            }
+            if (request.method === 'POST' && path === '/api/logout') {
+                response.setHeader('Set-Cookie', auth.logout(request));
+                return json(response, 200, {});
+            }
+            const account = auth.account(request);
+            if (request.method === 'GET' && path === '/api/session') {
+                return json(response, 200, { account: account.account });
+            }
+            const operation = await route(request, path);
+            const result = await backend(account.ownerId, operation);
+            if ('diff' in result) {
+                if (new URLSearchParams(query).get('download') === '1') {
+                    response.setHeader(
+                        'Content-Disposition',
+                        'attachment; filename="bento.diff"',
                     );
                 }
-                if (request.method === 'POST' && path === '/api/login') {
-                    const login = auth.login(
-                        request,
-                        await readJson(request, 4096),
-                    );
-                    response.setHeader('Set-Cookie', login.cookie);
-                    return json(response, 200, { account: login.account });
-                }
-                if (request.method === 'POST' && path === '/api/logout') {
-                    response.setHeader('Set-Cookie', auth.logout(request));
-                    return json(response, 200, {});
-                }
-                const account = auth.account(request);
-                if (request.method === 'GET' && path === '/api/session') {
-                    return json(response, 200, { account: account.account });
-                }
-                const operation = await route(request, path);
-                const result = await backend(account.ownerId, operation);
-                if ('diff' in result) {
-                    if (new URLSearchParams(query).get('download') === '1') {
-                        response.setHeader(
-                            'Content-Disposition',
-                            'attachment; filename="bento.diff"',
-                        );
-                    }
-                    return reply(response, 200, 'text/plain', result.diff);
-                }
-                return json(response, result.status, result.json);
-            } catch (error) {
-                if (response.destroyed) return;
-                const failure =
-                    error instanceof RequestError
-                        ? error
-                        : new RequestError(
-                              500,
-                              'server_error',
-                              '任务入口暂不可用，请稍后重试。',
-                          );
-                request.resume();
-                json(response, failure.status, {
-                    error: { code: failure.code, message: failure.message },
+                return reply(response, 200, 'text/plain', result.diff);
+            }
+            return json(response, result.status, result.json);
+        } catch (error) {
+            if (response.destroyed) return;
+            const failure =
+                error instanceof RequestError
+                    ? error
+                    : new RequestError(
+                          500,
+                          'server_error',
+                          '任务入口暂不可用，请稍后重试。',
+                      );
+            request.resume();
+            json(response, failure.status, {
+                error: { code: failure.code, message: failure.message },
+            });
+        }
+    };
+
+    const context = new Context();
+    const requests = new Set<Promise<void>>();
+    let listener: Server | undefined;
+    let stopping: Promise<void> | undefined;
+    function close() {
+        return (stopping ??= (async () => {
+            closing = true;
+            if (listener?.listening) {
+                const server = listener;
+                // HTTP close stops its timeout scanner immediately. Keep it
+                // running while existing connections drain. DSH disposes it below.
+                await new Promise<void>((resolve) => {
+                    TcpServer.prototype.close.call(server, () => resolve());
+                    server.closeIdleConnections();
                 });
             }
-        },
-    );
+            // An aborted client can close its socket before its handler has finished.
+            await Promise.allSettled(requests);
+            await context.fiber.dispose();
+        })());
+    }
+
+    try {
+        await context.plugin(WebServer, {
+            host: '127.0.0.1',
+            port,
+            compression: 'none',
+        });
+        const web = context.webServer;
+        // The pinned DSH release does not expose the Node listener or its timeouts.
+        const native: unknown = Reflect.get(web, 'server');
+        if (!(native instanceof Server) || !native.listening)
+            throw new Error(
+                'DSH WebServer did not expose a listening HTTP server',
+            );
+        listener = native;
+        configureReceiveTimeout(listener);
+        function dispatch(request: IncomingMessage, response: ServerResponse) {
+            if (closing)
+                return json(response, 503, {
+                    error: { code: 'shutting_down', message: '服务正在停止。' },
+                });
+            const work = handle(request, response).finally(() =>
+                requests.delete(work),
+            );
+            requests.add(work);
+            return work;
+        }
+        for (const path of assets.keys())
+            web.register({ kind: 'exact', path, handler: dispatch });
+        web.register({ kind: 'prefix', path: '/api', handler: dispatch });
+        web.registerFallback(dispatch);
+        return { origin: web.getOrigin(), close };
+    } catch (error) {
+        await close();
+        throw error;
+    }
 }
