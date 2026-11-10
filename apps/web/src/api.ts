@@ -70,7 +70,10 @@ export const runUrl = (project: string, run: string) =>
 export const downloadUrl = (project: string, run: string) =>
     runApi(project, run) + '/diff?download=1';
 export const isActive = (status: Run['status'] | undefined) =>
-    status === 'queued' || status === 'running' || status === 'recovering';
+    status === 'queued' ||
+    status === 'running' ||
+    status === 'recovering' ||
+    status === 'needs_review';
 export const runLabels: Record<Run['status'], string> = {
     queued: '排队中',
     running: '运行中',
