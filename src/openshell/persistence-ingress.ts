@@ -21,12 +21,14 @@ export function createPersistenceIngress(
             const grant = resolveGrant(req.headers.authorization);
             if (!grant || req.method !== 'POST' || req.url !== '/rpc')
                 throw new Error('denied');
-            let body = '';
-            for await (const part of req) {
-                body += part;
-                if (Buffer.byteLength(body) > 1024 * 1024)
-                    throw new Error('oversize');
+            const chunks: Buffer[] = [];
+            let size = 0;
+            for await (const chunk of req as AsyncIterable<Buffer>) {
+                size += chunk.length;
+                if (size > 1024 * 1024) throw new Error('oversize');
+                chunks.push(chunk);
             }
+            const body = Buffer.concat(chunks, size).toString('utf8');
             const query = JSON.parse(body);
             const binding = gate.require(grant);
             if (
