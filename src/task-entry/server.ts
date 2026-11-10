@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { Server } from 'node:http';
+import { Server as TcpServer } from 'node:net';
 import { Context } from '@deepseek-ai/cordis';
 import WebServer from '@deepseek-ai/dsh-host-webserver';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -22,6 +23,23 @@ type Options = {
 };
 
 const maxJsonBytes = 8 * 1024 * 1024;
+const requestReceiveTimeoutMs = 30_000;
+const connectionsCheckingIntervalMs = 500;
+
+function configureReceiveTimeout(server: Server) {
+    // DSH has already called listen(). Restart Node's existing scanner so the
+    // new interval takes effect without rebinding or replacing HTTP parsing.
+    const setup = server
+        .listeners('listening')
+        .find((listener) => listener.name === 'setupConnectionsTracking');
+    if (!setup || !('connectionsCheckingInterval' in server)) {
+        throw new Error('Node HTTP connection timeout scanner is unavailable');
+    }
+    server.requestTimeout = requestReceiveTimeoutMs;
+    server.headersTimeout = requestReceiveTimeoutMs;
+    server.connectionsCheckingInterval = connectionsCheckingIntervalMs;
+    setup.call(server);
+}
 
 function reply(
     response: ServerResponse,
@@ -266,9 +284,12 @@ export async function taskEntryServer({
             closing = true;
             if (listener?.listening) {
                 const server = listener;
-                await new Promise<void>((resolve) =>
-                    server.close(() => resolve()),
-                );
+                // HTTP close stops its timeout scanner immediately. Keep it
+                // running while existing connections drain. DSH disposes it below.
+                await new Promise<void>((resolve) => {
+                    TcpServer.prototype.close.call(server, () => resolve());
+                    server.closeIdleConnections();
+                });
             }
             // An aborted client can close its socket before its handler has finished.
             await Promise.allSettled(requests);
@@ -290,8 +311,7 @@ export async function taskEntryServer({
                 'DSH WebServer did not expose a listening HTTP server',
             );
         listener = native;
-        listener.requestTimeout = 30_000;
-        listener.headersTimeout = 30_000;
+        configureReceiveTimeout(listener);
         function dispatch(request: IncomingMessage, response: ServerResponse) {
             if (closing)
                 return json(response, 503, {

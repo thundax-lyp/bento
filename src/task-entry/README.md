@@ -32,6 +32,6 @@ node --env-file=runtime/task-entry.env src/task-entry/main.ts
 
 ## HTTP 服务生命周期
 
-任务入口使用 `@deepseek-ai/dsh-host-webserver@0.2.1-rc.4` 监听回环地址和分发路由，继续使用上文的反向代理和 Web API 配置。请求头和完整请求的接收超时均设为 30 秒。
+任务入口使用 `@deepseek-ai/dsh-host-webserver@0.2.1-rc.4` 监听回环地址和分发路由，继续使用上文的反向代理和 Web API 配置。请求头和完整请求的接收期限均为 30 秒，Node 每 500 毫秒检查一次，超时返回 `408`。该版本未公开监听超时配置，任务入口在启动时重启 Node 的连接超时检查。升级 Node 或 WebServer 时，用未发完的请求头和请求体复验。
 
-收到 `SIGINT` 或 `SIGTERM` 后，任务入口停止接收新连接，等待已进入处理器的请求结束，再释放 WebServer。
+收到 `SIGINT` 或 `SIGTERM` 后，任务入口停止接收新连接。已连接的客户端仍受接收期限约束。任务入口等待已进入处理器的请求结束，再释放 WebServer。
