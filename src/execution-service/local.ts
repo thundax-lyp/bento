@@ -132,6 +132,9 @@ export function localHost(root: string): ExecutionHost {
             return running(binding);
         },
         snapshot: (binding) => readTextVolume(volume(binding)),
+        async purge(binding) {
+            await rm(project(binding), { recursive: true, force: true });
+        },
         start,
         async stop(binding) {
             try {

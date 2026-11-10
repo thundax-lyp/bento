@@ -18,6 +18,7 @@ export type Run = {
         | 'failed';
     updatedAt: string;
     summary?: string;
+    prompt?: string;
 };
 
 export class ApiError extends Error {
@@ -29,7 +30,7 @@ export class ApiError extends Error {
     }
 }
 
-async function request(path: string, init?: RequestInit) {
+export async function request(path: string, init?: RequestInit) {
     const response = await fetch(path, { credentials: 'same-origin', ...init });
     if (!response.ok) {
         const body: { error?: { message?: string } } | null = await response
@@ -43,11 +44,11 @@ async function request(path: string, init?: RequestInit) {
     return response;
 }
 
-async function json<T>(path: string, init?: RequestInit): Promise<T> {
+export async function json<T>(path: string, init?: RequestInit): Promise<T> {
     return (await request(path, init)).json() as Promise<T>;
 }
 
-function post<T>(path: string, body: unknown, key?: string) {
+export function post<T>(path: string, body: unknown, key?: string) {
     return json<T>(path, {
         method: 'POST',
         headers: {
@@ -79,8 +80,15 @@ export const runLabels: Record<Run['status'], string> = {
     failed: '失败',
 };
 
-export const login = (account: string, invite: string) =>
-    post<Session>('/api/login', { account, invite });
+export const login = (account: string, password: string) =>
+    post<Session>('/api/login', { account, password });
+export const register = (account: string, invite: string, password: string) =>
+    post<Session>('/api/register', { account, invite, password });
+export const closeAccount = (password: string) =>
+    post<Record<string, never>>('/api/account/close', {
+        password,
+        confirmed: true,
+    });
 export const logout = () => post<Record<string, never>>('/api/logout', {});
 export const createProject = (
     name: string,

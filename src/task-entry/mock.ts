@@ -68,6 +68,8 @@ function patch(files: Map<string, string>): string {
 
 export function mockBackend(): Backend {
     const projects = new Map<string, MockProject>();
+    const imports = new Map<string, { input: string; project: Project }>();
+    const draining = new Set<string>();
     const queue: Job[] = [];
     let busy = false;
 
@@ -110,6 +112,33 @@ export function mockBackend(): Backend {
     }
 
     return async (ownerId, operation) => {
+        if (operation.kind === 'purgeOwner') {
+            draining.add(ownerId);
+            const owned = [...projects.values()].filter(
+                (item) => item.ownerId === ownerId,
+            );
+            if (
+                owned.some(
+                    (item) =>
+                        item.project.status === 'importing' ||
+                        [...item.runs.values()].some(
+                            ({ run }) =>
+                                !['succeeded', 'failed'].includes(run.status),
+                        ),
+                )
+            )
+                return { status: 202, json: { complete: false } };
+            for (const item of owned) projects.delete(item.project.id);
+            for (const [key, item] of imports)
+                if (!projects.has(item.project.id)) imports.delete(key);
+            return { status: 200, json: { complete: true } };
+        }
+        if (
+            (operation.kind === 'createProject' ||
+                operation.kind === 'createRun') &&
+            draining.has(ownerId)
+        )
+            throw conflict('账号已注销。');
         if (operation.kind === 'listProjects') {
             const visible = [...projects.values()]
                 .filter((item) => item.ownerId === ownerId)
@@ -117,6 +146,15 @@ export function mockBackend(): Backend {
             return { status: 200, json: { projects: visible } };
         }
         if (operation.kind === 'createProject') {
+            const key =
+                operation.key && JSON.stringify([ownerId, operation.key]);
+            const input = JSON.stringify(operation.input);
+            const previous = key ? imports.get(key) : undefined;
+            if (previous) {
+                if (previous.input !== input)
+                    throw conflict('此提交键已用于其他项目内容。');
+                return { status: 200, json: previous.project };
+            }
             const { name, files } = operation.input;
             const project: Project = {
                 id: randomUUID(),
@@ -132,6 +170,7 @@ export function mockBackend(): Backend {
                 runs: new Map(),
                 submissions: new Map(),
             });
+            if (key) imports.set(key, { input, project });
             setTimeout(() => {
                 project.status = 'ready';
             }, 400).unref();
@@ -187,7 +226,8 @@ export function mockBackend(): Backend {
         if (!('runId' in operation)) throw notFound();
         const item = project.runs.get(operation.runId);
         if (!item) throw notFound();
-        if (operation.kind === 'run') return { status: 200, json: item.run };
+        if (operation.kind === 'run')
+            return { status: 200, json: { ...item.run, prompt: item.prompt } };
         if (item.run.status !== 'succeeded') throw conflict('成果尚未可用。');
         return { status: 200, diff: item.diff };
     };

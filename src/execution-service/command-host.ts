@@ -146,6 +146,15 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
             observation(await call('provision', binding, files)),
         snapshot: async (binding) =>
             textSnapshot(await call('snapshot', binding)),
+        async purge(binding) {
+            const receipt = object(await call('purge', binding));
+            if (
+                receipt.absent !== true ||
+                receipt.sandbox !== binding.sandbox ||
+                receipt.volume !== binding.volume
+            )
+                throw new Error('Workspace deletion was not confirmed');
+        },
         async stop(binding) {
             await call('stop', binding);
         },

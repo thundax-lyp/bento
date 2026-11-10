@@ -3,6 +3,8 @@ import { demoAccounts, readAccounts, sessionAuth } from './auth.ts';
 import { mockBackend } from './mock.ts';
 import { taskEntryServer } from './server.ts';
 import { httpBackend } from './execution-service-http.ts';
+import { mySpace } from './space.ts';
+import { spaceStorage } from './space-storage.ts';
 
 function positiveInteger(value: string, max: number, label: string): number {
     const result = Number(value);
@@ -80,13 +82,55 @@ async function main() {
             timeout,
         );
     }
-    const auth = sessionAuth(accounts, publicUrl.protocol === 'https:');
+    const credentialPath =
+        env.BENTO_ONE_CREDENTIALS_DB ?? (file ? file + '.sqlite' : ':memory:');
+    if (mode === 'http' && credentialPath === ':memory:')
+        throw new Error('Credential storage must persist');
+    const auth = sessionAuth(
+        accounts,
+        publicUrl.protocol === 'https:',
+        credentialPath,
+    );
+    const endpoint = env.BENTO_SPACE_S3_ENDPOINT;
+    const bucket = env.BENTO_SPACE_S3_BUCKET;
+    const database = env.BENTO_SPACE_DB;
+    let space;
+    if (endpoint || bucket || database) {
+        if (
+            !endpoint ||
+            !bucket ||
+            !database ||
+            database === ':memory:' ||
+            !file
+        )
+            throw new Error('Incomplete space configuration');
+        const storageUrl = origin(endpoint);
+        if (
+            storageUrl.protocol !== 'https:' &&
+            (!local ||
+                !['127.0.0.1', 'localhost', '[::1]'].includes(
+                    storageUrl.hostname,
+                ))
+        )
+            throw new Error('Space storage requires HTTPS');
+        if (!local && storageUrl.hostname === publicUrl.hostname)
+            throw new Error('Space storage requires a separate hostname');
+        space = mySpace(
+            database,
+            spaceStorage(
+                storageUrl.origin,
+                bucket,
+                env.AWS_REGION ?? 'us-east-1',
+            ),
+            backend,
+        );
+    }
     const server = await taskEntryServer({
-        mode,
         port,
         origin: publicUrl.origin,
         backend,
         auth,
+        ...(space ? { space } : {}),
     });
     const stop = () => {
         void server.close().catch(() => {

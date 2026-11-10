@@ -13,7 +13,16 @@ import {
     useRouteError,
 } from 'react-router';
 import { ApiError, projectsQuery, runQuery, sessionQuery } from './api';
-import { Dashboard, Login, RunDetails, Workspace, Workbench } from './pages';
+import {
+    AccountSettings,
+    Dashboard,
+    Login,
+    Register,
+    RunDetails,
+    Workspace,
+    Workbench,
+} from './pages';
+import { CloudProjectRoute } from './space';
 import './style.css';
 
 const client = new QueryClient({
@@ -73,6 +82,7 @@ function RouteError() {
 
 const router = createBrowserRouter([
     { path: '/login', Component: Login },
+    { path: '/register', Component: Register },
     {
         loader: ({ request }) => requireSession(request),
         Component: Workbench,
@@ -92,6 +102,8 @@ const router = createBrowserRouter([
             },
             { path: '/workspaces', Component: Workspace },
             { path: '/workspaces/:workspaceId', Component: Workspace },
+            { path: '/space/:spaceId', Component: CloudProjectRoute },
+            { path: '/account', Component: AccountSettings },
             {
                 path: '/runs/:runId',
                 async loader({ params, request }) {

@@ -23,6 +23,7 @@ export type Run = {
     createdAt: string;
     updatedAt: string;
     summary?: string;
+    prompt?: string;
 };
 
 export type ProjectInput = {
@@ -32,7 +33,8 @@ export type ProjectInput = {
 
 export type Operation =
     | { kind: 'listProjects' }
-    | { kind: 'createProject'; input: ProjectInput }
+    | { kind: 'purgeOwner' }
+    | { kind: 'createProject'; input: ProjectInput; key?: string }
     | { kind: 'project' | 'listRuns'; projectId: string }
     | { kind: 'createRun'; projectId: string; prompt: string; key: string }
     | { kind: 'run' | 'diff'; projectId: string; runId: string };
@@ -40,7 +42,12 @@ export type Operation =
 export type Result =
     | {
           status: 200 | 201 | 202;
-          json: Project | Run | { projects: Project[] } | { runs: Run[] };
+          json:
+              | Project
+              | Run
+              | { projects: Project[] }
+              | { runs: Run[] }
+              | { complete: boolean };
       }
     | { status: 200; diff: string };
 
@@ -52,11 +59,18 @@ export type Backend = (
 export class RequestError extends Error {
     readonly status: number;
     readonly code: string;
+    readonly issues?: { fileId: string; path: string; code: string }[];
 
-    constructor(status: number, code: string, message: string) {
+    constructor(
+        status: number,
+        code: string,
+        message: string,
+        issues?: RequestError['issues'],
+    ) {
         super(message);
         this.status = status;
         this.code = code;
+        if (issues) this.issues = issues;
     }
 }
 
@@ -210,11 +224,20 @@ function run(value: unknown, projectId: string, runId?: string): Run {
         createdAt: timestamp(data.createdAt),
         updatedAt: timestamp(data.updatedAt),
         ...(data.summary === undefined ? {} : { summary: field(data.summary) }),
+        ...(runId === undefined || data.prompt === undefined
+            ? {}
+            : { prompt: field(data.prompt) }),
     };
 }
 
 export function publicJson(operation: Operation, value: unknown) {
     switch (operation.kind) {
+        case 'purgeOwner': {
+            const { complete } = object(value);
+            if (typeof complete !== 'boolean')
+                throw new Error('Invalid cleanup receipt');
+            return { complete };
+        }
         case 'listProjects': {
             const { projects } = object(value);
             if (!Array.isArray(projects)) throw new Error('Invalid projects');

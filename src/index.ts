@@ -14,6 +14,7 @@ export type { OpenShellProviderConfig } from './openshell/provider.ts';
 
 export { SingleHostExecution } from './openshell/single-host.ts';
 export type { SingleHostSandbox } from './openshell/single-host.ts';
+export { dockerOpenShellPurge } from './execution-service/docker-openshell-purge.ts';
 export type { SdkIngressOptions } from './openshell/sdk-ingress.ts';
 export {
     remoteSessionPersistence,

@@ -55,7 +55,12 @@ async function body(req: IncomingMessage, maxBytes: number) {
     }
 }
 
-export function executionHttp(store: Store, token: string, wake: () => void) {
+export function executionHttp(
+    store: Store,
+    token: string,
+    wake: () => void,
+    purgeOwner: (owner: string) => Promise<boolean>,
+) {
     const authorization = digest('Bearer ' + token);
     const server = createServer(async (req, res) => {
         try {
@@ -75,6 +80,10 @@ export function executionHttp(store: Store, token: string, wake: () => void) {
                 );
 
             const pathname = (req.url ?? '').split('?')[0];
+            if (pathname === '/v1/account/purge' && req.method === 'POST') {
+                const complete = await purgeOwner(owner);
+                return json(res, complete ? 200 : 202, { complete });
+            }
             if (pathname === '/v1/projects') {
                 if (req.method === 'GET')
                     return json(res, 200, { projects: store.projects(owner) });
@@ -82,8 +91,17 @@ export function executionHttp(store: Store, token: string, wake: () => void) {
                     const { name, files } = projectInput(
                         await body(req, maxProjectBody),
                     );
-                    const project = store.addProject(owner, name, files);
-                    json(res, 201, project);
+                    const keys = req.headersDistinct['idempotency-key'];
+                    const key = keys?.[0];
+                    if (
+                        keys &&
+                        (keys.length !== 1 ||
+                            !key ||
+                            !/^[!-~]{1,128}$/.test(key))
+                    )
+                        throw invalid('Invalid Idempotency-Key.');
+                    const result = store.createProject(owner, name, files, key);
+                    json(res, result.replay ? 200 : 201, result.project);
                     wake();
                     return;
                 }

@@ -2,6 +2,7 @@ import { RequestError, conflict, notFound, publicJson } from './protocol.ts';
 import type { Backend, Operation } from './protocol.ts';
 
 function route(operation: Operation): string {
+    if (operation.kind === 'purgeOwner') return '/v1/account/purge';
     const projects = '/v1/projects';
     if (!('projectId' in operation)) return projects;
     const project = projects + '/' + encodeURIComponent(operation.projectId);
@@ -60,8 +61,11 @@ export function httpBackend(
             'X-Bento-Owner-Id': ownerId,
         });
         let body: string | undefined;
-        if (operation.kind === 'createProject')
+        if (operation.kind === 'purgeOwner') body = '{}';
+        if (operation.kind === 'createProject') {
             body = JSON.stringify(operation.input);
+            if (operation.key) headers.set('Idempotency-Key', operation.key);
+        }
         if (operation.kind === 'createRun') {
             body = JSON.stringify({ prompt: operation.prompt });
             headers.set('Idempotency-Key', operation.key);
@@ -100,8 +104,12 @@ export function httpBackend(
             }
             const expectedStatus =
                 (status === 201 && operation.kind === 'createProject') ||
-                (status === 202 && operation.kind === 'createRun') ||
-                (status === 200 && operation.kind !== 'createProject');
+                (status === 202 &&
+                    (operation.kind === 'createRun' ||
+                        operation.kind === 'purgeOwner')) ||
+                (status === 200 &&
+                    (operation.kind !== 'createProject' ||
+                        operation.key !== undefined));
             if (!expectedStatus || type !== 'application/json') {
                 await response.body?.cancel();
                 throw new Error('Invalid JSON response');

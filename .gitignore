@@ -1,5 +1,10 @@
 # Public repository roots are opt-in. Update public-files.json alongside this list.
 /*
+!/.github/
+/.github/*
+!/.github/workflows/
+/.github/workflows/*
+!/.github/workflows/checks.yml
 !/.editorconfig
 !/.gitignore
 !/.prettierignore
