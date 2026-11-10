@@ -88,6 +88,8 @@ Temporal 模式在空出槽位时优先选择当前无在跑任务的账号。�
 
 已收到 worker 完成回执的 Run 如果采集失败，控制器会重试读取快照和生成 diff。重启后继续采集，直到交付前同一项目保持占用。
 
+使用 `start.ts` 的部署可设置 `BENTO_REVIEW_MODULE`，指向仅由可信部署端控制的模块。模块默认导出同步安装函数 `(reviewRun) => cleanup`。安装函数接入部署端的复核工具，并在停服时通过 `cleanup` 停止接收新请求、等待在途复核结束。复核提交须包含 `runId`、`failedGeneration`、`readyGeneration`、`stableOperationId` 和 `expectedSnapshotSha256`。模块与执行服务同进程运行，部署端应限制模块文件及复核入口的访问权限。
+
 2026-11-09 的纵向验收使用单控制器、单执行宿主、一个受邀账号和固定文本编辑工具。经真实 OpenShell 和模型完成执行服务 HTTP 与任务页面两轮验证，覆盖工具回执前的 worker SIGKILL、同一 Session 和原卷恢复、旧代拒绝、UNKNOWN 保留及页面 diff 下载。命令隔离为 `partial`。真实多账号负载、任意工具、控制器各阶段故障及 HA 仍按[验收门槛](../research/implementation.md#验收门槛)验证。
 
 账号注销清理需要可信宿主实现幂等的工作区删除。命令宿主处理 `{action:"purge",binding}`，只删除该绑定独占的沙盒与卷，独立确认两者不存在后返回 `{sandbox,volume,absent:true}`。自定义宿主实现 `ExecutionHost.purge(binding)`。删除失败应报错，Bento 会保留清理请求以便重试。Docker 驱动的宿主可用 [dockerOpenShellPurge](../../src/execution-service/docker-openshell-purge.ts)，并提供与部署时一致的卷标签。
