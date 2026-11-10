@@ -280,8 +280,42 @@ export class Authority {
         evidence: StopEvidence,
     ) {
         this.managementTransaction(() => {
-            this.requireRecoveryOwner(session, evidence.generation, controller);
+            const initialDispatcher = this.db
+                .prepare(
+                    `
+            SELECT 1 FROM management_stops AS m JOIN execution_sessions AS s
+              ON s.session=m.session AND s.generation=m.generation AND s.sandbox=m.sandbox
+            WHERE m.session=? AND m.generation=? AND m.sandbox=? AND m.dispatcher=?
+              AND m.recovery_owner IS NULL AND s.state='DRAINING'
+        `,
+                )
+                .get(
+                    session,
+                    evidence.generation,
+                    evidence.sandbox,
+                    controller,
+                );
+            if (!initialDispatcher)
+                this.requireRecoveryOwner(
+                    session,
+                    evidence.generation,
+                    controller,
+                );
             this.observeStop(session, evidence);
+            if (initialDispatcher) {
+                this.db
+                    .prepare(
+                        `
+                UPDATE management_stops SET recovery_owner=dispatcher
+                WHERE session=? AND generation=? AND EXISTS (
+                    SELECT 1 FROM execution_sessions AS s
+                    WHERE s.session=management_stops.session AND s.generation=management_stops.generation
+                    AND s.state='STOPPED'
+                )
+            `,
+                    )
+                    .run(session, evidence.generation);
+            }
         });
     }
 
