@@ -477,12 +477,17 @@ export async function serveExecution(options: Options) {
                 for (const id of pending) {
                     if (stop.signal.aborted) return;
                     if (!enqueued.has(id)) {
-                        await scheduler.enqueue(id);
+                        try {
+                            await scheduler.enqueue(id);
+                        } catch {
+                            // Keep the reservation and retry in order on the next tick.
+                            break;
+                        }
                         enqueued.add(id);
                     }
                 }
                 // The publisher can run while a Temporal Activity occupies the host.
-                if (assigned.size) return;
+                if (stop.signal.aborted || assigned.size) return;
             } else {
                 const unfinished = db.next('active');
                 if (unfinished) return driveRun(unfinished, 0);
