@@ -31,10 +31,16 @@ type Batch = {
     extra: string;
 };
 type Receipt = { batch: string; digest: string; first: number; count: number };
+type Reconciliation = {
+    handle?: Handle;
+    result?: { value: unknown };
+    inFlight?: Promise<unknown>;
+};
 
 class RemoteSession extends SessionPersistence {
     private readonly writers = new Map<SessionId, Handle>();
     private readonly handles = new Set<Handle>();
+    private readonly reconciliations = new Map<SessionId, Reconciliation>();
     private readonly listeners: Array<() => void>;
 
     private readonly options: Options;
@@ -159,11 +165,28 @@ class RemoteSession extends SessionPersistence {
             );
     }
 
-    async reconcilePending(id: SessionId) {
-        const handle = await this.open(id, 'write');
-        const result = await handle.reconcile();
-        await handle.close();
-        return result;
+    reconcilePending(id: SessionId) {
+        let recovery = this.reconciliations.get(id);
+        if (!recovery) {
+            recovery = {};
+            this.reconciliations.set(id, recovery);
+        }
+        const pending = recovery;
+        pending.inFlight ??= this.finishReconciliation(id, pending).finally(
+            () => {
+                delete pending.inFlight;
+            },
+        );
+        return pending.inFlight;
+    }
+
+    private async finishReconciliation(id: SessionId, pending: Reconciliation) {
+        // The server can reject close while a durable batch still needs reconciliation.
+        pending.handle ??= await this.open(id, 'write');
+        pending.result ??= { value: await pending.handle.reconcile() };
+        await pending.handle.close(true);
+        this.reconciliations.delete(id);
+        return pending.result.value;
     }
 
     async dispose() {
@@ -330,18 +353,24 @@ class Handle implements SessionHandle {
         await this.call('flush');
     }
 
-    async close() {
+    async close(allowReleased = false) {
         if (this.closed) return;
-        this.closing ??= this.closeOnce().finally(() => {
+        this.closing ??= this.closeOnce(allowReleased).finally(() => {
             this.closing = undefined;
         });
         await this.closing;
     }
 
-    private async closeOnce() {
+    private async closeOnce(allowReleased: boolean) {
         clearTimeout(this.timer);
         if (this.access === 'write') await this.drain();
-        await this.call('close');
+        try {
+            await this.call('close');
+        } catch (error) {
+            // Reconciliation already succeeded and an earlier close may have lost its reply.
+            if (!allowReleased || !(error instanceof SessionHandleClosedError))
+                throw error;
+        }
         this.closed = true;
         this.release();
     }
