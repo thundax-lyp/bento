@@ -22,4 +22,8 @@ Vite 默认将 `/api` 代理到 `http://127.0.0.1:4186`。连接其他后端时�
 
 ```sh
 pnpm --filter @bento/web check
+pnpm --filter @bento/web exec playwright install chromium
+pnpm --filter @bento/web test:e2e
 ```
+
+浏览器测试自动启动 Vite 和 Bento 的模拟任务入口，使用独立的 4320 和 4319 端口。

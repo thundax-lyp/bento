@@ -13,7 +13,7 @@
         "lint:fix": "eslint . --fix",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
-        "check": "pnpm check:publication && pnpm typecheck && pnpm lint && pnpm format:check",
+        "check": "pnpm check:publication && pnpm typecheck && pnpm lint && pnpm format:check && pnpm --filter @bento/web check",
         "check:publication": "python3 scripts/check-publication.py"
     },
     "devDependencies": {
