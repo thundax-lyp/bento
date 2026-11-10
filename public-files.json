@@ -10,6 +10,7 @@
         ".agents/skills/bento-pr-review/references/review-dimensions.md",
         ".agents/skills/bento-pr-review/scripts/collect-review-context.mjs",
         ".editorconfig",
+        ".github/workflows/checks.yml",
         ".gitignore",
         ".prettierignore",
         ".prettierrc.json",
