@@ -49,3 +49,5 @@ Compose 默认将容器的 `8080` 发布到宿主机回环。生产由宿主机 
 `docker compose ps` 显示 `healthy` 时，首页已返回 `200`，未登录的 `/api/session` 已返回 `401`。部署后再检查直接打开任务链接、登录后下载 diff，以及浏览器能否连接 S3 端点。
 
 启动失败时用 `docker compose logs --tail=100 bento-web` 检查容器日志，核对账号文件的读取权限和必需环境变量。停止服务用 `docker compose stop`，恢复原配置后用 `docker compose up -d` 重新启动并检查健康状态。
+
+远端构建版本、已验证路径和覆盖范围见 [Web Docker 验收](../40-readiness/WEB-DOCKER-EVIDENCE.md)。

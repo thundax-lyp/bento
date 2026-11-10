@@ -40,6 +40,7 @@
         "docs/40-readiness/README.md",
         "docs/40-readiness/MVP-PREFLIGHT-EVIDENCE.md",
         "docs/40-readiness/TEMPORAL-DEV-EVIDENCE.md",
+        "docs/40-readiness/WEB-DOCKER-EVIDENCE.md",
         "docs/deployments/openshell-dsh.md",
         "docs/deployments/HOW-TO-TEMPORAL-DEV.md",
         "docs/deployments/HOW-TO-WEB-DOCKER.md",

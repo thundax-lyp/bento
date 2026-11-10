@@ -4,3 +4,4 @@
 
 - [三账号远端试用预检](./MVP-PREFLIGHT-EVIDENCE.md)
 - [Temporal 开发环境验收](./TEMPORAL-DEV-EVIDENCE.md)
+- [Web Docker 验收](./WEB-DOCKER-EVIDENCE.md)
