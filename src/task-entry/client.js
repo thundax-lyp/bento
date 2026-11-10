@@ -439,7 +439,7 @@ taskForm.addEventListener('submit', async (event) => {
         if (
             key &&
             error instanceof ApiError &&
-            [400, 404, 409, 413].includes(error.status)
+            [400, 404, 409, 413, 429].includes(error.status)
         ) {
             clearPending(account, projectId, key);
         }

@@ -42,7 +42,7 @@ worker 经服务端执行入口访问 OpenShell；入口校验业务 capability 
 
 ## 验证范围与实现入口
 
-既有实验分别覆盖单执行宿主的共享卷与删除重挂、固定插件工具循环、跨主机 Session 接管、工具结果 UNKNOWN 不盲目重放，以及服务端准入对旧代和原始 Gateway 旁路的拒绝。Two 的纵向验收范围见下文。
+既有实验分别覆盖单执行宿主的共享卷与删除重挂、固定插件工具循环、跨主机 Session 接管、工具结果 UNKNOWN 不盲目重放，以及服务端准入对旧代和原始 Gateway 旁路的拒绝。执行服务的纵向验收范围见下文。
 
 受测环境的 confinement 为 partial。生产身份集成、全阶段控制器故障、detached 子进程停止、多控制器、跨节点存储、数据库 HA 与容量仍按[实现验收条件](../research/implementation.md)落实。能力及证据入口见[研究总览](../research/README.md)。历史原始证据单独保留。
 
@@ -57,9 +57,9 @@ worker 经服务端执行入口访问 OpenShell；入口校验业务 capability 
 
 执行入口支持 SDK 非 PTY 命令与文件操作。稳定操作 ID 由受信工具适配器提供，此门禁覆盖遵循登记协议的工具。宿主进程、模型配置和外部工具授权由部署端管理。
 
-## Two 执行服务
+## 执行服务
 
-Two 在回环地址提供 HTTP v1，供受信的 One 服务调用。One 从认证后的账号派生 `X-Bento-Owner-Id`，并在服务间请求携带独立的 bearer。Two 按 owner 限定项目、Run 和 diff 的访问，每个执行宿主默认串行处理 Run。
+执行服务在回环地址提供 HTTP v1，供受信的任务入口调用。任务入口从认证后的账号派生 `X-Bento-Owner-Id`，并在服务间请求携带独立的 bearer。执行服务按 owner 限定项目、Run 和 diff 的访问，每个执行宿主默认串行处理 Run。
 
 在仓库根目录执行 `pnpm install --frozen-lockfile`。部署端为每个控制器配置独占的私有 `BENTO_STATE_DIR`，注入 `BENTO_SERVICE_BEARER`，并选择一种宿主接入方式。
 
@@ -78,8 +78,12 @@ node --experimental-strip-types src/execution-service/start.ts
 
 启用 Temporal 和预热后，在同一份宿主配置中设置 `"workerSlots": 2` 可开启两个槽位。每个 Run 占用一个槽位直到执行或恢复结束，两槽都占用时其他 Run 留在队列。项目与 Session、Workspace 一一绑定，同一项目仍只接受一个未结束的 Run。调低槽位数或回退到旧版本前，先排空执行宿主。
 
+`BENTO_TENANT_QUEUE_LIMIT` 设置每个账号独立的排队上限，默认 16，取正整数。额度按 `queued` 的 Run 计数，包括已经预留槽位但尚未领取的 Run。额度耗尽时，新提交返回 HTTP 429 和 `tenant_queue_full`，用原提交键重试已接受的请求仍可取回同一个 Run。其他账号使用各自的额度。
+
+Temporal 模式在空出槽位时优先选择当前无在跑任务的账号。同优先级按提交顺序派发，每个账号内部保持 FIFO。已预留的槽位和处于 `running` 或 `recovering` 的 Run 均计入派发占用。只有一个账号有可派发任务时，它可以占用两个槽。派发顺序由 SQLite 持久化，Temporal 领取后才签发当次执行授权。
+
 受信启动器负责隔离 Worker 及其子进程，并将终止信号传给整个容器或进程组。异常退出、租约超时或需要人工核对的回执会淘汰该 Worker。执行服务在旧进程关闭后补位。关闭服务时等待预热进程退出，随后释放控制器锁。停用预热时，排空后移除私有配置中的 `prewarmWorker` 和 `workerSlots`，移除 Worker 命令的 `--warm`，再重启执行服务。
 
-遇到 worker 失联时，Two 撤销旧代授权并在原卷上恢复 Session。恢复 worker 只对账会话历史，原 prompt 不重发。Run 进入 `needs_review` 时，可信部署端先独立核对预期修改，再通过[进程内 `reviewRun`](../../src/execution-service/service.ts) 提供代次、稳定操作 ID 和预期整卷哈希。Two 核对恢复回执、绑定、UNKNOWN 操作及卷快照，原子保存确认记录和 diff。核对失败时，Run 继续等待可信核对，diff 暂不可用。
+遇到 worker 失联时，执行服务撤销旧代授权并在原卷上恢复 Session。恢复 worker 只对账会话历史，原 prompt 不重发。Run 进入 `needs_review` 时，可信部署端先独立核对预期修改，再通过[进程内 `reviewRun`](../../src/execution-service/service.ts) 提供代次、稳定操作 ID 和预期整卷哈希。执行服务核对恢复回执、绑定、UNKNOWN 操作及卷快照，原子保存确认记录和 diff。核对失败时，Run 继续等待可信核对，diff 暂不可用。
 
-2026-11-09 的纵向验收使用单控制器、单执行宿主、一个受邀账号和固定文本编辑工具。经真实 OpenShell 和模型完成 Two HTTP 与 One 页面两轮验证，覆盖工具回执前的 worker SIGKILL、同一 Session 和原卷恢复、旧代拒绝、UNKNOWN 保留及页面 diff 下载。命令隔离为 `partial`。真实多账号负载、任意工具、控制器各阶段故障及 HA 仍按[验收门槛](../research/implementation.md#验收门槛)验证。
+2026-11-09 的纵向验收使用单控制器、单执行宿主、一个受邀账号和固定文本编辑工具。经真实 OpenShell 和模型完成执行服务 HTTP 与任务页面两轮验证，覆盖工具回执前的 worker SIGKILL、同一 Session 和原卷恢复、旧代拒绝、UNKNOWN 保留及页面 diff 下载。命令隔离为 `partial`。真实多账号负载、任意工具、控制器各阶段故障及 HA 仍按[验收门槛](../research/implementation.md#验收门槛)验证。

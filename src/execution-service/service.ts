@@ -42,6 +42,7 @@ type Options = {
     workerPort?: { persistence?: number; operation?: number; sdk?: number };
     workerTimeoutMs?: number;
     retryMs?: number;
+    tenantQueueLimit?: number;
     host: ExecutionHost;
     temporal?: TemporalRunOptions;
 };
@@ -55,6 +56,9 @@ export async function serveExecution(options: Options) {
         );
     const workerTimeoutMs = options.workerTimeoutMs ?? 120_000;
     const retryMs = options.retryMs ?? 500;
+    const tenantQueueLimit = options.tenantQueueLimit ?? 16;
+    if (!Number.isSafeInteger(tenantQueueLimit) || tenantQueueLimit < 1)
+        throw new Error('Tenant queue limit must be a positive integer');
     if (!/^[!-~]{16,1024}$/.test(token))
         throw new Error('Service bearer is invalid');
     if (
@@ -114,7 +118,7 @@ export async function serveExecution(options: Options) {
 
     try {
         lock.exec('BEGIN IMMEDIATE');
-        store = new Store(join(dir, 'business.sqlite'));
+        store = new Store(join(dir, 'business.sqlite'), tenantQueueLimit);
         control = new SingleHostExecution(
             {
                 authority: join(dir, 'authority.sqlite'),
@@ -436,7 +440,13 @@ export async function serveExecution(options: Options) {
                     assigned.set(slot, runId);
                     try {
                         // Keep the same slot through execution and recovery.
-                        await driveRun(db.findRun(runId), slot);
+                        const run = db.findRun(runId);
+                        if (
+                            run.status === 'queued' &&
+                            !db.dispatchReserved(runId)
+                        )
+                            throw new Error('Run is waiting for dispatch');
+                        await driveRun(run, slot);
                         stop.signal.throwIfAborted();
                     } finally {
                         assigned.delete(slot);
@@ -448,6 +458,11 @@ export async function serveExecution(options: Options) {
 
         async function work() {
             if (scheduler) {
+                // Reserve only available slots before publishing their Workflows.
+                // SQLite retains the decisions if publication or the controller fails.
+                for (let i = 0; i < slots && db.reserveDispatch(slots); i++) {
+                    // Recompute priorities after each reservation.
+                }
                 const pending = db.schedulableRuns();
                 const previous = enqueued;
                 enqueued = new Set(pending.filter((id) => previous.has(id)));

@@ -1,6 +1,6 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { conflict, missing } from './input.ts';
+import { conflict, missing, RequestError } from './input.ts';
 import type { Binding, FileText, ProjectStatus, RunStatus } from './types.ts';
 
 type Project = {
@@ -68,7 +68,10 @@ export function projectBinding(project: Project): Binding {
 export class Store {
     private readonly db: DatabaseSync;
 
-    constructor(path: string) {
+    private readonly tenantQueueLimit: number;
+
+    constructor(path: string, tenantQueueLimit = 16) {
+        this.tenantQueueLimit = tenantQueueLimit;
         this.db = new DatabaseSync(path);
         this.db.exec(`
             PRAGMA journal_mode=WAL;
@@ -90,6 +93,9 @@ export class Store {
             CREATE UNIQUE INDEX IF NOT EXISTS one_pending_run_per_project
                 ON runs(projectId) WHERE status IN ${pending};
             DROP INDEX IF EXISTS one_active_host_run;
+            CREATE TABLE IF NOT EXISTS run_dispatches (
+                runId TEXT PRIMARY KEY REFERENCES runs(id)
+            );
             CREATE TABLE IF NOT EXISTS run_reviews (
                 runId TEXT PRIMARY KEY REFERENCES runs(id), proof TEXT NOT NULL, reviewedAt TEXT NOT NULL
             );
@@ -180,10 +186,16 @@ export class Store {
             );
         const id = randomUUID();
         const created = now();
-        this.db
+        const result = this.db
             .prepare(
-                `INSERT INTO runs(id,projectId,sessionId,key,prompt,status,createdAt,updatedAt)
-                         VALUES (?,?,?,?,?,'queued',?,?)`,
+                `
+                INSERT INTO runs(id,projectId,sessionId,key,prompt,status,createdAt,updatedAt)
+                SELECT ?,?,?,?,?,'queued',?,?
+                WHERE (
+                    SELECT COUNT(*) FROM projects p JOIN runs r ON r.projectId=p.id
+                    WHERE p.owner=? AND r.status='queued'
+                ) < ?
+            `,
             )
             .run(
                 id,
@@ -193,6 +205,14 @@ export class Store {
                 prompt,
                 created,
                 created,
+                owner,
+                this.tenantQueueLimit,
+            );
+        if (result.changes !== 1)
+            throw new RequestError(
+                429,
+                'tenant_queue_full',
+                'Tenant queue is full. Retry after a Run is claimed.',
             );
         return { replay: false, run: runView(this.findRun(id)) };
     }
@@ -251,10 +271,51 @@ export class Store {
             .run(status, id);
     }
 
+    reserveDispatch(slots: number) {
+        return (
+            this.db
+                .prepare(
+                    `
+            WITH occupied AS (
+                SELECT p.owner, r.status
+                FROM runs r JOIN projects p ON p.id=r.projectId
+                LEFT JOIN run_dispatches d ON d.runId=r.id
+                WHERE r.status IN ('running','recovering')
+                   OR (r.status='queued' AND d.runId IS NOT NULL)
+            )
+            INSERT INTO run_dispatches(runId)
+            SELECT r.id FROM runs r JOIN projects p ON p.id=r.projectId
+            WHERE r.status='queued'
+                AND NOT EXISTS (SELECT 1 FROM run_dispatches d WHERE d.runId=r.id)
+                AND NOT EXISTS (
+                    SELECT 1 FROM occupied o WHERE o.owner=p.owner AND o.status='queued'
+                )
+                AND (SELECT COUNT(*) FROM occupied) < ?
+            ORDER BY EXISTS (SELECT 1 FROM occupied o WHERE o.owner=p.owner), r.rowid
+            LIMIT 1
+        `,
+                )
+                .run(slots).changes === 1
+        );
+    }
+
+    dispatchReserved(id: string) {
+        return (
+            this.db
+                .prepare('SELECT 1 FROM run_dispatches WHERE runId=?')
+                .get(id) !== undefined
+        );
+    }
+
     schedulableRuns() {
         return this.db
             .prepare(
-                "SELECT id FROM runs WHERE status IN ('queued','running','recovering') ORDER BY status='queued', rowid",
+                `
+                SELECT r.id FROM runs r LEFT JOIN run_dispatches d ON d.runId=r.id
+                WHERE r.status IN ('running','recovering')
+                   OR (r.status='queued' AND d.runId IS NOT NULL)
+                ORDER BY r.status='queued', d.rowid, r.rowid
+                `,
             )
             .all()
             .map((row) => row.id as string);

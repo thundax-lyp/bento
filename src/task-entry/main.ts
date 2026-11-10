@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { demoAccounts, readAccounts, sessionAuth } from './auth.ts';
 import { mockBackend } from './mock.ts';
 import { taskEntryServer } from './server.ts';
-import { httpBackend } from './two-http.ts';
+import { httpBackend } from './execution-service-http.ts';
 
 function positiveInteger(value: string, max: number, label: string): number {
     const result = Number(value);
@@ -58,17 +58,27 @@ function main() {
     if (mode === 'mock') {
         backend = mockBackend();
     } else {
-        const two = env.BENTO_ONE_TWO_URL;
+        const executionServiceUrl = env.BENTO_ONE_TWO_URL;
         const bearer = env.BENTO_ONE_TWO_BEARER;
-        if (!two || !bearer || !/^[A-Za-z0-9._~+/=-]+$/.test(bearer)) {
-            throw new Error('Missing or invalid Two configuration');
+        if (
+            !executionServiceUrl ||
+            !bearer ||
+            !/^[A-Za-z0-9._~+/=-]+$/.test(bearer)
+        ) {
+            throw new Error(
+                'Missing or invalid execution service configuration',
+            );
         }
         const timeout = positiveInteger(
             env.BENTO_ONE_TWO_TIMEOUT_MS ?? '10000',
             30000,
             'BENTO_ONE_TWO_TIMEOUT_MS',
         );
-        backend = httpBackend(origin(two).origin, bearer, timeout);
+        backend = httpBackend(
+            origin(executionServiceUrl).origin,
+            bearer,
+            timeout,
+        );
     }
     const auth = sessionAuth(accounts, publicUrl.protocol === 'https:');
     const server = taskEntryServer({
@@ -78,11 +88,15 @@ function main() {
         auth,
     });
     server.on('error', () => {
-        console.error('Bento One could not listen. Check its configured port.');
+        console.error(
+            'Bento task entry could not listen. Check its configured port.',
+        );
         process.exitCode = 1;
     });
     server.listen(port, '127.0.0.1', () => {
-        console.log('Bento One (' + mode + ') listening on 127.0.0.1:' + port);
+        console.log(
+            'Bento task entry (' + mode + ') listening on 127.0.0.1:' + port,
+        );
     });
 }
 
@@ -90,7 +104,7 @@ try {
     main();
 } catch {
     console.error(
-        'Invalid Bento One configuration. See src/task-entry/README.md.',
+        'Invalid Bento task entry configuration. See src/task-entry/README.md.',
     );
     process.exitCode = 1;
 }
