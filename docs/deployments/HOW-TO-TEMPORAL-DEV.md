@@ -53,7 +53,7 @@ ssh -N -o ExitOnForwardFailure=yes \
 
 ## 接入 Bento
 
-按 [执行服务部署说明](openshell-dsh.md#two-执行服务)配置宿主、状态目录和服务认证，再向同一进程提供以下环境变量。
+按 [执行服务部署说明](openshell-dsh.md#执行服务)配置宿主、状态目录和服务认证，再向同一进程提供以下环境变量。
 
 ```sh
 export BENTO_TEMPORAL_ADDRESS=127.0.0.1:17233
@@ -62,7 +62,7 @@ export BENTO_TEMPORAL_TASK_QUEUE=bento-dev-host
 node --experimental-strip-types src/execution-service/start.ts
 ```
 
-为每个控制器状态目录分配独占 Task Queue。重启时保留状态目录、Namespace 和队列名。控制器与 Temporal Worker 共进程。Activity 并发跟随宿主槽位数，默认一个槽位，启用 [DSH Worker 预热](openshell-dsh.md#two-执行服务)后可配置两个槽位。Temporal Worker 领取任务后，由受信宿主适配器分配 DSH 执行 Worker。通过 `pnpm install --frozen-lockfile` 安装 SDK 与当前平台的原生依赖。该模式面向受信网络内的开发服务。
+为每个控制器状态目录分配独占 Task Queue。重启时保留状态目录、Namespace 和队列名。控制器与 Temporal Worker 共进程。Activity 并发跟随宿主槽位数，默认一个槽位，启用 [DSH Worker 预热](openshell-dsh.md#执行服务)后可配置两个槽位。Temporal Worker 领取任务后，由受信宿主适配器分配 DSH 执行 Worker。通过 `pnpm install --frozen-lockfile` 安装 SDK 与当前平台的原生依赖。该模式面向受信网络内的开发服务。
 
 HTTP 接受 Run 后，Bento 将其放入 SQLite 待处理队列。空槽可用时，Bento 按租户优先级持久化派发决定，再发布或补发 Temporal Workflow。固定 Workflow ID 为 `bento-run-<run-id>`，重复发布使用同一 ID。Temporal 历史只传 Run ID，prompt、凭据和授权保留在 Bento 边界内。Temporal 暂不可用时，待发布记录保留，控制器重试发布。
 
