@@ -1,0 +1,24 @@
+services:
+    bento-web:
+        build: .
+        image: bento-web:local
+        ports:
+            - '127.0.0.1:8080:8080'
+        env_file:
+            - ./runtime/web.env
+        environment:
+            BENTO_ONE_ACCOUNTS_FILE: /run/bento/accounts.json
+            BENTO_ONE_CREDENTIALS_DB: /data/credentials.sqlite
+        volumes:
+            - type: bind
+              source: ./runtime/accounts.json
+              target: /run/bento/accounts.json
+              read_only: true
+              bind:
+                  create_host_path: false
+            - bento-web-data:/data
+        stop_grace_period: 60s
+        restart: unless-stopped
+
+volumes:
+    bento-web-data:

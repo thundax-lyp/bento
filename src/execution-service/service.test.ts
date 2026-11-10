@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { openSync, closeSync, fsyncSync, writeSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { connect } from 'node:http2';
@@ -437,6 +438,116 @@ if (process.argv[2] === '--effect-worker') {
             assert.notEqual(otherOwner.json().id, first.json().id);
         } finally {
             await service.close();
+            await rm(state, { recursive: true, force: true });
+        }
+    });
+
+    test('a completed Run retries capture after restart without rerunning its worker', async () => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-capture-retry-'));
+        const base = localHost(join(state, 'volume'));
+        let calls = 0;
+        let failCapture = false;
+        const host: ExecutionHost = {
+            ...base,
+            async worker(request, signal) {
+                calls++;
+                const result = await base.worker(request, signal);
+                failCapture = calls === 1;
+                return result;
+            },
+            async snapshot(binding) {
+                if (failCapture)
+                    throw new Error('Snapshot temporarily unavailable');
+                return base.snapshot(binding);
+            },
+        };
+        let service = await start(state, host);
+        try {
+            const first = client(service.url);
+            const path = await project(first);
+            const run = await submit(first, path, 'first change', 'first');
+            await until(
+                () => first(run),
+                (r) => r.json().status === 'needs_review',
+                'capture failed',
+            );
+            await service.close();
+            failCapture = false;
+            service = await start(state, host);
+            const api = client(service.url);
+            await until(
+                () => api(run),
+                (r) => r.json().status === 'succeeded',
+                'capture retried',
+            );
+            assert.match((await api(run + '/diff')).text, /\+first change/);
+            assert.equal(calls, 1);
+            const next = await submit(api, path, 'next change', 'next');
+            await until(
+                () => api(next),
+                (r) => r.json().status === 'succeeded',
+                'next Run completed',
+            );
+        } finally {
+            await service.close();
+            await rm(state, { recursive: true, force: true });
+        }
+    });
+
+    test('documented startup installs trusted review and waits for its cleanup', async () => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-start-review-'));
+        const module = join(state, 'review.mjs');
+        const marker = join(state, 'review-result');
+        await writeFile(
+            module,
+            `
+            import { writeFile } from 'node:fs/promises';
+            export default function install(reviewRun) {
+                const review = reviewRun({ failedGeneration: 0 }).then(
+                    () => 'unexpected approval',
+                    (error) => error.message,
+                );
+                return async () => writeFile(process.env.BENTO_TEST_REVIEW_RESULT, await review);
+            }
+        `,
+        );
+        const controller = spawn(
+            process.execPath,
+            [fileURLToPath(new URL('./start.ts', import.meta.url)), '--local'],
+            {
+                env: {
+                    ...process.env,
+                    BENTO_STATE_DIR: state,
+                    BENTO_SERVICE_BEARER: testToken,
+                    BENTO_PORT: '0',
+                    BENTO_REVIEW_MODULE: module,
+                    BENTO_TEST_REVIEW_RESULT: marker,
+                },
+                stdio: ['ignore', 'pipe', 'pipe'],
+            },
+        );
+        const closed = once(controller, 'close');
+        const lines = createInterface({ input: controller.stdout });
+        try {
+            const [url] = await Promise.race([
+                once(lines, 'line'),
+                closed.then(() => {
+                    throw new Error(
+                        'Execution service exited before listening',
+                    );
+                }),
+            ]);
+            assert.equal((await client(url)('')).status, 200);
+            controller.kill('SIGTERM');
+            assert.deepEqual(await closed, [0, null]);
+            assert.equal(
+                await readFile(marker, 'utf8'),
+                'Invalid review proof',
+            );
+        } finally {
+            controller.kill('SIGKILL');
+            await closed;
+            lines.close();
             await rm(state, { recursive: true, force: true });
         }
     });

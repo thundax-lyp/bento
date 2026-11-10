@@ -5,12 +5,17 @@ import { localHost } from './local.ts';
 import { serveExecution } from './service.ts';
 import type { ExecutionHost } from './types.ts';
 
+type InstallReview = (
+    reviewRun: Awaited<ReturnType<typeof serveExecution>>['reviewRun'],
+) => () => void | Promise<void>;
+
 async function main() {
     const {
         BENTO_STATE_DIR,
         BENTO_SERVICE_BEARER,
         BENTO_HOST_MODULE,
         BENTO_HOST_CONFIG,
+        BENTO_REVIEW_MODULE,
         BENTO_PORT,
         BENTO_TENANT_QUEUE_LIMIT,
         BENTO_TEMPORAL_ADDRESS,
@@ -64,6 +69,17 @@ async function main() {
         (BENTO_TEMPORAL_NAMESPACE || BENTO_TEMPORAL_TASK_QUEUE)
     )
         throw new Error('Temporal address required');
+    const installReview = BENTO_REVIEW_MODULE
+        ? (
+              (await import(
+                  pathToFileURL(resolve(BENTO_REVIEW_MODULE)).href
+              )) as {
+                  default: InstallReview;
+              }
+          ).default
+        : undefined;
+    if (BENTO_REVIEW_MODULE && typeof installReview !== 'function')
+        throw new Error('Trusted review module must export an installer');
     const service = await serveExecution({
         state,
         token: BENTO_SERVICE_BEARER,
@@ -84,18 +100,42 @@ async function main() {
               }
             : {}),
     });
-    process.stdout.write(service.url + '\n');
+    let stopReview: ReturnType<InstallReview> | undefined;
+    try {
+        stopReview = installReview?.(service.reviewRun);
+        if (installReview && typeof stopReview !== 'function')
+            throw new Error(
+                'Trusted review module must return a cleanup function',
+            );
+    } catch (error) {
+        await service.close();
+        throw error;
+    }
+    let stopping = false;
     const close = () => {
+        if (stopping) return;
+        stopping = true;
         const deadline = setTimeout(() => process.exit(1), 10_000);
-        void service.close().then(() => clearTimeout(deadline));
+        void Promise.resolve()
+            .then(() => stopReview?.())
+            .finally(() => service.close())
+            .then(() => clearTimeout(deadline))
+            .catch(() => {
+                clearTimeout(deadline);
+                process.stderr.write(
+                    'Bento execution service shutdown failed.\n',
+                );
+                process.exitCode = 1;
+            });
     };
     process.once('SIGTERM', close);
     process.once('SIGINT', close);
+    process.stdout.write(service.url + '\n');
 }
 
 main().catch(() => {
     process.stderr.write(
-        'Bento execution service failed to start. Check state directory, port, bearer, host module and Temporal configuration.\n',
+        'Bento execution service failed to start. Check state directory, port, bearer, host and review modules, and Temporal configuration.\n',
     );
     process.exitCode = 1;
 });

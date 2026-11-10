@@ -51,6 +51,52 @@ test('登录、导入文本、提交任务、刷新找回并下载修改', async
     await expect(page.getByRole('link', { name: '下载 diff' })).toHaveCount(0);
 });
 
+test('任务详情在可信核对结束后自动显示 diff', async ({ page }) => {
+    const runPath = '/api/projects/review-project/runs/review-run';
+    let status = 'needs_review';
+    await page.route('**/api/session', (route) =>
+        route.fulfill({ json: { account: 'reviewer-demo' } }),
+    );
+    await page.route('**/api/projects', (route) =>
+        route.fulfill({
+            json: {
+                projects: [
+                    { id: 'review-project', name: '手册', status: 'ready' },
+                ],
+            },
+        }),
+    );
+    await page.route('**' + runPath, (route) =>
+        route.fulfill({
+            json: {
+                id: 'review-run',
+                projectId: 'review-project',
+                status,
+                updatedAt: '2026-11-10T00:00:00Z',
+            },
+        }),
+    );
+    await page.route('**' + runPath + '/diff', (route) =>
+        route.fulfill({
+            contentType: 'text/plain',
+            body: '--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-待核对\n+已核对的修改\n',
+        }),
+    );
+
+    await page.goto('/runs/review-run?project=review-project');
+    await expect(
+        page.getByText('手册 · 待核对', { exact: true }),
+    ).toBeVisible();
+    const download = page.getByRole('link', { name: '下载 diff' });
+    await expect(download).toHaveCount(0);
+    status = 'succeeded';
+    await expect(page.getByLabel('逐行变更')).toContainText('+已核对的修改');
+    await expect(download).toHaveAttribute(
+        'href',
+        runPath + '/diff?download=1',
+    );
+});
+
 test('受邀注册后用密码登录，注销后该账号无法再登录', async ({ page }) => {
     const password = randomUUID();
     await page.goto('/register');

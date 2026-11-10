@@ -5,6 +5,15 @@
 !/.github/workflows/
 /.github/workflows/*
 !/.github/workflows/checks.yml
+!/.dockerignore
+!/Dockerfile
+!/compose.yaml
+!/deploy/
+/deploy/*
+!/deploy/web/
+/deploy/web/*
+!/deploy/web/nginx.conf
+!/deploy/web/start.sh
 !/.editorconfig
 !/.gitignore
 !/.prettierignore
@@ -61,6 +70,7 @@
 !/docs/40-readiness/README.md
 !/docs/40-readiness/MVP-PREFLIGHT-EVIDENCE.md
 !/docs/40-readiness/TEMPORAL-DEV-EVIDENCE.md
+!/docs/40-readiness/WEB-DOCKER-EVIDENCE.md
 !/docs/research/
 !/docs/deployments/
 /docs/research/*
@@ -70,6 +80,7 @@
 !/docs/research/implementation.md
 /docs/deployments/*
 !/docs/deployments/openshell-dsh.md
+!/docs/deployments/HOW-TO-WEB-DOCKER.md
 !/docs/deployments/HOW-TO-TEMPORAL-DEV.md
 /scripts/*
 !/scripts/check-publication.py

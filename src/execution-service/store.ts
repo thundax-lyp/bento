@@ -459,6 +459,15 @@ export class Store {
         return projectBinding(row);
     }
 
+    pendingCapture() {
+        return this.db
+            .prepare(
+                `SELECT * FROM runs WHERE status='needs_review' AND receipt=1
+                 ORDER BY updatedAt, rowid LIMIT 1`,
+            )
+            .get() as Run | undefined;
+    }
+
     start(id: string, baseline: readonly FileText[], slots: number) {
         return (
             this.db

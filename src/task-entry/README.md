@@ -1,6 +1,6 @@
 # Bento 任务入口
 
-任务入口提供 Bento Web 的 HTTP API。浏览器使用 [独立 Web 前端](../../apps/web/README.md)完成登录、项目导入、任务提交和 diff 下载。开发时由 Vite 转发 `/api`。部署时，同域反向代理提供前端静态文件，并将 `/api/*` 转发给任务入口。
+任务入口提供 Bento Web 的 HTTP API。浏览器使用 [独立 Web 前端](../../apps/web/README.md)完成登录、项目导入、任务提交和 diff 下载。开发时由 Vite 转发 `/api`。[Docker 单镜像部署](../../docs/deployments/HOW-TO-WEB-DOCKER.md)由 NGINX 同域提供前端静态文件，并将 `/api/*` 转发到容器内 `127.0.0.1:4101`。
 
 模拟模式的启动命令、测试账号及端口见前端说明。模拟后端提供普通任务和 `mock:empty`、`mock:failed`、`mock:review`。重启模拟进程会清空记录。
 

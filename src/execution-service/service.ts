@@ -299,7 +299,7 @@ export async function serveExecution(options: Options) {
                 db.status(
                     run.id,
                     'needs_review',
-                    'Result could not be captured. Waiting for review.',
+                    'Result could not be captured. Capture will be retried.',
                 );
             }
         }
@@ -459,6 +459,12 @@ export async function serveExecution(options: Options) {
         let enqueued = new Set<string>();
 
         async function work() {
+            // These Runs were fenced before capture failed. Retry the snapshot without another worker or Workflow.
+            const capture = db.pendingCapture();
+            if (capture) {
+                await finish(capture);
+                if (stop.signal.aborted) return;
+            }
             if (scheduler) {
                 // Reserve only available slots before publishing their Workflows.
                 // SQLite retains the decisions if publication or the controller fails.
@@ -471,12 +477,17 @@ export async function serveExecution(options: Options) {
                 for (const id of pending) {
                     if (stop.signal.aborted) return;
                     if (!enqueued.has(id)) {
-                        await scheduler.enqueue(id);
+                        try {
+                            await scheduler.enqueue(id);
+                        } catch {
+                            // Keep the reservation and retry in order on the next tick.
+                            break;
+                        }
                         enqueued.add(id);
                     }
                 }
                 // The publisher can run while a Temporal Activity occupies the host.
-                if (assigned.size) return;
+                if (stop.signal.aborted || assigned.size) return;
             } else {
                 const unfinished = db.next('active');
                 if (unfinished) return driveRun(unfinished, 0);
