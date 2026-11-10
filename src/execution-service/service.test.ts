@@ -441,6 +441,58 @@ if (process.argv[2] === '--effect-worker') {
         }
     });
 
+    test('a completed Run retries capture after restart without rerunning its worker', async () => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-capture-retry-'));
+        const base = localHost(join(state, 'volume'));
+        let calls = 0;
+        let failCapture = false;
+        const host: ExecutionHost = {
+            ...base,
+            async worker(request, signal) {
+                calls++;
+                const result = await base.worker(request, signal);
+                failCapture = calls === 1;
+                return result;
+            },
+            async snapshot(binding) {
+                if (failCapture)
+                    throw new Error('Snapshot temporarily unavailable');
+                return base.snapshot(binding);
+            },
+        };
+        let service = await start(state, host);
+        try {
+            const first = client(service.url);
+            const path = await project(first);
+            const run = await submit(first, path, 'first change', 'first');
+            await until(
+                () => first(run),
+                (r) => r.json().status === 'needs_review',
+                'capture failed',
+            );
+            await service.close();
+            failCapture = false;
+            service = await start(state, host);
+            const api = client(service.url);
+            await until(
+                () => api(run),
+                (r) => r.json().status === 'succeeded',
+                'capture retried',
+            );
+            assert.match((await api(run + '/diff')).text, /\+first change/);
+            assert.equal(calls, 1);
+            const next = await submit(api, path, 'next change', 'next');
+            await until(
+                () => api(next),
+                (r) => r.json().status === 'succeeded',
+                'next Run completed',
+            );
+        } finally {
+            await service.close();
+            await rm(state, { recursive: true, force: true });
+        }
+    });
+
     test('private HTTP, three-account FIFO, next generation and immutable diff across restart', async () => {
         const state = await mkdtemp(join(tmpdir(), 'bento-http-test-'));
         const base = localHost(join(state, 'volume'));
