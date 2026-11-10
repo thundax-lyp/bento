@@ -14,6 +14,7 @@ import { PersistenceFence } from '../openshell/persistence-fence.ts';
 import { SingleHostExecution } from '../openshell/single-host.ts';
 import { localHost } from './local.ts';
 import { completedTurn } from './dsh-worker.ts';
+import { Store } from './store.ts';
 import { serveExecution, snapshotSha256 } from './service.ts';
 import type { ExecutionHost, FileText, WorkerRequest } from './types.ts';
 import { processWorker, reserveOperation } from './worker.ts';
@@ -270,6 +271,72 @@ if (process.argv[2] === '--effect-worker') {
         assert.equal(completedTurn([unknown, completed]), false);
         assert.equal(completedTurn([]), false);
     });
+    test('tenant queue limits and fair reservations survive restart and count recovery', async () => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-fair-queue-'));
+        const file = join(state, 'business.sqlite');
+        let store = new Store(file, 2);
+        const project = (tenant: string) => {
+            const { id } = store.addProject(tenant, tenant, []);
+            store.importResult(id, 'ready');
+            return id;
+        };
+        const submit = (tenant: string, id = project(tenant)) =>
+            store.addRun(tenant, id, 'key', 'prompt').run.id;
+        const reserve = (id: string) => {
+            assert(store.reserveDispatch(2));
+            assert(store.dispatchReserved(id));
+        };
+        const startRun = (id: string) => assert(store.start(id, [], 2));
+        const done = (id: string) => store.status(id, 'succeeded', 'Complete');
+        try {
+            const a0 = submit('A');
+            const a1 = submit('A');
+            reserve(a0);
+            assert.equal(store.reserveDispatch(2), false);
+            startRun(a0);
+            reserve(a1);
+            startRun(a1);
+            const a2Project = project('A');
+            const a2 = submit('A', a2Project);
+            const a3 = submit('A');
+            const a4Project = project('A');
+            assert.throws(() => submit('A', a4Project), {
+                status: 429,
+                code: 'tenant_queue_full',
+            });
+            assert.equal(submit('A', a2Project), a2);
+            const b0 = submit('B');
+            const c0 = submit('C');
+            assert.equal(store.reserveDispatch(2), false);
+
+            store.status(a0, 'recovering', 'Recovering');
+            done(a1);
+            reserve(b0);
+            store.close();
+            store = new Store(file, 2);
+            assert.deepEqual(store.schedulableRuns(), [a0, b0]);
+            assert.equal(store.reserveDispatch(2), false);
+            startRun(b0);
+            done(b0);
+            reserve(c0);
+            startRun(c0);
+            done(c0);
+            reserve(a2);
+            assert.equal(store.dispatchReserved(a3), false);
+            startRun(a2);
+            const a4 = submit('A', a4Project);
+            done(a0);
+            reserve(a3);
+            startRun(a3);
+            assert.equal(store.dispatchReserved(a4), false);
+            done(a2);
+            reserve(a4);
+        } finally {
+            store.close();
+            await rm(state, { recursive: true, force: true });
+        }
+    });
+
     test('aborting one warm slot preserves the other worker and replaces only the aborted slot', async () => {
         const state = await mkdtemp(join(tmpdir(), 'bento-warm-test-'));
         const dispatched = join(state, 'dispatched');

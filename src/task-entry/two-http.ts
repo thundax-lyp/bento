@@ -28,6 +28,12 @@ function upstreamError(status: number, operation: Operation): RequestError {
                     ? '成果尚未可用。'
                     : '当前项目状态不允许提交，或此提交键已用于其他内容。',
             );
+        case 429:
+            return new RequestError(
+                429,
+                'tenant_queue_full',
+                '当前账号的任务队列已满。等一个排队任务开始后再提交。',
+            );
         case 413:
             return new RequestError(
                 413,

@@ -12,6 +12,7 @@ async function main() {
         BENTO_HOST_MODULE,
         BENTO_HOST_CONFIG,
         BENTO_PORT,
+        BENTO_TENANT_QUEUE_LIMIT,
         BENTO_TEMPORAL_ADDRESS,
         BENTO_TEMPORAL_NAMESPACE,
         BENTO_TEMPORAL_TASK_QUEUE,
@@ -68,6 +69,9 @@ async function main() {
         token: BENTO_SERVICE_BEARER,
         port,
         host,
+        ...(BENTO_TENANT_QUEUE_LIMIT === undefined
+            ? {}
+            : { tenantQueueLimit: Number(BENTO_TENANT_QUEUE_LIMIT) }),
         ...(BENTO_TEMPORAL_ADDRESS && BENTO_TEMPORAL_TASK_QUEUE
             ? {
                   temporal: {

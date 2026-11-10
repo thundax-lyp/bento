@@ -78,6 +78,10 @@ node --experimental-strip-types src/execution-service/start.ts
 
 启用 Temporal 和预热后，在同一份宿主配置中设置 `"workerSlots": 2` 可开启两个槽位。每个 Run 占用一个槽位直到执行或恢复结束，两槽都占用时其他 Run 留在队列。项目与 Session、Workspace 一一绑定，同一项目仍只接受一个未结束的 Run。调低槽位数或回退到旧版本前，先排空执行宿主。
 
+`BENTO_TENANT_QUEUE_LIMIT` 设置每个账号独立的排队上限，默认 16，取正整数。额度按 `queued` 的 Run 计数，包括已经预留槽位但尚未领取的 Run。额度耗尽时，新提交返回 HTTP 429 和 `tenant_queue_full`，用原提交键重试已接受的请求仍可取回同一个 Run。其他账号使用各自的额度。
+
+Temporal 模式在空出槽位时优先选择当前无在跑任务的账号。同优先级按提交顺序派发，每个账号内部保持 FIFO。已预留的槽位和处于 `running` 或 `recovering` 的 Run 均计入派发占用。只有一个账号有可派发任务时，它可以占用两个槽。派发顺序由 SQLite 持久化，Temporal 领取后才签发当次执行授权。
+
 受信启动器负责隔离 Worker 及其子进程，并将终止信号传给整个容器或进程组。异常退出、租约超时或需要人工核对的回执会淘汰该 Worker。执行服务在旧进程关闭后补位。关闭服务时等待预热进程退出，随后释放控制器锁。停用预热时，排空后移除私有配置中的 `prewarmWorker` 和 `workerSlots`，移除 Worker 命令的 `--warm`，再重启执行服务。
 
 遇到 worker 失联时，Two 撤销旧代授权并在原卷上恢复 Session。恢复 worker 只对账会话历史，原 prompt 不重发。Run 进入 `needs_review` 时，可信部署端先独立核对预期修改，再通过[进程内 `reviewRun`](../../src/execution-service/service.ts) 提供代次、稳定操作 ID 和预期整卷哈希。Two 核对恢复回执、绑定、UNKNOWN 操作及卷快照，原子保存确认记录和 diff。核对失败时，Run 继续等待可信核对，diff 暂不可用。
