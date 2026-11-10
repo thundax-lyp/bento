@@ -12,6 +12,7 @@
 - Session 日志所有权与沙盒执行权分别撤销，只有 generation/owner 一致、旧执行完成停止/对账、绑定及挂载确认后才能 READY。UNKNOWN 先观察/对账，不能因未收到结果就重放副作用。
 - 优先复用固定 npm OpenShell 插件、官方 checkpoint/SessionPersistence、OpenShell 原生生命周期及认证、外部持久卷。平台层补业务授权、绑定、调度和恢复协议；当前没有必须修改 DSH 核心的实验证据。
 - Run 编排已接入 Temporal [单执行宿主模式](../deployments/HOW-TO-TEMPORAL-DEV.md#接入-bento)。Temporal 持有调度历史，Bento 在 SQLite 持久化 Run 状态、Session、Workspace 绑定和执行授权。Activity 重投以持久 Run 状态决定派发或恢复。生产业务状态倾向 PostgreSQL。
+- [Web 单镜像部署](../deployments/HOW-TO-WEB-DOCKER.md)由 NGINX 同域提供静态前端并代理容器内的 task-entry。task-entry 访问独立的执行服务，浏览器直传 S3。
 
 ## 三层职责与交接
 

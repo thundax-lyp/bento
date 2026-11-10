@@ -5,6 +5,15 @@
 !/.github/workflows/
 /.github/workflows/*
 !/.github/workflows/checks.yml
+!/.dockerignore
+!/Dockerfile
+!/compose.yaml
+!/deploy/
+/deploy/*
+!/deploy/web/
+/deploy/web/*
+!/deploy/web/nginx.conf
+!/deploy/web/start.sh
 !/.editorconfig
 !/.gitignore
 !/.prettierignore
@@ -70,6 +79,7 @@
 !/docs/research/implementation.md
 /docs/deployments/*
 !/docs/deployments/openshell-dsh.md
+!/docs/deployments/HOW-TO-WEB-DOCKER.md
 !/docs/deployments/HOW-TO-TEMPORAL-DEV.md
 /scripts/*
 !/scripts/check-publication.py

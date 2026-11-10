@@ -8,6 +8,8 @@
 
 [独立 Web 前端](apps/web/README.md)提供本地启动、构建和浏览器验收命令。
 
+[Web 单镜像部署](docs/deployments/HOW-TO-WEB-DOCKER.md)提供 Docker Compose 配置。NGINX 同域提供前端和 API，task-entry 在容器内监听回环地址。
+
 ## 设计与验证
 
 - [研究结论与实现验收](docs/research/README.md)：冻结架构、已验证能力、必要扩展与实现阶段验收条件。
