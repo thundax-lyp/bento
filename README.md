@@ -6,6 +6,8 @@
 
 [Bento 任务入口](src/task-entry/README.md)提供受邀登录、文本项目导入、任务提交、状态查看和 diff 下载。可以在本地模拟，也可以连接 执行服务。
 
+[独立 Web 前端](apps/web/README.md)提供本地启动、构建和浏览器验收命令。
+
 ## 设计与验证
 
 - [研究结论与实现验收](docs/research/README.md)：冻结架构、已验证能力、必要扩展与实现阶段验收条件。

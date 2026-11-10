@@ -1,3 +1,6 @@
+packages:
+    - apps/web
+
 allowBuilds:
     '@swc/core': false
     protobufjs: false

@@ -43,7 +43,24 @@
         "src/task-entry/README.md",
         "src/task-entry/client.js",
         "src/task-entry/index.html",
-        "src/task-entry/style.css"
+        "src/task-entry/style.css",
+        "apps/web/.gitignore",
+        "apps/web/README.md",
+        "apps/web/e2e/task.spec.ts",
+        "apps/web/eslint.config.mjs",
+        "apps/web/index.html",
+        "apps/web/package.json",
+        "apps/web/playwright.config.ts",
+        "apps/web/src/api.ts",
+        "apps/web/src/draft.test.ts",
+        "apps/web/src/draft.ts",
+        "apps/web/src/main.tsx",
+        "apps/web/src/pages.tsx",
+        "apps/web/src/style.css",
+        "apps/web/src/ui.test.tsx",
+        "apps/web/src/ui.tsx",
+        "apps/web/tsconfig.json",
+        "apps/web/vite.config.ts"
     ],
     "patterns": ["src/**/*.ts"]
 }
