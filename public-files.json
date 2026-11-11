@@ -82,14 +82,26 @@
         "apps/workspace/api/go/go.mod",
         "apps/workspace/api/go/go.sum",
         "apps/orchestrator/go.mod",
-        "apps/orchestrator/go.sum"
+        "apps/orchestrator/go.sum",
+        "apps/orchestrator/main.go",
+        "apps/orchestrator/temporal.go",
+        "apps/orchestrator/temporal_test.go",
+        "apps/worker/dsh-worker.ts",
+        "apps/worker/run-worker.ts",
+        "apps/workspace/api/account-store.ts",
+        "apps/workspace/api/auth.ts",
+        "apps/workspace/api/execution-service-http.ts",
+        "apps/workspace/api/go/accounts.go",
+        "apps/workspace/api/go/main.go",
+        "apps/workspace/api/main.ts",
+        "apps/workspace/api/mock.ts",
+        "apps/workspace/api/oidc.ts",
+        "apps/workspace/api/protocol.ts",
+        "apps/workspace/api/server.ts",
+        "apps/workspace/api/space-execution.ts",
+        "apps/workspace/api/space-storage.ts",
+        "apps/workspace/api/space.ts",
+        "apps/workspace/auth/auth-page.ts"
     ],
-    "patterns": [
-        "src/**/*.ts",
-        "apps/orchestrator/*.go",
-        "apps/workspace/api/go/*.go",
-        "apps/workspace/api/*.ts",
-        "apps/workspace/auth/*.ts",
-        "apps/worker/*.ts"
-    ]
+    "patterns": ["src/**/*.ts"]
 }
