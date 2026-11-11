@@ -9,6 +9,7 @@ import {
     isRouteErrorResponse,
     Link,
     redirect,
+    redirectDocument,
     RouterProvider,
     useRouteError,
 } from 'react-router';
@@ -24,6 +25,8 @@ import {
 } from './pages';
 import { CloudProjectRoute } from './space';
 import './style.css';
+
+const externalAuth = import.meta.env.VITE_BENTO_KEYCLOAK_AUTH === '1';
 
 const client = new QueryClient({
     defaultOptions: {
@@ -53,6 +56,7 @@ async function requireSession(request: Request) {
         return await client.fetchQuery(sessionQuery);
     } catch (error) {
         if (error instanceof ApiError && error.status === 401) {
+            if (externalAuth) throw redirectDocument('/auth');
             const url = new URL(request.url);
             throw redirect(
                 '/login?' +
@@ -81,8 +85,16 @@ function RouteError() {
 }
 
 const router = createBrowserRouter([
-    { path: '/login', Component: Login },
-    { path: '/register', Component: Register },
+    {
+        path: '/login',
+        Component: Login,
+        ...(externalAuth ? { loader: () => redirectDocument('/auth') } : {}),
+    },
+    {
+        path: '/register',
+        Component: Register,
+        ...(externalAuth ? { loader: () => redirectDocument('/auth') } : {}),
+    },
     {
         loader: ({ request }) => requireSession(request),
         Component: Workbench,

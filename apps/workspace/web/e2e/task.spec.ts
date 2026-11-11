@@ -2,11 +2,40 @@ import { expect, test } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 
-test('登录、导入文本、提交任务、刷新找回并下载修改', async ({ page }) => {
+async function register(
+    page: import('@playwright/test').Page,
+    account: string,
+    password: string,
+) {
+    await page.getByRole('link', { name: '使用邀请码注册' }).click();
+    await page.getByLabel('账号').fill(account);
+    await page.getByLabel('邀请码').fill('demo-invite');
+    await page.getByLabel('新密码').fill(password);
+    await page.getByRole('button', { name: '注册', exact: true }).click();
+    await expect(page).toHaveURL(/\/login(?:\?|$)/);
+}
+
+test('登录、导入文本、提交任务、刷新找回并下载修改', async ({
+    page,
+    request,
+    baseURL,
+}) => {
+    const guestPassword = randomUUID();
+    const guest = await request.post('/api/register', {
+        headers: { origin: new URL(baseURL!).origin },
+        data: {
+            account: 'guest',
+            invite: 'demo-invite',
+            password: guestPassword,
+        },
+    });
+    expect(guest.status()).toBe(201);
     await page.goto('/');
     await expect(page).toHaveURL(/\/login/);
+    const demoPassword = randomUUID();
+    await register(page, 'demo', demoPassword);
     await page.getByLabel('账号').fill('demo');
-    await page.getByLabel('邀请码').fill('demo-invite');
+    await page.getByLabel('密码', { exact: true }).fill(demoPassword);
     await page.getByRole('button', { name: '登录', exact: true }).click();
 
     await page.getByRole('link', { name: 'Workspace', exact: true }).click();
@@ -43,7 +72,7 @@ test('登录、导入文本、提交任务、刷新找回并下载修改', async
     await page.goto(url);
     await expect(page).toHaveURL(/\/login\?next=/);
     await page.getByLabel('账号').fill('guest');
-    await page.getByLabel('邀请码').fill('demo-invite');
+    await page.getByLabel('密码', { exact: true }).fill(guestPassword);
     await page.getByRole('button', { name: '登录', exact: true }).click();
     await expect(page.getByRole('heading')).toHaveText(
         '找不到这个页面或任务。',
@@ -100,24 +129,24 @@ test('任务详情在可信核对结束后自动显示 diff', async ({ page }) =
 test('受邀注册后用密码登录，注销后该账号无法再登录', async ({ page }) => {
     const password = randomUUID();
     await page.goto('/register');
-    await page.getByLabel('账号').fill('guest');
+    await page.getByLabel('账号').fill('registration-demo');
     await page.getByLabel('邀请码').fill('demo-invite');
     await page.getByLabel('新密码').fill(password);
     await page.getByRole('button', { name: '注册', exact: true }).click();
     await expect(page).toHaveURL(/\/login$/);
 
-    await page.getByLabel('账号').fill('guest');
-    await page.getByLabel('密码或邀请码').fill(password);
+    await page.getByLabel('账号').fill('registration-demo');
+    await page.getByLabel('密码').fill(password);
     await page.getByRole('button', { name: '登录', exact: true }).click();
     await page.getByRole('link', { name: '账号设置' }).click();
-    await page.getByLabel('密码或旧账号邀请码').fill(password);
+    await page.getByLabel('密码').fill(password);
     await page.getByRole('checkbox', { name: '我已了解注销后果' }).check();
     await page.getByRole('button', { name: '确认注销账号' }).click();
     await expect(page).toHaveURL(/\/login\?closed=1/);
     await expect(page.getByRole('status')).toContainText('账号已关闭');
 
-    await page.getByLabel('账号').fill('guest');
-    await page.getByLabel('密码或邀请码').fill(password);
+    await page.getByLabel('账号').fill('registration-demo');
+    await page.getByLabel('密码').fill(password);
     await page.getByRole('button', { name: '登录', exact: true }).click();
     await expect(page.getByRole('alert')).toBeVisible();
     await expect(page).toHaveURL(/\/login\?closed=1/);

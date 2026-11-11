@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { demoAccounts, readAccounts, sessionAuth } from './auth.ts';
+import { mockAccounts, mysqlAccounts } from './account-store.ts';
+import { demoAccounts, sessionAuth } from './auth.ts';
+import { keycloakAuth } from './oidc.ts';
 import { mockBackend } from './mock.ts';
 import { taskEntryServer } from './server.ts';
 import { httpBackend } from './execution-service-http.ts';
@@ -48,13 +49,14 @@ async function main() {
         throw new Error('Invalid public origin for mode');
     }
 
-    const file = env.BENTO_ONE_ACCOUNTS_FILE;
-    const accounts = file
-        ? readAccounts(JSON.parse(readFileSync(file, 'utf8')))
-        : mode === 'mock'
-          ? demoAccounts()
-          : undefined;
-    if (!accounts) throw new Error('Missing invited accounts');
+    const mysql = env.BENTO_MYSQL_HOST ? mysqlAccounts() : undefined;
+    const issuer = env.BENTO_OIDC_ISSUER;
+    if (env.BENTO_AUTH_MODE === 'keycloak' && !issuer)
+        throw new Error('Keycloak issuer is required');
+    if (issuer && !mysql)
+        throw new Error('Keycloak requires MySQL account storage');
+    if (mode === 'http' && !mysql)
+        throw new Error('MySQL account storage is required in HTTP mode');
 
     let backend;
     if (mode === 'mock') {
@@ -82,15 +84,23 @@ async function main() {
             timeout,
         );
     }
-    const credentialPath =
-        env.BENTO_ONE_CREDENTIALS_DB ?? (file ? file + '.sqlite' : ':memory:');
-    if (mode === 'http' && credentialPath === ':memory:')
-        throw new Error('Credential storage must persist');
     const auth = sessionAuth(
-        accounts,
+        mysql ?? mockAccounts(demoAccounts()),
         publicUrl.protocol === 'https:',
-        credentialPath,
+        !!issuer,
     );
+    const oidc =
+        issuer && mysql
+            ? await keycloakAuth({
+                  issuer,
+                  origin: publicUrl,
+                  clientId: env.BENTO_OIDC_CLIENT_ID ?? '',
+                  clientSecret: env.BENTO_OIDC_CLIENT_SECRET ?? '',
+                  organization: env.BENTO_OIDC_ORGANIZATION ?? '',
+                  store: mysql,
+                  auth,
+              })
+            : undefined;
     const endpoint = env.BENTO_SPACE_S3_ENDPOINT;
     const bucket = env.BENTO_SPACE_S3_BUCKET;
     const database = env.BENTO_SPACE_DB;
@@ -101,7 +111,7 @@ async function main() {
             !bucket ||
             !database ||
             database === ':memory:' ||
-            !file
+            !mysql
         )
             throw new Error('Incomplete space configuration');
         const storageUrl = origin(endpoint);
@@ -130,6 +140,7 @@ async function main() {
         origin: publicUrl.origin,
         backend,
         auth,
+        ...(oidc ? { oidc } : {}),
         ...(space ? { space } : {}),
     });
     const stop = () => {

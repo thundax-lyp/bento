@@ -12,7 +12,7 @@ BENTO_ONE_MODE=mock BENTO_ONE_PORT=4186 BENTO_ONE_ORIGIN=http://127.0.0.1:4185 n
 pnpm --filter @bento/web dev
 ```
 
-访问 <http://127.0.0.1:4185>。模拟账号为 `demo` 或 `guest`，邀请码为 `demo-invite`。在 Workspace 导入一个 UTF-8 文本项目，等项目就绪后从对话页发送任务。任务详情可刷新，并可下载补丁。
+访问 <http://127.0.0.1:4185>。模拟账号为 `demo` 或 `guest`，先用邀请码 `demo-invite` 注册并设置密码，再用密码登录。在 Workspace 导入一个 UTF-8 文本项目，等项目就绪后从对话页发送任务。任务详情可刷新，并可下载补丁。
 
 Vite 默认将 `/api` 代理到 `http://127.0.0.1:4186`。连接其他后端时，给 Vite 设置 `BENTO_API_TARGET`，并将后端 `BENTO_ONE_ORIGIN` 设为浏览器访问前端的完整 origin。
 

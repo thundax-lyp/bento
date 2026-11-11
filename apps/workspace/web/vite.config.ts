@@ -9,6 +9,13 @@ export default defineConfig({
         port: 4185,
         strictPort: true,
         proxy: {
+            ...(process.env.VITE_BENTO_KEYCLOAK_AUTH === '1'
+                ? {
+                      '^/auth(?:/|$|\\?)':
+                          process.env.BENTO_API_TARGET ??
+                          'http://127.0.0.1:4101',
+                  }
+                : {}),
             '/api': {
                 target: process.env.BENTO_API_TARGET ?? 'http://127.0.0.1:4186',
             },

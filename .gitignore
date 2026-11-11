@@ -145,8 +145,3 @@
 **/.DS_Store
 /dist/
 /coverage/
-
-!/deploy/
-!/deploy/web/
-!/deploy/web/nginx.conf
-!/deploy/web/start.sh

@@ -3,7 +3,8 @@ import { Server as TcpServer } from 'node:net';
 import { Context } from '@deepseek-ai/cordis';
 import WebServer from '@deepseek-ai/dsh-host-webserver';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { sessionAuth } from './auth.ts';
+import type { keycloakAuth } from './oidc.ts';
+import type { sessionAuth } from './auth.ts';
 import {
     notFound,
     projectInput,
@@ -18,6 +19,7 @@ type Options = {
     port: number;
     origin: string;
     auth: ReturnType<typeof sessionAuth>;
+    oidc?: Awaited<ReturnType<typeof keycloakAuth>>;
     backend: Backend;
     space?: ReturnType<typeof mySpace>;
 };
@@ -161,6 +163,7 @@ export async function taskEntryServer({
     port,
     origin,
     auth,
+    oidc,
     backend,
     space,
 }: Options) {
@@ -173,7 +176,7 @@ export async function taskEntryServer({
             for (const {
                 ownerId: owner,
                 spaceRequired,
-            } of auth.pendingPurges()) {
+            } of await auth.pendingPurges()) {
                 if (closing) return;
                 if (space && !space.drain(owner)) continue;
                 if (inFlight.has(owner)) continue;
@@ -187,7 +190,7 @@ export async function taskEntryServer({
                         continue;
                     if (space ? !(await space.purge(owner)) : spaceRequired)
                         continue;
-                    auth.finishPurge(owner);
+                    await auth.finishPurge(owner);
                 } catch {
                     // Retain the durable cleanup request and retry dependencies independently of login.
                 }
@@ -218,7 +221,12 @@ export async function taskEntryServer({
             const url = request.url ?? '';
             if (!url.startsWith('/') || url.startsWith('//')) throw notFound();
             const [path = '', query] = url.split('?', 2);
-            if (!path.startsWith('/api/')) throw notFound();
+            if (
+                !path.startsWith('/api/') &&
+                path !== '/auth' &&
+                !path.startsWith('/auth/')
+            )
+                throw notFound();
 
             if (
                 request.method === 'POST' &&
@@ -230,6 +238,22 @@ export async function taskEntryServer({
                     '请从任务入口提交请求。',
                 );
             }
+            if (
+                path === '/auth' ||
+                path.startsWith('/auth/') ||
+                path.startsWith('/api/oidc/')
+            ) {
+                if (!oidc) throw notFound();
+                await oidc(request, response, new URL(url, origin), !!space);
+                return;
+            }
+            if (
+                oidc &&
+                ['/api/login', '/api/register', '/api/account/close'].includes(
+                    path,
+                )
+            )
+                throw notFound();
             if (request.method === 'POST' && path === '/api/login') {
                 const login = await auth.login(
                     request,
@@ -259,7 +283,7 @@ export async function taskEntryServer({
                 sweepAccounts();
                 return json(response, 200, {});
             }
-            const account = auth.account(request);
+            const account = await auth.account(request);
             activeOwner = account.ownerId;
             inFlight.set(activeOwner, (inFlight.get(activeOwner) ?? 0) + 1);
             if (request.method === 'GET' && path === '/api/session') {
@@ -352,11 +376,7 @@ export async function taskEntryServer({
             try {
                 await context.fiber.dispose();
             } finally {
-                try {
-                    await space?.close();
-                } finally {
-                    auth.close();
-                }
+                await space?.close();
             }
         })());
     }

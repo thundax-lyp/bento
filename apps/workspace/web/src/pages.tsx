@@ -47,11 +47,11 @@ export function Login() {
     const mutation = useMutation({
         mutationFn: ({
             account,
-            invite,
+            password,
         }: {
             account: string;
-            invite: string;
-        }) => login(account, invite),
+            password: string;
+        }) => login(account, password),
         async onSuccess(session) {
             await client.cancelQueries();
             client.clear();
@@ -73,7 +73,7 @@ export function Login() {
         const data = new FormData(event.currentTarget);
         mutation.mutate({
             account: String(data.get('account') ?? ''),
-            invite: String(data.get('invite') ?? ''),
+            password: String(data.get('password') ?? ''),
         });
     }
     return (
@@ -86,7 +86,7 @@ export function Login() {
                     <p className="font-semibold">◇ Bento</p>
                     <h1 className="text-2xl font-semibold">登录工作台</h1>
                     <p className="text-sm text-zinc-600">
-                        使用密码登录。尚未注册的旧账号可以继续使用邀请码。
+                        使用注册时设置的密码登录。
                     </p>
                 </div>
                 <label>
@@ -99,10 +99,10 @@ export function Login() {
                     />
                 </label>
                 <label>
-                    密码或邀请码
+                    密码
                     <input
                         className={fieldClass}
-                        name="invite"
+                        name="password"
                         type="password"
                         autoComplete="current-password"
                         required
@@ -232,7 +232,7 @@ export function AccountSettings() {
                     diff。清理完成后无法恢复。
                 </p>
                 <label>
-                    密码或旧账号邀请码
+                    密码
                     <input
                         className={fieldClass}
                         name="password"
@@ -315,20 +315,37 @@ export function Workbench() {
                 <header className="flex min-h-15 items-center justify-between gap-3 border-b border-zinc-200 px-5 md:px-8">
                     <span className="text-sm text-zinc-600">云端工作台</span>
                     <div className="flex items-center gap-3 text-sm">
-                        <Link
-                            className="underline"
-                            to="/account"
-                            aria-label="账号设置"
-                        >
-                            {account}
-                        </Link>
-                        <Button
-                            type="button"
-                            disabled={exit.isPending}
-                            onClick={() => exit.mutate()}
-                        >
-                            退出登录
-                        </Button>
+                        {import.meta.env.VITE_BENTO_KEYCLOAK_AUTH === '1' ? (
+                            <>
+                                <a
+                                    className="underline"
+                                    href="/auth"
+                                    aria-label="账号设置"
+                                >
+                                    {account}
+                                </a>
+                                <form method="post" action="/api/oidc/logout">
+                                    <Button type="submit">退出登录</Button>
+                                </form>
+                            </>
+                        ) : (
+                            <>
+                                <Link
+                                    className="underline"
+                                    to="/account"
+                                    aria-label="账号设置"
+                                >
+                                    {account}
+                                </Link>
+                                <Button
+                                    type="button"
+                                    disabled={exit.isPending}
+                                    onClick={() => exit.mutate()}
+                                >
+                                    退出登录
+                                </Button>
+                            </>
+                        )}
                     </div>
                 </header>
                 {exit.error && <Notice message={errorMessage(exit.error)} />}
