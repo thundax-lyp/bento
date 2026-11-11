@@ -1,10 +1,12 @@
-# 用户身份与账号数据库设计
+# 个人端认证与账号设计
 
 ## Purpose And Scope
 
 落实 [Web 受邀认证需求](../10-requirements/WEB-AUTH-REQUIREMENTS.md)。Keycloak 是受邀认证部署的身份服务。Bento 保留业务账号、项目与 Run 归属，以及注销清理状态。
 
 ## Responsibilities And Dependencies
+
+[工程结构设计](ENGINEERING-STRUCTURE-DESIGN.md)定义个人端认证前端和 API 的目标边界。以下接线描述已有浏览器验收覆盖的实现。
 
 - NGINX 将 `/auth`、`/auth/*` 和 `/api/*` 代理到 Go Web 入口，再到 task-entry。其余页面走工作区 SPA。认证页由 task-entry 独立提供。
 - Keycloak 托管邀请、注册、邮箱验证、密码、身份会话与认证审计。Bento 仅处理 OIDC 回调，使用授权码、S256 PKCE、state、nonce 和签名校验。回调检查已验证邮箱及配置的组织 alias。
@@ -22,4 +24,4 @@
 
 ## Acceptance
 
-本机 Docker 和远程 Keycloak 的浏览器验证见 [Web Docker 验收](../40-readiness/WEB-DOCKER-EVIDENCE.md)。部署配置见 [Web Docker 部署](../deployments/HOW-TO-WEB-DOCKER.md#keycloak-受邀认证)。
+本机 Docker 和远程 Keycloak 的浏览器验证见 [Web Docker 验收](../40-readiness/WEB-DOCKER-EVIDENCE.md)。部署配置见 [Web Docker 部署](../../deploy/README.md#keycloak-受邀认证)。

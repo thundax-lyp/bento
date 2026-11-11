@@ -2,7 +2,7 @@
 
 ## Purpose
 
-本文定义分支、PR、review 与合并的交付边界。提交授权、粒度和消息格式由 [Commit Rules](./COMMIT-RULES.md) 定义，通用验证方法由 [Engineering Rules](./ENGINEERING-RULES.md#validation-and-evidence) 定义。
+本文定义分支、PR、review 与合并的交付边界。提交授权、粒度和消息格式由 [Commit Rules](./COMMIT-RULES.md) 定义。
 
 ## Scope
 
@@ -48,7 +48,7 @@
 
 ## Documentation And Task Closure
 
-合并前按 [Document Sync](./DOCUMENT-RULES.md#document-sync) 核对本次变更的同步范围。涉及临时 RUNBOOK 时，核对 [RUNBOOK Completion](./RUNBOOK-RULES.md#completion-and-deletion)。
+合并前按 [Document Sync](./DOCUMENT-RULES.md#document-sync) 核对本次变更的同步范围。
 
 ## Review And Merge
 

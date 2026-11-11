@@ -36,14 +36,13 @@ node .agents/skills/bento-pr-review/scripts/collect-review-context.mjs snapshot 
 
 按 [Document Rules](../../../docs/00-governance/DOCUMENT-RULES.md) 区分文档职责和权威。只加载能解释当前 diff 的最小上下文。先读取 [PR Rules](../../../docs/00-governance/PR-RULES.md)，再按改动范围补读：
 
-| 改动范围                                    | 当前依据                                                                                                                   |
-| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| 产品代码或设计                              | [平台架构](../../../docs/research/architecture.md)、[工程规则](../../../docs/00-governance/ENGINEERING-RULES.md)及相关需求 |
-| Session、Run、Workspace、权限、持久化与接管 | [平台架构](../../../docs/research/architecture.md)与[实现方案和验收](../../../docs/research/implementation.md)中的相关边界 |
-| 源码目录和入口                              | [架构规则](../../../docs/00-governance/ARCHITECTURE-RULES.md)                                                              |
-| 测试与验证声明                              | [测试规则](../../../docs/00-governance/TEST-RULES.md)及[能力与证据](../../../docs/research/capabilities.md)                |
-| 临时 RUNBOOK                                | [RUNBOOK 规则](../../../docs/00-governance/RUNBOOK-RULES.md)及对应手册                                                     |
-| 运行、诊断、恢复或发布                      | [OpenShell 部署说明](../../../docs/deployments/openshell-dsh.md)及[公开发布范围](../../../docs/PUBLISHING.md)              |
+| 改动范围                                    | 当前依据                                                                                                                                                                                                                          |
+| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 产品代码或设计                              | [平台架构](../../../docs/30-designs/PLATFORM-ARCHITECTURE-DESIGN.md)及相关需求                                                                                                                                                    |
+| Session、Run、Workspace、权限、持久化与接管 | [平台架构](../../../docs/30-designs/PLATFORM-ARCHITECTURE-DESIGN.md)与[实施设计](../../../docs/30-designs/DSH-OPENSHELL-IMPLEMENTATION-DESIGN.md)及[交付验收](../../../docs/40-readiness/DSH-OPENSHELL-ACCEPTANCE.md)中的相关边界 |
+| 源码目录和入口                              | [架构规则](../../../docs/00-governance/ARCHITECTURE-RULES.md)                                                                                                                                                                     |
+| 测试与验证声明                              | [能力与证据](../../../docs/40-readiness/DSH-OPENSHELL-EVIDENCE.md)                                                                                                                                                                |
+| 运行、诊断、恢复或发布                      | [OpenShell 部署说明](../../../deploy/README.md#openshell-执行宿主)                                                                                                                                                                |
 
 实现与验证文档只证明其记录的范围；依据冲突或不足时记录缺口，不凭当前代码补出产品规则。
 
@@ -58,7 +57,7 @@ node .agents/skills/bento-pr-review/scripts/collect-review-context.mjs snapshot 
 ## 4. 审查完整 diff
 
 - 逐个覆盖脚本返回的 changed files；测试、配置、迁移、脚本和文档不能因不是业务代码而跳过。
-- 涉及测试时读取 [Test Rules](../../../docs/00-governance/TEST-RULES.md)，核对行为依据、增量保护、合并/代码减量与成本。
+- 涉及测试时核对行为依据、增量保护、合并/代码减量与成本。
 - 对改动建立 producer → adapter → validator → consumer/sink 链路，必要时追踪 fallback、历史数据、迁移、等价路径和测试。
 - 对每条从正式文档提取的承诺，至少记录一个真实 validator、consumer/sink 或明确的终点；找不到时标记为 deferred，而不是凭经验补全规则。
 - 对当前 PR 至少推演一个异常、并发、权限、恢复、历史数据或治理失败反例。

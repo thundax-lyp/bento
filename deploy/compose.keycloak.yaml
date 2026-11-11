@@ -1,7 +1,6 @@
 services:
     bento-web:
         build:
-            context: .
             args:
                 VITE_BENTO_KEYCLOAK_AUTH: '1'
         environment:

@@ -2,7 +2,7 @@
 
 ## Scope
 
-2026-11-09，在现有远端 Linux x86_64 开发宿主上部署 Temporal 开发实例，并接入 Bento 单执行宿主。版本与健康检查命令见 [部署说明](../deployments/HOW-TO-TEMPORAL-DEV.md)。
+2026-11-09，在现有远端 Linux x86_64 开发宿主上部署 Temporal 开发实例，并接入 Bento 单执行宿主。版本与健康检查命令见 [部署说明](../../deploy/README.md#temporal-开发环境)。
 
 ## Validated Contract
 
@@ -85,7 +85,7 @@
 
 ## Not Covered
 
-Temporal Server 重启或数据丢失、生产部署、多执行宿主、超过两个槽位的容量、超过本轮时长与负载的压测、任意工具不在本轮覆盖内。A6 的完整门槛见 [实施与验收](../research/implementation.md)。
+Temporal Server 重启或数据丢失、生产部署、多执行宿主、超过两个槽位的容量、超过本轮时长与负载的压测、任意工具不在本轮覆盖内。A6 的完整门槛见 [交付验收](DSH-OPENSHELL-ACCEPTANCE.md)。
 
 ## Closure
 

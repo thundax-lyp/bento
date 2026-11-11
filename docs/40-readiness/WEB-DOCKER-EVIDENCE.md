@@ -2,7 +2,7 @@
 
 ## 验证范围
 
-2026-11-10，以独立前端提交 `d78dbb8` 和同批 Web Docker 部署改动为基线。在远端 Docker 宿主使用缓存的 `node:24.19.0-bookworm-slim` 构建单镜像，以 `BENTO_ONE_MODE=mock` 启动。部署命令见 [Web Docker 部署](../deployments/HOW-TO-WEB-DOCKER.md)。
+2026-11-10，以独立前端提交 `d78dbb8` 和同批 Web Docker 部署改动为基线。在远端 Docker 宿主使用缓存的 `node:24.19.0-bookworm-slim` 构建单镜像，以 `BENTO_ONE_MODE=mock` 启动。部署命令见 [Web Docker 部署](../../deploy/README.md#web-docker)。
 
 ## 已验证
 
@@ -38,7 +38,7 @@ Chromium 从 Bento `/` 进入独立 `/auth`，使用本地 Docker 中的 Keycloa
 
 Chromium 通过邀请邮件完成注册、验证邮箱和设置密码。公开注册被拒绝。首次登录在本机 MySQL 创建绑定，并行重复登录复用原 `ownerId`。已验证邮箱的非组织成员无法获得会话或绑定。退出和注销重新认证通过。Keycloak Admin REST API 查到注册、邮箱验证、凭据更新、登录和退出事件。重启 Keycloak 后读回 Realm、Bento 客户端和注册审计。
 
-验证范围为开发测试认证链路。生产邮件投递、生产 HTTPS、跨实例业务会话和真实执行资源清理仍待独立验收。[部署复现](../deployments/HOW-TO-WEB-DOCKER.md#远端开发身份环境)
+验证范围为开发测试认证链路。生产邮件投递、生产 HTTPS、跨实例业务会话和真实执行资源清理仍待独立验收。[部署复现](../../deploy/README.md#远端开发身份环境)
 
 ## 工程目录迁移复验（2026-11-11）
 

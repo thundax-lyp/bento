@@ -23,7 +23,6 @@ deploy/
 └── worker/
 docs/
 validation/
-scripts/
 runtime/
 ```
 
@@ -39,6 +38,6 @@ runtime/
 
 ## 当前代码与验收
 
-个人端三类源码已平级，Go Web 入口和账号仓储在 `workspace/api/go`，Temporal Go 模块在 `orchestrator`，DSH Worker 在 `worker` 自带协议和运行依赖，并可独立构建镜像。独立认证前端构建、管理端三项实现、Go 执行账本与受信执行路径仍待交付。当前运行能力依赖现有 TS 执行服务及其 SQLite 账本。此项属于实现差距，目标架构以单一 Go Orchestrator 为准。
+个人端三类源码已平级，Go Web 入口和账号仓储在 `workspace/api/go`，Temporal Go 模块在 `orchestrator`，DSH Worker 在 `worker` 自带协议和运行依赖，并可独立构建镜像。独立认证前端构建、管理端三项实现、Go 执行账本与受信执行路径仍待交付。当前运行能力依赖 `apps/orchestrator/execution-service/` 中的 TS 执行服务及其 SQLite 账本。受信 OpenShell 控制面同属 Orchestrator，位于 `apps/orchestrator/openshell/`。此项属于实现差距，目标架构以单一 Go Orchestrator 为准。
 
-Go 接管验收须覆盖正常派发、超时清理、快速退出后重投、`docker start` 在途强杀、同一尝试并发重投、旧代拒写、双侧停止观察和 `UNKNOWN` 恢复。真实 OpenShell 验收须能独立核对副作用次数。 [实现验收](../research/implementation.md)
+Go 接管验收须覆盖正常派发、超时清理、快速退出后重投、`docker start` 在途强杀、同一尝试并发重投、旧代拒写、双侧停止观察和 `UNKNOWN` 恢复。真实 OpenShell 验收须能独立核对副作用次数。 [实现验收](../40-readiness/DSH-OPENSHELL-ACCEPTANCE.md)

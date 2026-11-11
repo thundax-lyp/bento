@@ -92,7 +92,7 @@ You have reached your Codex usage limits for code reviews.
 ## 固定流程
 
 1. 读取当前分支、工作区、PR head/base、未解决 threads、PR review summaries、review comments 和 issue comments；从 threads 与符合“Review Summary Finding”的 summary body 建立去重后的 finding 集合，并用已有 summary 回复标记排除已处置项。确认 PR 属于当前仓库、状态为 open 或 merged、base 是 `main`。已关闭且未合并的 PR 必须停止。在确认 PR 存在且满足状态条件前不得添加 reaction、修改代码、commit 或 push。指定其他 PR 时，`comment PR` 的 head 可以不是当前分支，但不得把当前分支的 commit 冒充为该 PR 的修复。
-2. 读取[平台架构](../../../docs/research/architecture.md)、[工程规则](../../../docs/00-governance/ENGINEERING-RULES.md)、[PR 规则](../../../docs/00-governance/PR-RULES.md)、[Commit 规则](../../../docs/00-governance/COMMIT-RULES.md)，并按评论涉及范围读取需求、接口和设计文档。
+2. 读取[平台架构](../../../docs/30-designs/PLATFORM-ARCHITECTURE-DESIGN.md)、[PR 规则](../../../docs/00-governance/PR-RULES.md)、[Commit 规则](../../../docs/00-governance/COMMIT-RULES.md)，并按评论涉及范围读取需求、接口和设计文档。
 3. 先按“冗余额度提示”规则排除纯额度通知；若有删除授权，删除后重新读取对应来源、threads 和 summaries；再对每条剩余 Codex finding 建立触发条件、影响、代码证据和正式依据，按“Finding 与建议方案分离”分类：
     - `accept-as-proposed` 或 `accept-with-smaller-fix`：thread finding 先对原评论添加 👍；summary finding 记录 reaction `Not Applicable`。随后实现最小安全修复和回归测试。
     - `reject`：thread finding 添加 👎；summary finding 记录 reaction `Not Applicable`。不修改代码，并在对应回复中说明 finding 不成立或明确超出当前范围的具体依据。
