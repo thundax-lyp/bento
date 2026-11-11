@@ -19,6 +19,10 @@
 
 各轮版本和部署事实以相应原报告为准。最近 npm 链固定 dsh-sandbox-openshell@0.1.0-rc.1、DSH 0.2.1-rc.4、Cordis 4.0.5；OpenShell Gateway 0.1.6，所查源码/SDK revision ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47。旧 SSH/helper 实验不能自动继承新版 SDK 结论。双主机 worker 接管不等于双执行宿主或数据库 HA。
 
+- 共享卷实验用两个真实 OpenShell 沙盒和两个 DSH Session 验证同一 named volume 的交叉读写。删除并重建一个沙盒后，独立检查确认沙盒 ID 已变、原根文件系统标记已消失、卷内文件保留。新 Worker 在正常退出后的恢复中读回原 Session 和历史，并显式绑定新沙盒。
+- PTC 实验经 OpenShell TCP 转发连接内层 OpenSSH，保持 seccomp。两个 Session 的 `run_code` 和嵌套文件/Bash 工具各自访问对应沙盒。忙循环超时后独立检查对应 PID 已消失，两个连接随后仍能执行 PTC。原生 OpenShell SSH 的 Unix 转发及这条路径的 PTY 未通过验收。
+- 进程停止实验观察到 provider 释放后仍有逃逸后代，整沙盒 stop 才清除其容器内进程。SSH 断连或 stop 超时仍需要独立核对。
+
 ## 最小改动实现与现成能力
 
 | 实现项               | 优先复用                                                          | 平台必须补充                                                     | 状态                             |

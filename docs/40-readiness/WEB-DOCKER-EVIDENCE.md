@@ -39,3 +39,7 @@ Chromium 从 Bento `/` 进入独立 `/auth`，使用本地 Docker 中的 Keycloa
 Chromium 通过邀请邮件完成注册、验证邮箱和设置密码。公开注册被拒绝。首次登录在本机 MySQL 创建绑定，并行重复登录复用原 `ownerId`。已验证邮箱的非组织成员无法获得会话或绑定。退出和注销重新认证通过。Keycloak Admin REST API 查到注册、邮箱验证、凭据更新、登录和退出事件。重启 Keycloak 后读回 Realm、Bento 客户端和注册审计。
 
 验证范围为开发测试认证链路。生产邮件投递、生产 HTTPS、跨实例业务会话和真实执行资源清理仍待独立验收。[部署复现](../deployments/HOW-TO-WEB-DOCKER.md#远端开发身份环境)
+
+## 工程目录迁移复验（2026-11-11）
+
+PR #17 的提交 `8075d34` 通过 `pnpm check` 与 `pnpm --filter @bento/web test:e2e`。三条 Chromium 用例覆盖本地模拟后端的登录与任务提交、可信核对后的 diff，以及受邀账号注销后拒绝再次登录。迁移后的 Dockerfile 使用 `VITE_BENTO_KEYCLOAK_AUTH=1` 构建成功。这次复验覆盖新源码路径和镜像构建，Keycloak 联合链路以上述专项证据为准。
