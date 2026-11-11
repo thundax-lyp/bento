@@ -114,7 +114,8 @@
         "apps/workspace/api/go/session.go",
         "apps/workspace/api/go/oidc.go",
         "apps/workspace/api/go/auth.html",
-        "apps/workspace/api/go/auth.css"
+        "apps/workspace/api/go/auth.css",
+        "apps/workspace/api/go/projects.go"
     ],
     "patterns": ["src/**/*.ts"]
 }
