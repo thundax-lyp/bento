@@ -90,3 +90,7 @@ Temporal Server 重启或数据丢失、生产部署、多执行宿主、超过�
 ## Closure
 
 独立冒烟、Bento 页面纵向验证、Activity 重投、单槽预热、双槽故障隔离、租户公平派发和 30 分钟持续并发验证通过。远端 Temporal 实例保留运行。临时执行服务、Worker 和 OpenShell 测试资源已清理，原 Gateway 未改动。探针与原始日志留在内部工作区。
+
+## Go SDK 接入复验
+
+2026-11-11，使用本机 Temporal CLI 1.10.0 开发服务、Go Temporal 子进程和 Bento 本地执行夹具，验证项目导入、Go 选 Run、SQLite 槽位预留、Workflow 与 Activity 执行、终态和 diff 下载。另在 Activity 等待回执时强制停止 Go Worker，重启后确认 Temporal 重投同一个 Run ID。Go 测试覆盖租户公平派发、FIFO、槽位占用及 Activity 按同一个 Run ID 重试。真实 DSH/OpenShell 联合执行仍待复验。

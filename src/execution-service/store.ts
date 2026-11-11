@@ -392,31 +392,53 @@ export class Store {
             .run(status, id);
     }
 
-    reserveDispatch(slots: number) {
+    dispatchSnapshot(slots: number) {
+        const occupied = this.db
+            .prepare(
+                `
+            SELECT p.owner, r.status FROM runs r JOIN projects p ON p.id=r.projectId
+            LEFT JOIN run_dispatches d ON d.runId=r.id
+            WHERE r.status IN ('running','recovering')
+               OR (r.status='queued' AND d.runId IS NOT NULL)
+            ORDER BY r.rowid
+        `,
+            )
+            .all() as { owner: string; status: string }[];
+        const queued = this.db
+            .prepare(
+                `
+            SELECT r.id, p.owner FROM runs r JOIN projects p ON p.id=r.projectId
+            WHERE r.status='queued' AND NOT EXISTS (
+                SELECT 1 FROM run_dispatches d WHERE d.runId=r.id
+            ) ORDER BY r.rowid
+        `,
+            )
+            .all() as { id: string; owner: string }[];
+        return { slots, occupied, queued };
+    }
+
+    reserveDispatch(id: string, slots: number) {
         return (
             this.db
                 .prepare(
                     `
             WITH occupied AS (
-                SELECT p.owner, r.status
-                FROM runs r JOIN projects p ON p.id=r.projectId
+                SELECT p.owner, r.status FROM runs r JOIN projects p ON p.id=r.projectId
                 LEFT JOIN run_dispatches d ON d.runId=r.id
                 WHERE r.status IN ('running','recovering')
                    OR (r.status='queued' AND d.runId IS NOT NULL)
             )
             INSERT INTO run_dispatches(runId)
             SELECT r.id FROM runs r JOIN projects p ON p.id=r.projectId
-            WHERE r.status='queued'
+            WHERE r.id=? AND r.status='queued'
                 AND NOT EXISTS (SELECT 1 FROM run_dispatches d WHERE d.runId=r.id)
                 AND NOT EXISTS (
                     SELECT 1 FROM occupied o WHERE o.owner=p.owner AND o.status='queued'
                 )
                 AND (SELECT COUNT(*) FROM occupied) < ?
-            ORDER BY EXISTS (SELECT 1 FROM occupied o WHERE o.owner=p.owner), r.rowid
-            LIMIT 1
         `,
                 )
-                .run(slots).changes === 1
+                .run(id, slots).changes === 1
         );
     }
 

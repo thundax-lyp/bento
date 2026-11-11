@@ -18,8 +18,6 @@
         "Dockerfile",
         "README.md",
         "compose.yaml",
-        "deploy/web/nginx.conf",
-        "deploy/web/start.sh",
         "eslint.config.mjs",
         "package.json",
         "pnpm-lock.yaml",
@@ -48,7 +46,11 @@
         "docs/research/architecture.md",
         "docs/research/capabilities.md",
         "docs/research/implementation.md",
-        "src/task-entry/README.md",
+        "apps/orchestrator/go.mod",
+        "apps/orchestrator/go.sum",
+        "apps/orchestrator/main.go",
+        "apps/orchestrator/temporal.go",
+        "apps/orchestrator/temporal_test.go",
         "apps/web/.gitignore",
         "apps/web/README.md",
         "apps/web/e2e/task.spec.ts",
@@ -68,7 +70,12 @@
         "apps/web/src/ui.test.tsx",
         "apps/web/src/ui.tsx",
         "apps/web/tsconfig.json",
-        "apps/web/vite.config.ts"
+        "apps/web/vite.config.ts",
+        "deploy/web/nginx.conf",
+        "deploy/web/start.sh",
+        "src/task-entry/README.md"
     ],
-    "patterns": ["src/**/*.ts"]
+    "patterns": [
+        "src/**/*.ts"
+    ]
 }

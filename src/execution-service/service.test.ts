@@ -272,7 +272,7 @@ if (process.argv[2] === '--effect-worker') {
         assert.equal(completedTurn([unknown, completed]), false);
         assert.equal(completedTurn([]), false);
     });
-    test('tenant queue limits and fair reservations survive restart and count recovery', async () => {
+    test('tenant queue limits and selected reservations survive restart and count recovery', async () => {
         const state = await mkdtemp(join(tmpdir(), 'bento-fair-queue-'));
         const file = join(state, 'business.sqlite');
         let store = new Store(file, 2);
@@ -284,7 +284,7 @@ if (process.argv[2] === '--effect-worker') {
         const submit = (tenant: string, id = project(tenant)) =>
             store.addRun(tenant, id, 'key', 'prompt').run.id;
         const reserve = (id: string) => {
-            assert(store.reserveDispatch(2));
+            assert(store.reserveDispatch(id, 2));
             assert(store.dispatchReserved(id));
         };
         const startRun = (id: string) => assert(store.start(id, [], 2));
@@ -293,7 +293,7 @@ if (process.argv[2] === '--effect-worker') {
             const a0 = submit('A');
             const a1 = submit('A');
             reserve(a0);
-            assert.equal(store.reserveDispatch(2), false);
+            assert.equal(store.reserveDispatch(a1, 2), false);
             startRun(a0);
             reserve(a1);
             startRun(a1);
@@ -308,7 +308,7 @@ if (process.argv[2] === '--effect-worker') {
             assert.equal(submit('A', a2Project), a2);
             const b0 = submit('B');
             const c0 = submit('C');
-            assert.equal(store.reserveDispatch(2), false);
+            assert.equal(store.reserveDispatch(a2, 2), false);
 
             store.status(a0, 'recovering', 'Recovering');
             done(a1);
@@ -316,7 +316,7 @@ if (process.argv[2] === '--effect-worker') {
             store.close();
             store = new Store(file, 2);
             assert.deepEqual(store.schedulableRuns(), [a0, b0]);
-            assert.equal(store.reserveDispatch(2), false);
+            assert.equal(store.reserveDispatch(a2, 2), false);
             startRun(b0);
             done(b0);
             reserve(c0);
