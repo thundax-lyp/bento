@@ -79,6 +79,8 @@
 /apps/orchestrator/*
 !/apps/orchestrator/*.go
 !/apps/orchestrator/index.ts
+!/apps/orchestrator/package.json
+!/apps/orchestrator/tsconfig.json
 !/apps/orchestrator/execution-service/
 /apps/orchestrator/execution-service/*
 !/apps/orchestrator/execution-service/*.ts

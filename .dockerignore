@@ -1,11 +1,8 @@
 **
-!Dockerfile
 !package.json
 !pnpm-lock.yaml
 !pnpm-workspace.yaml
 !apps/
-!apps/worker/
-!apps/worker/package.json
 !apps/workspace/
 !apps/workspace/web/
 !apps/workspace/web/index.html
@@ -16,11 +13,12 @@
 !apps/workspace/web/src/**
 apps/workspace/web/src/**/*.test.ts
 apps/workspace/web/src/**/*.test.tsx
-!apps/orchestrator/
 !apps/workspace/auth/
 !apps/workspace/auth/auth-page.ts
 !apps/workspace/api/
+!apps/workspace/api/package.json
 !apps/workspace/api/*.ts
+!apps/orchestrator/
 !apps/orchestrator/execution-service/
 !apps/orchestrator/execution-service/input.ts
 !deploy/

@@ -18,18 +18,17 @@ services:
                 RUN corepack enable
                 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
-                COPY apps/workspace/web/package.json ./apps/workspace/web/
-                COPY apps/worker/package.json ./apps/worker/
-
                 FROM dependencies AS web-build
                 ARG VITE_BENTO_KEYCLOAK_AUTH=0
                 ENV VITE_BENTO_KEYCLOAK_AUTH=$${VITE_BENTO_KEYCLOAK_AUTH}
-                RUN pnpm install --frozen-lockfile
+                COPY apps/workspace/web/package.json ./apps/workspace/web/
+                RUN pnpm --filter bento --filter @bento/web install --frozen-lockfile
                 COPY apps/workspace/web/ ./apps/workspace/web/
                 RUN pnpm --filter @bento/web build
 
-                FROM web-build AS api-dependencies
-                RUN CI=true pnpm --filter bento install --prod --offline --frozen-lockfile
+                FROM dependencies AS api-dependencies
+                COPY apps/workspace/api/package.json ./apps/workspace/api/
+                RUN pnpm --filter @bento/workspace-api install --prod --frozen-lockfile
 
                 FROM $${NODE_IMAGE} AS runtime
                 RUN apt-get update \
@@ -40,6 +39,8 @@ services:
                 COPY --from=go-build /out/bento-web-api /usr/local/bin/bento-web-api
                 COPY --from=api-dependencies /app/package.json ./package.json
                 COPY --from=api-dependencies /app/node_modules ./node_modules
+                COPY --from=api-dependencies /app/apps/workspace/api/package.json ./apps/workspace/api/
+                COPY --from=api-dependencies /app/apps/workspace/api/node_modules ./apps/workspace/api/node_modules
                 COPY apps/workspace/api/*.ts ./apps/workspace/api/
                 COPY apps/workspace/auth/auth-page.ts ./apps/workspace/auth/auth-page.ts
                 COPY apps/orchestrator/execution-service/input.ts ./apps/orchestrator/execution-service/input.ts

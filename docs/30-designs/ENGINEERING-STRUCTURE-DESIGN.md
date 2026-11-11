@@ -32,6 +32,8 @@ runtime/
 - 单一 Go Orchestrator 拥有 Run 权威账本、Temporal 编排、槽位、Worker 生命周期、执行授权和故障恢复。Temporal 保存编排历史，业务状态由 Orchestrator 读取和写入。
 - Worker 是独立的 DSH 执行工程，使用当次授权与 OpenShell 执行接口。受信停启观察、管理凭据和账本写入属于 Orchestrator。
 
+各 TypeScript 工程在自己的 `package.json` 声明运行依赖，在各自目录执行类型检查。根 pnpm workspace 统一锁定依赖并提供全仓检查入口。Web 镜像按个人端 API 安装生产依赖，Worker 镜像按 Worker 包独立安装。
+
 ## 状态与失败处理
 
 同一部署重启后，Run、执行尝试、槽位、Session、Workspace 和代次绑定继续按持久账本恢复。Temporal 重投按业务 Run 读回既有尝试。启动权在发出运行时请求前持久消费，结果未知时按原尝试观察或清理。运行时对象不存在、查询失败和已确认停止分别处理。确认宿主与沙盒旧执行停止后释放槽位。工具结果缺少证据时保留 `UNKNOWN`。

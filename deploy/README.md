@@ -122,7 +122,7 @@ Keycloak 管理台走本地 `18491/admin/`，Mailpit 走本地 `18494`。Bento �
 
 执行服务在回环地址提供 HTTP v1，供受信的任务入口调用。任务入口从认证后的账号派生 `X-Bento-Owner-Id`，并在服务间请求携带独立的 bearer。执行服务按 owner 限定项目、Run 和 diff 的访问，每个执行宿主默认串行处理 Run。
 
-在仓库根目录执行 `pnpm install --frozen-lockfile`。部署端为每个控制器配置独占的私有 `BENTO_STATE_DIR`，注入 `BENTO_SERVICE_BEARER`，并选择一种宿主接入方式。
+在仓库根目录执行 `pnpm --filter @bento/orchestrator... install --frozen-lockfile`，安装 Orchestrator 和 Worker 依赖。部署端为每个控制器配置独占的私有 `BENTO_STATE_DIR`，注入 `BENTO_SERVICE_BEARER`，并选择一种宿主接入方式。
 
 - `BENTO_HOST_CONFIG` 指向私有 JSON。配置包含 Gateway 和 workspace scope、mTLS 文件、固定 SDK 的 `raw.js` 以及可信 `control` 和 `worker` 命令。控制命令负责项目导入、独立读卷、沙盒停启与状态观察。使用 DSH worker 入口时，由 worker 环境的 `BENTO_DSH_BOOTSTRAP` 提供运行时、模型和工具接线。协议见[命令宿主适配器](../apps/orchestrator/execution-service/command-host.ts)和[worker 入口](../apps/worker/run-worker.ts)。
 - `BENTO_HOST_MODULE` 指向实现 [`ExecutionHost`](../apps/orchestrator/execution-service/types.ts) 的可信模块，默认导出工厂并提供 SDK ingress 配置。
