@@ -1,11 +1,7 @@
 import type { Authority } from './authority.ts';
 
-export type WorkerGrant = {
-    token: string;
-    session: string;
-    run: string;
-    generation: number;
-};
+import type { Grant as WorkerGrant } from '../../apps/worker/protocol.ts';
+export type { Grant as WorkerGrant } from '../../apps/worker/protocol.ts';
 
 type Binding = ReturnType<Authority['authorize']>;
 

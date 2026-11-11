@@ -76,6 +76,12 @@ node --experimental-strip-types src/execution-service/start.ts
 
 在私有 `BENTO_HOST_CONFIG` 中设置 `"prewarmWorker": true`，并给 [DSH Worker 入口](../../apps/worker/run-worker.ts)传入 `--warm`，即可启用单槽预热。Worker 导入 bootstrap 后进入空闲状态，每次收到 Run 才绑定当次 Session、Workspace 和授权。bootstrap 必须为每次调用创建独立运行时，并在回执前关闭该次运行的 Agent、连接和监听器。bootstrap 模块可预加载依赖，运行数据与授权只放在该次调用内。
 
+Worker 镜像从仓库根独立构建。受信启动器以交互 stdin/stdout 连接镜像，按环境挂载私有 bootstrap 并设置 `BENTO_DSH_BOOTSTRAP`。镜像工作目录是 `/app/apps/worker`，bootstrap 可挂载到此目录下，以解析镜像中的 Worker 依赖。Worker 的协议包括单次 JSON 请求、`--warm` 模式的逐行请求和回执。
+
+```sh
+docker build -f deploy/worker/Dockerfile -t bento-worker .
+```
+
 启用 Temporal 和预热后，在同一份宿主配置中设置 `"workerSlots": 2` 可开启两个槽位。每个 Run 占用一个槽位直到执行或恢复结束，两槽都占用时其他 Run 留在队列。项目与 Session、Workspace 一一绑定，同一项目仍只接受一个未结束的 Run。调低槽位数或回退到旧版本前，先排空执行宿主。
 
 `BENTO_TENANT_QUEUE_LIMIT` 设置每个账号独立的排队上限，默认 16，取正整数。额度按 `queued` 的 Run 计数，包括已经预留槽位但尚未领取的 Run。额度耗尽时，新提交返回 HTTP 429 和 `tenant_queue_full`，用原提交键重试已接受的请求仍可取回同一个 Run。其他账号使用各自的额度。

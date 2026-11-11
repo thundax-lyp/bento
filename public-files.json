@@ -101,7 +101,14 @@
         "apps/workspace/api/space-execution.ts",
         "apps/workspace/api/space-storage.ts",
         "apps/workspace/api/space.ts",
-        "apps/workspace/auth/auth-page.ts"
+        "apps/workspace/auth/auth-page.ts",
+        "deploy/worker/Dockerfile",
+        "deploy/worker/Dockerfile.dockerignore",
+        "apps/worker/package.json",
+        "apps/worker/protocol.ts",
+        "apps/worker/provider.ts",
+        "apps/worker/remote-session.ts",
+        "apps/worker/worker-frames.ts"
     ],
     "patterns": ["src/**/*.ts"]
 }

@@ -210,6 +210,15 @@ importers:
         specifier: ^8.72.1
         version: 8.72.1(eslint@10.13.0(jiti@2.7.0)(supports-color@8.1.1))(supports-color@8.1.1)(typescript@6.0.3)
 
+  apps/worker:
+    dependencies:
+      '@deepseek-ai/dsh-session-persistence':
+        specifier: 0.2.1-rc.4
+        version: 0.2.1-rc.4(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-brand@0.2.1-rc.4(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-session@0.2.1-rc.4(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-scope@0.2.1-rc.4(@deepseek-ai/cordis@4.0.5)))(@deepseek-ai/dsh-timeout@0.2.1-rc.4(@deepseek-ai/cordis@4.0.5))
+      dsh-sandbox-openshell:
+        specifier: 0.1.0-rc.1
+        version: 0.1.0-rc.1(152ef9edd9cd0236d610b87115ffe4cf)
+
   apps/workspace/web:
     dependencies:
       '@radix-ui/react-slot':

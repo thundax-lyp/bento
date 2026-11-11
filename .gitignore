@@ -11,6 +11,10 @@
 !/compose.keycloak.yaml
 !/deploy/
 /deploy/*
+!/deploy/worker/
+/deploy/worker/*
+!/deploy/worker/Dockerfile
+!/deploy/worker/Dockerfile.dockerignore
 !/deploy/workspace/
 /deploy/workspace/*
 !/deploy/workspace/nginx.conf

@@ -11,6 +11,7 @@ WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/workspace/web/package.json ./apps/workspace/web/
+COPY apps/worker/package.json ./apps/worker/
 
 FROM dependencies AS web-build
 ARG VITE_BENTO_KEYCLOAK_AUTH=0

@@ -1,0 +1,12 @@
+{
+    "name": "@bento/worker",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "start": "node run-worker.ts"
+    },
+    "dependencies": {
+        "@deepseek-ai/dsh-session-persistence": "0.2.1-rc.4",
+        "dsh-sandbox-openshell": "0.1.0-rc.1"
+    }
+}

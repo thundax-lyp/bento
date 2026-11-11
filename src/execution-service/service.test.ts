@@ -18,7 +18,8 @@ import { completedTurn } from '../../apps/worker/dsh-worker.ts';
 import { Store } from './store.ts';
 import { serveExecution, snapshotSha256 } from './service.ts';
 import type { ExecutionHost, FileText, WorkerRequest } from './types.ts';
-import { processWorker, reserveOperation } from './worker.ts';
+import { processWorker } from './worker.ts';
+import { reserveOperation } from '../../apps/worker/protocol.ts';
 import { prewarmedWorker } from './warm-worker.ts';
 
 const testToken = 'fixture-only-bento-service-bearer';

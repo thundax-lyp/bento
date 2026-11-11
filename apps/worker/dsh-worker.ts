@@ -1,15 +1,14 @@
-import { installOpenShellProvider } from '../../src/openshell/provider.ts';
+import { installOpenShellProvider } from './provider.ts';
 import {
     reconcileSessionPersistence,
     remoteSessionPersistence,
-} from '../../src/openshell/remote-session.ts';
-import { object } from '../../src/execution-service/input.ts';
-import { reserveOperation } from '../../src/execution-service/worker.ts';
-import { workerFrames } from '../../src/execution-service/worker-frames.ts';
-import type {
-    WorkerRequest,
-    WorkerResult,
-} from '../../src/execution-service/types.ts';
+} from './remote-session.ts';
+import {
+    reserveOperation,
+    type WorkerRequest,
+    type WorkerResult,
+} from './protocol.ts';
+import { workerFrames } from './worker-frames.ts';
 
 type Context = Parameters<typeof installOpenShellProvider>[0];
 type Provider = Parameters<typeof installOpenShellProvider>[1];
@@ -141,10 +140,10 @@ export async function runDshWorker(
 }
 
 function workerRequest(input: string) {
-    const value = object(JSON.parse(input));
-    if (value.mode !== 'execute' && value.mode !== 'recover')
+    const value = JSON.parse(input) as WorkerRequest | null;
+    if (value?.mode !== 'execute' && value?.mode !== 'recover')
         throw new Error('Unknown worker mode');
-    return value as WorkerRequest;
+    return value;
 }
 
 /** Readiness and each receipt are emitted after imports and run cleanup respectively. */
