@@ -14,6 +14,10 @@
 
 第一条纵向实现优先完成 A1～A5、A8。调度架构可以同步实现，但 Activity 重试不能越过副作用对账。Temporal 的单执行宿主接入及故障验证见[开发环境验收](../40-readiness/TEMPORAL-DEV-EVIDENCE.md)。首版范围允许明确限定为单执行节点；是否支持 PTY/SSH、真实多租户不可信代码、跨节点卷，应作为产品和部署能力开关及验收边界，而非默认开放。
 
+## Web 受邀认证
+
+Web 准入已接入 Keycloak。该链路覆盖 [Web 受邀认证需求](../10-requirements/WEB-AUTH-REQUIREMENTS.md) 中的登录身份到 Bento `ownerId`。与 Workspace、Run 和执行能力的联合验证仍按下方 A1 门槛执行。身份链路证据见 [Web Docker 验收](../40-readiness/WEB-DOCKER-EVIDENCE.md)。
+
 ## 验收门槛
 
 实现工作可以立即开始，以下是对应功能投入使用前的门槛；不要求先做完所有研究。第一条纵向链优先完成 A1～A5、A8。若首版只支持单执行节点或禁用 PTY/SSH 等入口，必须在产品与部署配置中明确范围并拒绝未支持调用，不能默认为通过。

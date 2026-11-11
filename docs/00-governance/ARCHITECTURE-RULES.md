@@ -2,7 +2,7 @@
 
 ## Purpose And Scope
 
-本文定义 `src/` 的模块入口、依赖与执行边界。系统组成、所有权和依赖方向由 [Architecture](../research/architecture.md) 定义；本文件只规定如何在源码中落实这些边界。
+本文定义 Bento 源码的目录、模块入口、依赖与执行边界。系统组成、所有权和依赖方向由 [Architecture](../research/architecture.md) 定义；本文件只规定如何在源码中落实这些边界。
 
 规则分为两个独立层级：`Hard Rules` 必须有稳定、实际执行的门禁；`Review Rules` 由人工或 Agent 结合职责语义审阅。相同要求不得在两层重复。Review Rule 有可靠门禁后，迁入 Hard Rules，并删除原审阅条目。
 
@@ -11,6 +11,8 @@
 - TypeScript 严格类型检查、NodeNext 模块解析和 ESLint 规则由仓库根配置定义，统一通过 `pnpm check` 执行。发布边界由 [公开发布范围](../PUBLISHING.md) 和其中的检查维护。
 
 ## Review Rules
+
+- 源码按 [Bento 工程结构](../30-designs/ENGINEERING-STRUCTURE-DESIGN.md) 划分工程边界。
 
 - 对外 API 由 `src/index.ts` 显式导出；内部模块只公开当前调用方需要的能力，不为缩短路径建立无职责的入口。
 - 保持 NodeNext/ESM 约定：引用仓库内 TypeScript 模块时使用当前源码的显式 `.ts` 路径，不引入未经配置的路径别名或目录导入。
