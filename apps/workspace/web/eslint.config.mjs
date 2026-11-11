@@ -1,6 +1,6 @@
 import hooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
-import base from '../../eslint.config.mjs';
+import base from '../../../eslint.config.mjs';
 
 export default [
     {

@@ -13,5 +13,5 @@ docs/DSH-OPENSHELL-V0.1.md
 **/runtime/
 **/cache/
 
-apps/web/playwright-report/
-apps/web/test-results/
+apps/workspace/web/playwright-report/
+apps/workspace/web/test-results/

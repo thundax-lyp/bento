@@ -3,11 +3,11 @@ FROM ${NODE_IMAGE} AS dependencies
 WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/web/package.json ./apps/web/
+COPY apps/workspace/web/package.json ./apps/workspace/web/
 
 FROM dependencies AS web-build
 RUN pnpm install --frozen-lockfile
-COPY apps/web/ ./apps/web/
+COPY apps/workspace/web/ ./apps/workspace/web/
 RUN pnpm --filter @bento/web build
 
 FROM web-build AS api-dependencies
@@ -23,7 +23,7 @@ COPY --from=api-dependencies /app/package.json ./package.json
 COPY --from=api-dependencies /app/node_modules ./node_modules
 COPY src/task-entry/ ./src/task-entry/
 COPY src/execution-service/input.ts ./src/execution-service/input.ts
-COPY --from=web-build /app/apps/web/dist/ /srv/bento/
+COPY --from=web-build /app/apps/workspace/web/dist/ /srv/bento/
 COPY deploy/web/nginx.conf /etc/nginx/bento.conf
 COPY --chmod=755 deploy/web/start.sh /usr/local/bin/bento-web
 

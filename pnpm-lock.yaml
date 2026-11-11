@@ -219,7 +219,7 @@ importers:
         specifier: ^8.72.1
         version: 8.72.1(eslint@10.13.0(jiti@2.7.0)(supports-color@8.1.1))(supports-color@8.1.1)(typescript@6.0.3)
 
-  apps/web:
+  apps/workspace/web:
     dependencies:
       '@radix-ui/react-slot':
         specifier: ^1.2.4

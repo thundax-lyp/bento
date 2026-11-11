@@ -17,7 +17,7 @@ docker run --rm --stop-timeout 60 \
   bento-web:local
 ```
 
-打开 <http://127.0.0.1:8080>。模拟账号和验证流程见 [独立前端说明](../../apps/web/README.md)。
+打开 <http://127.0.0.1:8080>。模拟账号和验证流程见 [独立前端说明](../../apps/workspace/web/README.md)。
 
 ## 配置真实环境
 

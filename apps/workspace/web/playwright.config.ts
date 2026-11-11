@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 const webOrigin = 'http://127.0.0.1:4320';
 const apiOrigin = 'http://127.0.0.1:4319';
-const root = fileURLToPath(new URL('../../', import.meta.url));
+const root = fileURLToPath(new URL('../../../', import.meta.url));
 
 export default defineConfig({
     testDir: './e2e',
