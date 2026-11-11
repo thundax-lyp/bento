@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import type { ExecutionHost } from './types.ts';
 import { workerReceipt, type Launch } from './worker.ts';
-import { workerFrames } from './worker-frames.ts';
+import { workerFrames } from '../../apps/worker/worker-frames.ts';
 
 function startSlot({ command, args = [], cwd, env = {} }: Launch) {
     const child = spawn(command, args, {

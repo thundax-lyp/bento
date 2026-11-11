@@ -1,6 +1,6 @@
 # 架构与职责边界
 
-研究冻结于 2026-11-06。本文维护架构决策；能力状态见[capabilities](capabilities.md)，交付门槛见[implementation](implementation.md)。
+研究基线冻结于 2026-11-06，Go 控制面与 MySQL 接入更新于 2026-11-11。本文维护架构决策；能力状态见[capabilities](capabilities.md)，交付门槛见[implementation](implementation.md)。
 
 ## 架构决策
 
@@ -11,8 +11,61 @@
 - 可信 DSH harness 在沙盒外，用户代码在沙盒内。业务服务端决定 tenant/workspace/session/run/generation/sandbox/volume 绑定，worker 和模型不能任意选择目标。
 - Session 日志所有权与沙盒执行权分别撤销，只有 generation/owner 一致、旧执行完成停止/对账、绑定及挂载确认后才能 READY。UNKNOWN 先观察/对账，不能因未收到结果就重放副作用。
 - 优先复用固定 npm OpenShell 插件、官方 checkpoint/SessionPersistence、OpenShell 原生生命周期及认证、外部持久卷。平台层补业务授权、绑定、调度和恢复协议；当前没有必须修改 DSH 核心的实验证据。
-- Run 编排已接入 Temporal [单执行宿主模式](../deployments/HOW-TO-TEMPORAL-DEV.md#接入-bento)。Temporal 持有调度历史，Bento 在 SQLite 持久化 Run 状态、Session、Workspace 绑定和执行授权。Activity 重投以持久 Run 状态决定派发或恢复。生产业务状态倾向 PostgreSQL。
-- [Web 单镜像部署](../deployments/HOW-TO-WEB-DOCKER.md)由 NGINX 同域提供静态前端并代理容器内的 task-entry。task-entry 访问独立的执行服务，浏览器直传 S3。
+- Run 编排已接入 Temporal [单执行宿主模式](../deployments/HOW-TO-TEMPORAL-DEV.md#接入-bento)。Temporal 持有调度历史，Bento 在 SQLite 持久化 Run 状态、Session、Workspace 绑定和执行授权。Activity 重投以持久 Run 状态决定派发或恢复。账号身份、密码哈希与注销清理状态使用 MySQL；执行宿主的 Run、Session、Workspace 和授权账本继续使用持久 SQLite。
+- [Web 部署](../deployments/HOW-TO-WEB-DOCKER.md)由 NGINX 同域提供静态前端并代理 Go Web API 入口。Go 提供 MySQL 账号仓储，现有 TypeScript task-entry 处理业务 API 与会话认证；浏览器直传 S3。
+- 启用 Temporal 时，Go 控制面负责租户公平派发策略与 Temporal Client/Worker。TypeScript 执行宿主通过私有标准输入输出协议提供队列快照、原子预留和推进 Run 的能力，继续持有 generation fencing、OpenShell 绑定和恢复账本。Go 选出的 Run 必须经过宿主的容量和状态条件写入后才能发布 Workflow。
+
+## 分层架构
+
+下图描述当前接线。控制层分为 Web 入口部署与执行宿主部署，个人端 Go API 入口与 Orchestrator 的 Temporal 模块各自构建。当前 TS 执行服务持有 Run 账本和执行授权。目标由单一 Go Orchestrator 接管，见 [Bento 工程结构](../30-designs/ENGINEERING-STRUCTURE-DESIGN.md)。
+
+```mermaid
+flowchart TB
+    subgraph UI["交互层"]
+        Web["React Web"]
+    end
+    subgraph Control["Bento 控制层"]
+        Entry["NGINX → Go Web API 入口"]
+        Task["TypeScript 业务 API 与会话认证"]
+        Accounts["Go 账号仓储"]
+        GoScheduler["Go 调度器与 Temporal Worker"]
+        Host["TypeScript 可信执行宿主<br/>原子预留、Run 账本、执行授权与恢复"]
+        Entry --> Task
+        Task -->|"owner 绑定的执行服务请求"| Host
+        Host -->|"队列快照"| GoScheduler
+        GoScheduler -->|"选择 Run / 推进 Activity"| Host
+    end
+    subgraph Execution["执行层"]
+        DSH["DSH worker 池"]
+    end
+    subgraph Sandbox["沙盒层"]
+        OpenShell["OpenShell Session 沙盒与持久工作区"]
+    end
+    subgraph Dependencies["外部依赖"]
+        MySQL[("MySQL 8.4<br/>用户身份、密码哈希、注销状态")]
+        Temporal["Temporal Server"]
+        State[("执行宿主持久 SQLite")]
+        S3[("私有 S3")]
+    end
+    Web --> Entry
+    Task -->|"回环账号接口"| Accounts
+    Accounts --> MySQL
+    GoScheduler <--> Temporal
+    Host --> State
+    Host -->|"按槽位派发已授权 Run"| DSH
+    DSH -.->|"执行事件与结果"| Host
+    Host -->|"创建、观察与恢复"| OpenShell
+    DSH -->|"绑定沙盒执行"| OpenShell
+    Web -.->|"预签名上传与下载"| S3
+```
+
+Go 调度进程经 stdio 与单个执行宿主绑定。控制帧只传 Run ID、账号范围内的排队标识和槽位状态。Temporal Workflow 仅接收 Run ID。Go 子进程退出时宿主停止新增 Temporal 派发，重启后按持久状态恢复。Activity 重投继续走同一 Run 的授权与恢复校验。
+
+MySQL 的 `web_accounts` 以稳定 `owner_id` 为主键，账号名唯一。邀请文件用于首次导入账号，已存在账号的身份、凭据与注销状态以 MySQL 为准。注销用单条条件 UPDATE 原子地写入关闭状态、移除密码哈希并登记清理请求。登录会话保存在单个 task-entry 进程内，重启后需重新登录。
+
+Keycloak 部署由独立身份服务管理邀请、注册、凭据、会话及认证审计。Bento 从已验证的 OIDC issuer 和 subject 得到 MySQL 中稳定的 `owner_id`。Keycloak 组织声明用于 Bento 准入，项目与 Run 的归属和业务注销仍由 Bento 管理。
+
+当前 Keycloak 账号绑定与会话设计见 [用户身份与账号数据库设计](../30-designs/USER-DATABASE-DESIGN.md)。
 
 ## 三层职责与交接
 

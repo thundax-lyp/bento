@@ -4,11 +4,22 @@
 
 主线源码提供单执行宿主的 Session 执行与接管入口。可信部署端提供 OpenShell 沙盒生命周期和观察，Bento 负责 Run 授权、会话持久化和接管。接入方式见[部署说明](docs/deployments/openshell-dsh.md#单执行宿主接入)。 单执行宿主的 Temporal Run 调度见 [Temporal 开发环境](docs/deployments/HOW-TO-TEMPORAL-DEV.md)。
 
-[Bento 任务入口](src/task-entry/README.md)提供受邀登录、文本项目导入、任务状态和 diff 的 HTTP API，可使用模拟后端或连接执行服务。
+## 当前代码入口
 
-[独立 Web 前端](apps/web/README.md)提供本地启动、构建和浏览器验收命令。
+| 目录                                                        | 当前职责                                                               |
+| ----------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [`apps/workspace/auth`](apps/workspace/auth/auth-page.ts)   | 个人端 `/auth` 页面，由个人端 API 渲染                                 |
+| [`apps/workspace/web`](apps/workspace/web/README.md)        | 个人端 `/` 工作区，包含本地启动和浏览器验收命令                        |
+| [`apps/workspace/api`](apps/workspace/api/README.md)        | 个人端 HTTP API，Go 提供入口和 MySQL 账号仓储，TypeScript 处理业务请求 |
+| [`apps/orchestrator`](apps/orchestrator/go.mod)             | Go Temporal 编排模块                                                   |
+| [`apps/worker`](apps/worker/run-worker.ts)                  | DSH Worker 进程入口                                                    |
+| [`src/execution-service`](src/execution-service/service.ts) | 当前的执行 HTTP 服务和 Run 权威账本                                    |
 
-[Web 单镜像部署](docs/deployments/HOW-TO-WEB-DOCKER.md)提供 Docker Compose 配置。NGINX 同域提供前端和 API，task-entry 在容器内监听回环地址。
+目标结构与实现差距见[工程结构设计](docs/30-designs/ENGINEERING-STRUCTURE-DESIGN.md)。管理端、个人端独立认证构建及 Go 接管 Run 账本仍待实现。
+
+[Web 单镜像部署](docs/deployments/HOW-TO-WEB-DOCKER.md)提供 Docker Compose 配置。NGINX 同域提供前端和 API，Go 提供 API 入口与 MySQL 账号仓储，task-entry 在容器内处理业务请求。Compose 包含持久化的 MySQL 8.4 服务。
+
+受邀注册、邮箱验证及认证审计的配置见 [Keycloak 受邀认证](docs/deployments/HOW-TO-WEB-DOCKER.md#keycloak-受邀认证)。
 
 ## 设计与验证
 
@@ -19,9 +30,9 @@
 
 ## 开发
 
-[工程治理规则](docs/00-governance/DOCUMENT-RULES.md)约定文档、实现、测试、提交与 PR 的做法。
+[AGENTS.md](AGENTS.md) 是仓库协作入口。[工程治理规则](docs/00-governance/DOCUMENT-RULES.md)约定文档、实现、测试、提交与 PR 的做法。
 
-Node.js 22.19+ 的 22.x 或 24+，pnpm 12.15.0。
+Node.js 22.19+ 的 22.x 或 24+，pnpm 12.15.0，Go 1.25.3+。
 
 ```sh
 pnpm install

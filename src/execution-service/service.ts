@@ -18,7 +18,7 @@ import type {
     WorkerRequest,
     WorkerResult,
 } from './types.ts';
-import { operationId } from './worker.ts';
+import { operationId } from '../../apps/worker/protocol.ts';
 
 type Run = ReturnType<Store['findRun']>;
 type Server = HttpServer | Http2Server;
@@ -468,8 +468,25 @@ export async function serveExecution(options: Options) {
             if (scheduler) {
                 // Reserve only available slots before publishing their Workflows.
                 // SQLite retains the decisions if publication or the controller fails.
-                for (let i = 0; i < slots && db.reserveDispatch(slots); i++) {
-                    // Recompute priorities after each reservation.
+                for (let i = 0; i < slots; i++) {
+                    const snapshot = db.dispatchSnapshot(slots);
+                    if (!snapshot.queued.length) break;
+                    let selected: string;
+                    try {
+                        selected = await scheduler.choose(snapshot);
+                    } catch {
+                        break;
+                    }
+                    if (stop.signal.aborted) return;
+                    if (!selected) break;
+                    // An Activity or HTTP request may have changed the queue
+                    // while Go was choosing a candidate.
+                    if (
+                        JSON.stringify(db.dispatchSnapshot(slots)) !==
+                        JSON.stringify(snapshot)
+                    )
+                        break;
+                    if (!db.reserveDispatch(selected, slots)) break;
                 }
                 const pending = db.schedulableRuns();
                 const previous = enqueued;

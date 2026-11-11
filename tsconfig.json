@@ -13,5 +13,10 @@
         "skipLibCheck": true,
         "types": ["node"]
     },
-    "include": ["src/**/*.ts"]
+    "include": [
+        "src/**/*.ts",
+        "apps/workspace/api/*.ts",
+        "apps/workspace/auth/*.ts",
+        "apps/worker/*.ts"
+    ]
 }

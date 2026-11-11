@@ -56,15 +56,18 @@ ssh -N -o ExitOnForwardFailure=yes \
 按 [执行服务部署说明](openshell-dsh.md#执行服务)配置宿主、状态目录和服务认证，再向同一进程提供以下环境变量。
 
 ```sh
+mkdir -p runtime
+(cd apps/orchestrator && go build -trimpath -o ../../runtime/bento-orchestrator .)
+export BENTO_GO_CONTROL="$PWD/runtime/bento-orchestrator"
 export BENTO_TEMPORAL_ADDRESS=127.0.0.1:17233
 export BENTO_TEMPORAL_NAMESPACE=default
 export BENTO_TEMPORAL_TASK_QUEUE=bento-dev-host
 node --experimental-strip-types src/execution-service/start.ts
 ```
 
-为每个控制器状态目录分配独占 Task Queue。重启时保留状态目录、Namespace 和队列名。控制器与 Temporal Worker 共进程。Activity 并发跟随宿主槽位数，默认一个槽位，启用 [DSH Worker 预热](openshell-dsh.md#执行服务)后可配置两个槽位。Temporal Worker 领取任务后，由受信宿主适配器分配 DSH 执行 Worker。通过 `pnpm install --frozen-lockfile` 安装 SDK 与当前平台的原生依赖。该模式面向受信网络内的开发服务。
+为每个控制器状态目录分配独占 Task Queue。重启时保留状态目录、Namespace 和队列名。Go Temporal Worker 作为执行宿主的子进程启动，通过私有 stdio 协议交接。Activity 并发跟随宿主槽位数，默认一个槽位，启用 [DSH Worker 预热](openshell-dsh.md#执行服务)后可配置两个槽位。Temporal Worker 领取任务后，由受信宿主适配器分配 DSH 执行 Worker。使用 Go 1.25.3+ 构建控制面二进制；`pnpm install --frozen-lockfile` 安装 DSH 和 OpenShell 依赖。该模式面向受信网络内的开发服务。
 
-HTTP 接受 Run 后，Bento 将其放入 SQLite 待处理队列。空槽可用时，Bento 按租户优先级持久化派发决定，再发布或补发 Temporal Workflow。固定 Workflow ID 为 `bento-run-<run-id>`，重复发布使用同一 ID。Temporal 历史只传 Run ID，prompt、凭据和授权保留在 Bento 边界内。Temporal 发布失败时，控制器保留派发预留并按原顺序重试。宿主空闲时仍可导入项目。
+HTTP 接受 Run 后，Bento 将其放入 SQLite 待处理队列。空槽可用时，Go 根据宿主提供的 FIFO 快照选择 Run，宿主原子校验容量并持久化派发决定，再发布或补发 Temporal Workflow。固定 Workflow ID 为 `bento-run-<run-id>`，重复发布使用同一 ID。Temporal 历史只传 Run ID，prompt、凭据和授权保留在 Bento 边界内。Temporal 发布失败时，控制器保留派发预留并按原顺序重试。宿主空闲时仍可导入项目。
 
 `advanceRun` 可以被 Temporal 重投。控制器只在 Run 为 `queued` 时启动原执行，并在颁发租约前持久化 `running`。重投遇到 `running` 或 `recovering` 时进入原 Session 的接管路径，恢复 Worker 不接收 prompt。出现 `UNKNOWN` 时，页面等待可信核对，随后提供已冻结的 diff。Temporal Workflow 完成表示调度活动已返回，页面的业务结果以 Bento Run 状态为准。
 

@@ -13,8 +13,10 @@
         "lint:fix": "eslint . --fix",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
-        "check": "pnpm check:publication && pnpm typecheck && pnpm lint && pnpm format:check && pnpm --filter @bento/web check",
-        "check:publication": "python3 scripts/check-publication.py"
+        "check": "pnpm check:go && pnpm check:publication && pnpm typecheck && pnpm lint && pnpm format:check && pnpm check:execution && pnpm --filter @bento/web check",
+        "check:execution": "node --experimental-strip-types --test src/execution-service/service.test.ts",
+        "check:publication": "python3 scripts/check-publication.py",
+        "check:go": "(cd apps/orchestrator && go test ./... && go vet ./...) && (cd apps/workspace/api/go && go test ./... && go vet ./...)"
     },
     "devDependencies": {
         "@eslint/js": "^10.0.1",
@@ -31,14 +33,15 @@
         "@deepseek-ai/cordis": "4.0.5",
         "@deepseek-ai/dsh-host-webserver": "0.2.1-rc.4",
         "@deepseek-ai/dsh-session-persistence": "0.2.1-rc.4",
-        "@temporalio/activity": "1.25.0",
-        "@temporalio/client": "1.25.0",
-        "@temporalio/worker": "1.25.0",
-        "@temporalio/workflow": "1.25.0",
-        "dsh-sandbox-openshell": "0.1.0-rc.1"
+        "dsh-sandbox-openshell": "0.1.0-rc.1",
+        "openid-client": "6.8.9"
     },
     "files": [
         "src",
+        "apps/orchestrator",
+        "apps/workspace/api",
+        "apps/workspace/auth",
+        "apps/worker",
         "docs/research/README.md",
         "docs/research/architecture.md",
         "docs/research/capabilities.md",
