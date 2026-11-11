@@ -89,7 +89,7 @@ Temporal Server 重启或数据丢失、生产部署、多执行宿主、超过�
 
 ## Closure
 
-独立冒烟、Bento 页面纵向验证、Activity 重投、单槽预热、双槽故障隔离、租户公平派发和 30 分钟持续并发验证通过。远端 Temporal 实例保留运行。临时执行服务、Worker 和 OpenShell 测试资源已清理，原 Gateway 未改动。探针与原始日志留在内部工作区。
+独立冒烟、Bento 页面纵向验证、Activity 重投、单槽预热、双槽故障隔离、租户公平派发和 30 分钟持续并发验证通过。远端 Temporal 实例保留运行。临时执行服务、Worker 和 OpenShell 测试资源已清理，原 Gateway 未改动。探针和原始日志曾保存在本地验证目录，结论核对入文档后已清理。
 
 ## Go SDK 接入复验
 
