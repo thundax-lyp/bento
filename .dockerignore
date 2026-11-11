@@ -14,8 +14,8 @@
 apps/workspace/web/src/**/*.test.ts
 apps/workspace/web/src/**/*.test.tsx
 !src/
-!src/task-entry/
-!src/task-entry/*.ts
+!apps/workspace/api/
+!apps/workspace/api/*.ts
 !src/execution-service/
 !src/execution-service/input.ts
 !deploy/

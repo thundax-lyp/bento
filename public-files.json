@@ -46,6 +46,7 @@
         "docs/research/architecture.md",
         "docs/research/capabilities.md",
         "docs/research/implementation.md",
+        "apps/workspace/api/README.md",
         "apps/workspace/web/.gitignore",
         "apps/workspace/web/README.md",
         "apps/workspace/web/e2e/task.spec.ts",
@@ -73,9 +74,17 @@
         "apps/orchestrator/temporal_test.go",
         "apps/worker/dsh-worker.ts",
         "apps/worker/run-worker.ts",
+        "apps/workspace/api/auth.ts",
+        "apps/workspace/api/execution-service-http.ts",
+        "apps/workspace/api/main.ts",
+        "apps/workspace/api/mock.ts",
+        "apps/workspace/api/protocol.ts",
+        "apps/workspace/api/server.ts",
+        "apps/workspace/api/space-execution.ts",
+        "apps/workspace/api/space-storage.ts",
+        "apps/workspace/api/space.ts",
         "deploy/web/nginx.conf",
-        "deploy/web/start.sh",
-        "src/task-entry/README.md"
+        "deploy/web/start.sh"
     ],
     "patterns": [
         "src/**/*.ts"

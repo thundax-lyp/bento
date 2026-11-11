@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { filePath } from '../execution-service/input.ts';
+import { filePath } from '../../../src/execution-service/input.ts';
 import { notFound, object, RequestError } from './protocol.ts';
 import type { Backend, ProjectInput } from './protocol.ts';
 import { spaceObjectKey } from './space-storage.ts';

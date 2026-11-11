@@ -2,7 +2,7 @@
 
 一个容器内由 NGINX 在 `8080` 提供构建后的 Web 页面，并把同域 `/api/*` 转发给只监听 `127.0.0.1:4101` 的 task-entry。浏览器只访问 NGINX。前端路由直接访问或刷新时由 NGINX 返回 SPA 入口。镜像以非 root 用户运行，健康检查同时请求首页和 API，停服时先让 NGINX 排空连接，再停止 task-entry。
 
-任务执行服务、OpenShell、Temporal、模型和 S3 兼容存储使用各自的现有部署。镜像中的 task-entry 通过运行时配置访问执行服务；大文件从浏览器直接传到 S3。S3 服务需要允许前端 origin 的 CORS 请求。 [执行服务与 OpenShell 部署](./openshell-dsh.md) · [task-entry 配置](../../src/task-entry/README.md)
+任务执行服务、OpenShell、Temporal、模型和 S3 兼容存储使用各自的现有部署。镜像中的 task-entry 通过运行时配置访问执行服务；大文件从浏览器直接传到 S3。S3 服务需要允许前端 origin 的 CORS 请求。 [执行服务与 OpenShell 部署](./openshell-dsh.md) · [task-entry 配置](../../apps/workspace/api/README.md)
 
 ## 本机预览
 
@@ -21,7 +21,7 @@ docker run --rm --stop-timeout 60 \
 
 ## 配置真实环境
 
-在本地受控目录准备 `runtime/accounts.json` 和 `runtime/web.env`。账号文件按 [task-entry 配置](../../src/task-entry/README.md)创建。让容器内的 `node` 用户（UID 1000）可以只读访问账号文件。Compose 把它挂载到 `/run/bento/accounts.json`，并将凭据及空间数据库放到命名卷的 `/data`。
+在本地受控目录准备 `runtime/accounts.json` 和 `runtime/web.env`。账号文件按 [task-entry 配置](../../apps/workspace/api/README.md)创建。让容器内的 `node` 用户（UID 1000）可以只读访问账号文件。Compose 把它挂载到 `/run/bento/accounts.json`，并将凭据及空间数据库放到命名卷的 `/data`。
 
 参照以下配置填写 `runtime/web.env`。
 

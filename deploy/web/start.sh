@@ -23,7 +23,7 @@ stop() {
 
 trap 'stop; exit 0' TERM INT
 
-node src/task-entry/main.ts &
+node apps/workspace/api/main.ts &
 api_pid=$!
 nginx -c /etc/nginx/bento.conf -g 'daemon off;' &
 nginx_pid=$!

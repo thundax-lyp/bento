@@ -152,7 +152,7 @@ try {
     await main();
 } catch {
     console.error(
-        'Invalid Bento task entry configuration or listener unavailable. See src/task-entry/README.md.',
+        'Invalid Bento task entry configuration or listener unavailable. See apps/workspace/api/README.md.',
     );
     process.exitCode = 1;
 }

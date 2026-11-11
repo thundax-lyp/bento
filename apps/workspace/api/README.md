@@ -1,6 +1,6 @@
 # Bento 任务入口
 
-任务入口提供 Bento Web 的 HTTP API。浏览器使用 [独立 Web 前端](../../apps/workspace/web/README.md)完成登录、项目导入、任务提交和 diff 下载。开发时由 Vite 转发 `/api`。[Docker 单镜像部署](../../docs/deployments/HOW-TO-WEB-DOCKER.md)由 NGINX 同域提供前端静态文件，并将 `/api/*` 转发到容器内 `127.0.0.1:4101`。
+任务入口提供 Bento Web 的 HTTP API。浏览器使用 [独立 Web 前端](../web/README.md)完成登录、项目导入、任务提交和 diff 下载。开发时由 Vite 转发 `/api`。[Docker 单镜像部署](../../../docs/deployments/HOW-TO-WEB-DOCKER.md)由 NGINX 同域提供前端静态文件，并将 `/api/*` 转发到容器内 `127.0.0.1:4101`。
 
 模拟模式的启动命令、测试账号及端口见前端说明。模拟后端提供普通任务和 `mock:empty`、`mock:failed`、`mock:review`。重启模拟进程会清空记录。
 
@@ -21,7 +21,7 @@
 现有部署继续使用表中的环境变量名。例如可以用本地环境文件启动。
 
 ```sh
-node --env-file=runtime/task-entry.env src/task-entry/main.ts
+node --env-file=runtime/task-entry.env apps/workspace/api/main.ts
 ```
 
 关闭页面再打开时，任务列表会从服务端重新加载。提交结果暂未确认时，浏览器只存账号及项目范围内的提交键与描述摘要。用原任务描述重试会沿用该键。空 diff 可以预览状态并下载为空文件。
@@ -48,4 +48,4 @@ node --env-file=runtime/task-entry.env src/task-entry/main.ts
 
 账号空间为 10 GB，单文件最大 4 GB。私有桶须支持带 SHA-256 校验的 S3 Multipart Upload、分块查询、条件完成、终止上传和私有对象读写。CORS 允许前端 origin 的 `PUT` 和 `x-amz-checksum-sha256` 请求头。中断后重新选择原文件可续传。
 
-注销后停止接受新任务，等已受理任务终结再清理。真实 OpenShell 宿主需要提供幂等的工作区删除，见 [宿主部署说明](../../docs/deployments/openshell-dsh.md)。
+注销后停止接受新任务，等已受理任务终结再清理。真实 OpenShell 宿主需要提供幂等的工作区删除，见 [宿主部署说明](../../../docs/deployments/openshell-dsh.md)。

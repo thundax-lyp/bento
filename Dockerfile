@@ -21,7 +21,7 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=api-dependencies /app/package.json ./package.json
 COPY --from=api-dependencies /app/node_modules ./node_modules
-COPY src/task-entry/ ./src/task-entry/
+COPY apps/workspace/api/ ./apps/workspace/api/
 COPY src/execution-service/input.ts ./src/execution-service/input.ts
 COPY --from=web-build /app/apps/workspace/web/dist/ /srv/bento/
 COPY deploy/web/nginx.conf /etc/nginx/bento.conf

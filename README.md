@@ -4,7 +4,7 @@
 
 主线源码提供单执行宿主的 Session 执行与接管入口。可信部署端提供 OpenShell 沙盒生命周期和观察，Bento 负责 Run 授权、会话持久化和接管。接入方式见[部署说明](docs/deployments/openshell-dsh.md#单执行宿主接入)。 单执行宿主的 Temporal Run 调度见 [Temporal 开发环境](docs/deployments/HOW-TO-TEMPORAL-DEV.md)。
 
-[Bento 任务入口](src/task-entry/README.md)提供受邀登录、文本项目导入、任务状态和 diff 的 HTTP API，可使用模拟后端或连接执行服务。
+[Bento 任务入口](apps/workspace/api/README.md)提供受邀登录、文本项目导入、任务状态和 diff 的 HTTP API，可使用模拟后端或连接执行服务。
 
 [独立 Web 前端](apps/workspace/web/README.md)提供本地启动、构建和浏览器验收命令。
 
