@@ -97,16 +97,31 @@ func (s accounts) register(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /internal/account-purges/{owner}", s.finish)
 }
 
-func (s accounts) lookup(w http.ResponseWriter, r *http.Request) {
-	query := `SELECT account, owner_id, COALESCE(invite_hash, ''), salt, password_hash, closed
-		FROM web_accounts WHERE `
-	filter, value := "account", r.PathValue("name")
-	if owner := r.PathValue("owner"); owner != "" {
-		filter, value = "owner_id", owner
-	}
+func (s accounts) accountByName(ctx context.Context, name string) (account, error) {
+	return scanAccount(s.db.QueryRowContext(ctx, accountSelect+"account = ?", name))
+}
+
+func (s accounts) accountByOwner(ctx context.Context, owner string) (account, error) {
+	return scanAccount(s.db.QueryRowContext(ctx, accountSelect+"owner_id = ?", owner))
+}
+
+const accountSelect = `SELECT account, owner_id, COALESCE(invite_hash, ''), salt, password_hash, closed
+	FROM web_accounts WHERE `
+
+func scanAccount(row *sql.Row) (account, error) {
 	var a account
-	err := s.db.QueryRowContext(r.Context(), query+filter+" = ?", value).Scan(
-		&a.Name, &a.Owner, &a.InviteHash, &a.Salt, &a.Hash, &a.Closed)
+	err := row.Scan(&a.Name, &a.Owner, &a.InviteHash, &a.Salt, &a.Hash, &a.Closed)
+	return a, err
+}
+
+func (s accounts) lookup(w http.ResponseWriter, r *http.Request) {
+	var a account
+	var err error
+	if owner := r.PathValue("owner"); owner != "" {
+		a, err = s.accountByOwner(r.Context(), owner)
+	} else {
+		a, err = s.accountByName(r.Context(), r.PathValue("name"))
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -114,43 +129,54 @@ func (s accounts) lookup(w http.ResponseWriter, r *http.Request) {
 	reply(w, a, err)
 }
 
-// Only the loopback task-entry can call this after verifying the OIDC claims.
+type oidcIdentity struct{ Issuer, Subject, Account string }
+
+func (i oidcIdentity) valid() bool {
+	return len(i.Issuer) > 0 && len(i.Issuer) <= 512 &&
+		len(i.Subject) > 0 && len(i.Subject) <= 255 &&
+		len(i.Account) > 0 && len(i.Account) <= 254
+}
+
+// linkIdentity accepts claims verified by the caller and returns the persisted binding.
+func (s accounts) linkIdentity(ctx context.Context, identity oidcIdentity) (account, error) {
+	var id [24]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return account{}, err
+	}
+	owner := hex.EncodeToString(id[:])
+	_, err := s.db.ExecContext(ctx, `INSERT INTO web_accounts
+		(owner_id, account, invite_hash, oidc_issuer, oidc_subject)
+		VALUES (?, ?, NULL, ?, ?) ON DUPLICATE KEY UPDATE owner_id = owner_id`,
+		owner, "oidc:"+owner, identity.Issuer, identity.Subject)
+	if err != nil {
+		return account{}, err
+	}
+	result := account{Name: identity.Account}
+	err = s.db.QueryRowContext(ctx, `SELECT owner_id, closed FROM web_accounts
+		WHERE oidc_issuer = ? AND oidc_subject = ?`, identity.Issuer, identity.Subject).Scan(&result.Owner, &result.Closed)
+	return result, err
+}
+
 func (s accounts) bindOIDC(w http.ResponseWriter, r *http.Request) {
-	var input struct{ Issuer, Subject, Account string }
+	var input oidcIdentity
 	if !decode(w, r, &input) {
 		return
 	}
-	if len(input.Issuer) == 0 || len(input.Issuer) > 512 ||
-		len(input.Subject) == 0 || len(input.Subject) > 255 ||
-		len(input.Account) == 0 || len(input.Account) > 254 {
+	if !input.valid() {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	var id [24]byte
-	if _, err := rand.Read(id[:]); err != nil {
-		reply(w, nil, err)
-		return
-	}
-	owner := hex.EncodeToString(id[:])
-	_, err := s.db.ExecContext(r.Context(), `INSERT INTO web_accounts
-		(owner_id, account, invite_hash, oidc_issuer, oidc_subject)
-		VALUES (?, ?, NULL, ?, ?) ON DUPLICATE KEY UPDATE owner_id = owner_id`,
-		owner, "oidc:"+owner, input.Issuer, input.Subject)
-	if err != nil {
-		reply(w, nil, err)
-		return
-	}
-	result := account{Name: input.Account}
-	err = s.db.QueryRowContext(r.Context(), `SELECT owner_id, closed FROM web_accounts
-		WHERE oidc_issuer = ? AND oidc_subject = ?`, input.Issuer, input.Subject).Scan(&result.Owner, &result.Closed)
-	reply(w, result, err)
+	a, err := s.linkIdentity(r.Context(), input)
+	reply(w, a, err)
+}
+
+func (s accounts) registerPassword(ctx context.Context, owner string, salt, hash []byte) (bool, error) {
+	return changed(s.db.ExecContext(ctx, `UPDATE web_accounts SET salt = ?, password_hash = ?
+		WHERE owner_id = ? AND closed = FALSE AND password_hash IS NULL`, salt, hash, owner))
 }
 
 func (s accounts) activate(w http.ResponseWriter, r *http.Request) {
-	var input struct {
-		Salt []byte
-		Hash []byte
-	}
+	var input struct{ Salt, Hash []byte }
 	if !decode(w, r, &input) {
 		return
 	}
@@ -158,9 +184,13 @@ func (s accounts) activate(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	result, err := s.db.ExecContext(r.Context(), `UPDATE web_accounts SET salt = ?, password_hash = ?
-		WHERE owner_id = ? AND closed = FALSE AND password_hash IS NULL`, input.Salt, input.Hash, r.PathValue("owner"))
-	changed(w, result, err)
+	ok, err := s.registerPassword(r.Context(), r.PathValue("owner"), input.Salt, input.Hash)
+	reply(w, ok, err)
+}
+
+func (s accounts) deactivate(ctx context.Context, owner string, spaceRequired bool) (bool, error) {
+	return changed(s.db.ExecContext(ctx, `UPDATE web_accounts SET closed = TRUE, salt = NULL,
+		password_hash = NULL, purge_space = ? WHERE owner_id = ? AND closed = FALSE`, spaceRequired, owner))
 }
 
 func (s accounts) closeAccount(w http.ResponseWriter, r *http.Request) {
@@ -168,33 +198,39 @@ func (s accounts) closeAccount(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &input) {
 		return
 	}
-	result, err := s.db.ExecContext(r.Context(), `UPDATE web_accounts SET closed = TRUE, salt = NULL,
-		password_hash = NULL, purge_space = ? WHERE owner_id = ? AND closed = FALSE`, input.SpaceRequired, r.PathValue("owner"))
-	changed(w, result, err)
+	ok, err := s.deactivate(r.Context(), r.PathValue("owner"), input.SpaceRequired)
+	reply(w, ok, err)
 }
 
-func (s accounts) pending(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.db.QueryContext(r.Context(), "SELECT owner_id, purge_space FROM web_accounts WHERE purge_space IS NOT NULL")
+func (s accounts) pendingPurges(ctx context.Context) ([]purge, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT owner_id, purge_space FROM web_accounts WHERE purge_space IS NOT NULL")
 	if err != nil {
-		reply(w, nil, err)
-		return
+		return nil, err
 	}
 	defer rows.Close()
 	result := []purge{}
 	for rows.Next() {
 		var p purge
 		if err := rows.Scan(&p.Owner, &p.Space); err != nil {
-			reply(w, nil, err)
-			return
+			return nil, err
 		}
 		result = append(result, p)
 	}
-	reply(w, result, rows.Err())
+	return result, rows.Err()
+}
+
+func (s accounts) pending(w http.ResponseWriter, r *http.Request) {
+	purges, err := s.pendingPurges(r.Context())
+	reply(w, purges, err)
+}
+
+func (s accounts) finishPurge(ctx context.Context, owner string) error {
+	_, err := s.db.ExecContext(ctx, "UPDATE web_accounts SET purge_space = NULL WHERE owner_id = ?", owner)
+	return err
 }
 
 func (s accounts) finish(w http.ResponseWriter, r *http.Request) {
-	_, err := s.db.ExecContext(r.Context(), "UPDATE web_accounts SET purge_space = NULL WHERE owner_id = ?", r.PathValue("owner"))
-	reply(w, nil, err)
+	reply(w, nil, s.finishPurge(r.Context(), r.PathValue("owner")))
 }
 
 func decode(w http.ResponseWriter, r *http.Request, value any) bool {
@@ -205,13 +241,12 @@ func decode(w http.ResponseWriter, r *http.Request, value any) bool {
 	return true
 }
 
-func changed(w http.ResponseWriter, result sql.Result, err error) {
+func changed(result sql.Result, err error) (bool, error) {
 	if err != nil {
-		reply(w, nil, err)
-		return
+		return false, err
 	}
 	count, err := result.RowsAffected()
-	reply(w, count == 1, err)
+	return count == 1, err
 }
 
 func reply(w http.ResponseWriter, value any, err error) {

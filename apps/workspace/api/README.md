@@ -1,6 +1,6 @@
 # Bento 任务入口
 
-任务入口处理 Bento Web 的业务 HTTP API 与会话认证。Docker 部署由 Go 提供 API 入口和 MySQL 账号仓储。浏览器使用 [独立 Web 前端](../web/README.md)完成登录、项目导入、任务提交和 diff 下载。开发时由 Vite 转发 `/api`。[Docker 单镜像部署](../../../docs/deployments/HOW-TO-WEB-DOCKER.md)由 NGINX 同域提供前端静态文件，并将 `/api/*` 转发到容器内 `127.0.0.1:4102` 的 Go 入口，再转发至 `4101` 的 task-entry。
+任务入口处理 Bento Web 的业务 HTTP API 与会话认证。Docker 部署由 Go 提供 API 入口和 MySQL 账号仓储。浏览器使用 [独立 Web 前端](../web/README.md)完成登录、项目导入、任务提交和 diff 下载。开发时由 Vite 转发 `/api`。[Docker 单镜像部署](../../../deploy/README.md#web-docker)由 NGINX 同域提供前端静态文件，并将 `/api/*` 转发到容器内 `127.0.0.1:4102` 的 Go 入口，再转发至 `4101` 的 task-entry。
 
 模拟模式的启动命令、测试账号及端口见前端说明。模拟后端提供普通任务和 `mock:empty`、`mock:failed`、`mock:review`。重启模拟进程会清空记录。
 
@@ -48,7 +48,7 @@ node --env-file=runtime/task-entry.env apps/workspace/api/main.ts
 
 账号空间为 10 GB，单文件最大 4 GB。私有桶须支持带 SHA-256 校验的 S3 Multipart Upload、分块查询、条件完成、终止上传和私有对象读写。CORS 允许前端 origin 的 `PUT` 和 `x-amz-checksum-sha256` 请求头。中断后重新选择原文件可续传。
 
-注销后停止接受新任务，等已受理任务终结再清理。真实 OpenShell 宿主需要提供幂等的工作区删除，见 [宿主部署说明](../../../docs/deployments/openshell-dsh.md)。
+注销后停止接受新任务，等已受理任务终结再清理。真实 OpenShell 宿主需要提供幂等的工作区删除，见 [宿主部署说明](../../../deploy/README.md#openshell-执行宿主)。
 
 ## Go 账号仓储配置
 
@@ -60,4 +60,4 @@ Compose 同步设置 `BENTO_MYSQL_HOST=mysql:3306`、`BENTO_MYSQL_USER=bento`、
 
 设置 `BENTO_OIDC_ISSUER` 后，任务入口用 OIDC 授权码与 S256 PKCE 接受 Keycloak 身份。服务器验证 state、nonce、签名及 Token 声明。只有邮箱已验证且属于配置组织的身份才能取得 Bento 会话。Go 账号仓储在 MySQL 以 `(oidc_issuer, oidc_subject)` 唯一绑定 `owner_id`，并发回调读取同一个绑定。邮箱用于展示。
 
-`/auth` 独立提供认证界面，OIDC 回调使用 `/api/oidc/callback`。此模式关闭任务入口的密码登录、注册和密码确认注销端点。普通退出使用 OIDC RP-Initiated Logout。业务注销要求用原身份重新认证，随后按现有机制关闭账号并清理资源。登录会话及未完成的 OIDC 事务随 task-entry 重启失效，身份绑定和关闭状态保留。部署配置见 [Web Docker 部署](../../../docs/deployments/HOW-TO-WEB-DOCKER.md#keycloak-受邀认证)。
+`/auth` 独立提供认证界面，OIDC 回调使用 `/api/oidc/callback`。此模式关闭任务入口的密码登录、注册和密码确认注销端点。普通退出使用 OIDC RP-Initiated Logout。业务注销要求用原身份重新认证，随后按现有机制关闭账号并清理资源。登录会话及未完成的 OIDC 事务随 task-entry 重启失效，身份绑定和关闭状态保留。部署配置见 [Web Docker 部署](../../../deploy/README.md#keycloak-受邀认证)。

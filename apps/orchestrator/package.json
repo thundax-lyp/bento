@@ -1,0 +1,16 @@
+{
+    "name": "@bento/orchestrator",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "typecheck": "tsc --noEmit",
+        "test": "node --experimental-strip-types --test execution-service/service.test.ts openshell/*.test.ts"
+    },
+    "dependencies": {
+        "@bento/worker": "workspace:*",
+        "@deepseek-ai/dsh-session-persistence": "0.2.1-rc.4"
+    },
+    "devDependencies": {
+        "@deepseek-ai/cordis": "4.0.5"
+    }
+}

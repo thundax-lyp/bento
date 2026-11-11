@@ -165,28 +165,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      '@aws-sdk/client-s3':
-        specifier: 3.1164.0
-        version: 3.1164.0
-      '@aws-sdk/s3-request-presigner':
-        specifier: 3.1164.0
-        version: 3.1164.0
-      '@deepseek-ai/cordis':
-        specifier: 4.0.5
-        version: 4.0.5
-      '@deepseek-ai/dsh-host-webserver':
-        specifier: 0.2.1-rc.4
-        version: 0.2.1-rc.4(@deepseek-ai/cordis@4.0.5)(supports-color@8.1.1)
-      '@deepseek-ai/dsh-session-persistence':
-        specifier: 0.2.1-rc.4
-        version: 0.2.1-rc.4(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-brand@0.2.1-rc.4(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-session@0.2.1-rc.4(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-scope@0.2.1-rc.4(@deepseek-ai/cordis@4.0.5)))(@deepseek-ai/dsh-timeout@0.2.1-rc.4(@deepseek-ai/cordis@4.0.5))
-      dsh-sandbox-openshell:
-        specifier: 0.1.0-rc.1
-        version: 0.1.0-rc.1(152ef9edd9cd0236d610b87115ffe4cf)
-      openid-client:
-        specifier: 6.8.9
-        version: 6.8.9
     devDependencies:
       '@eslint/js':
         specifier: ^10.0.1
@@ -210,6 +188,19 @@ importers:
         specifier: ^8.72.1
         version: 8.72.1(eslint@10.13.0(jiti@2.7.0)(supports-color@8.1.1))(supports-color@8.1.1)(typescript@6.0.3)
 
+  apps/orchestrator:
+    dependencies:
+      '@bento/worker':
+        specifier: workspace:*
+        version: link:../worker
+      '@deepseek-ai/dsh-session-persistence':
+        specifier: 0.2.1-rc.4
+        version: 0.2.1-rc.4(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-brand@0.2.1-rc.4(@deepseek-ai/cordis@4.0.5))(@deepseek-ai/dsh-session@0.2.1-rc.4(@deepseek-ai/cordis@4.0.5)(@deepseek-ai/dsh-scope@0.2.1-rc.4(@deepseek-ai/cordis@4.0.5)))(@deepseek-ai/dsh-timeout@0.2.1-rc.4(@deepseek-ai/cordis@4.0.5))
+    devDependencies:
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5
+        version: 4.0.5
+
   apps/worker:
     dependencies:
       '@deepseek-ai/dsh-session-persistence':
@@ -218,6 +209,24 @@ importers:
       dsh-sandbox-openshell:
         specifier: 0.1.0-rc.1
         version: 0.1.0-rc.1(152ef9edd9cd0236d610b87115ffe4cf)
+
+  apps/workspace/api:
+    dependencies:
+      '@aws-sdk/client-s3':
+        specifier: 3.1164.0
+        version: 3.1164.0
+      '@aws-sdk/s3-request-presigner':
+        specifier: 3.1164.0
+        version: 3.1164.0
+      '@deepseek-ai/cordis':
+        specifier: 4.0.5
+        version: 4.0.5
+      '@deepseek-ai/dsh-host-webserver':
+        specifier: 0.2.1-rc.4
+        version: 0.2.1-rc.4(@deepseek-ai/cordis@4.0.5)(supports-color@8.1.1)
+      openid-client:
+        specifier: 6.8.9
+        version: 6.8.9
 
   apps/workspace/web:
     dependencies:

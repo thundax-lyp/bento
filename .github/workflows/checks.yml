@@ -2,7 +2,7 @@ name: Checks
 
 on:
     pull_request:
-        branches: [main]
+        branches: [main, 'codex/**']
     push:
         branches: [main]
 
@@ -22,6 +22,14 @@ jobs:
             - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
               with:
                   persist-credentials: false
+            - name: Reject tracked Python files
+              shell: bash
+              run: |
+                  python_files="$(git ls-files -- ':(glob,icase)**/*.py')"
+                  if [[ -n "$python_files" ]]; then
+                      printf 'Python files are outside the Bento source tree:\n%s\n' "$python_files" >&2
+                      exit 1
+                  fi
             - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
             - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
               with:
@@ -29,6 +37,28 @@ jobs:
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
             - run: pnpm check
+
+    images:
+        name: Deployment image builds
+        runs-on: ubuntu-24.04
+        timeout-minutes: 20
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  persist-credentials: false
+            - name: Build Web and API image
+              env:
+                  BENTO_MYSQL_PASSWORD: preview
+              run: docker compose -f deploy/compose.yaml build bento-web
+            - name: Check API runtime imports
+              run: >-
+                  docker run --rm --entrypoint node bento-web:local --input-type=module -e
+                  "await import('./apps/workspace/api/server.ts');
+                  await import('./apps/workspace/api/oidc.ts');
+                  await import('./apps/workspace/api/space-storage.ts');
+                  await import('./apps/workspace/api/space-execution.ts');"
+            - name: Build Worker image
+              run: docker build -f deploy/worker/Dockerfile -t bento-worker:ci .
 
     browser:
         name: Web Chromium E2E

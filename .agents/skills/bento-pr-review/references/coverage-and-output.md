@@ -50,7 +50,7 @@ Findings 放在前面，按优先级排序：
 ```md
 ### [P0/P1/P2/P3] 简短、可执行的标题
 
-- 文件：`src/openshell/...`
+- 文件：`apps/orchestrator/openshell/...`
 - 行号：最小 changed range
 - 问题：具体错误及根因。
 - 触发：能够从代码证明的场景或调用路径。

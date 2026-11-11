@@ -66,12 +66,12 @@ CI(ci): 检查 PR 的公开文件范围
 提交前必须：
 
 1. 检查 `git status` 并阅读完整待提交 diff，确认仅包含当前任务改动，无凭据、临时数据或无关个人路径。
-2. 确认满足 [Engineering Rules](./ENGINEERING-RULES.md#validation-and-evidence) 的相关验证与证据要求；适用证据可以复用，不要求仅因 commit 再运行相同检查。
+2. 确认已执行本次变更所需的验证并记录结果；适用证据可以复用，不要求仅因 commit 再运行相同检查。
 3. 按下节核对文档同步，准确说明本次提交完成的范围。
 
 ## Document Sync
 
-文档同步按 [Document Rules](./DOCUMENT-RULES.md#document-sync) 处理。涉及 RUNBOOK 时，按其 [Completion And Deletion](./RUNBOOK-RULES.md#completion-and-deletion) 处理。
+文档同步按 [Document Rules](./DOCUMENT-RULES.md#document-sync) 处理。
 
 ## History Safety
 

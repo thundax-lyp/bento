@@ -30,5 +30,5 @@
 
 ## Related Documents
 
-- [用户身份与账号数据库设计](../30-designs/USER-DATABASE-DESIGN.md)
+- [个人端认证与账号设计](../30-designs/WORKSPACE-AUTH-AND-ACCOUNTS-DESIGN.md)
 - [Web Docker 验收](../40-readiness/WEB-DOCKER-EVIDENCE.md)

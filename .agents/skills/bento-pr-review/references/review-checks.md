@@ -9,7 +9,7 @@
 - 正确性：边界、空值、非法状态、异常转换、异常吞噬和默认值。
 - 运行时完整性：并发、生命周期、事务、幂等、资源释放、失败恢复和配置。
 - 安全性：输入校验、权限、路径所有权、跨作用域访问、注入、敏感信息和日志。
-- 兼容性：以当前有效契约确认已有数据、事件、接口、枚举、配置、exports 和失败语义的支持范围；已确认退役的行为按 [Test Rules](../../../../docs/00-governance/TEST-RULES.md#retired-behavior-and-compatibility) 检查清理，不因旧输入不再受支持而要求新增识别、拒绝或测试。
+- 兼容性：以当前有效契约确认已有数据、事件、接口、枚举、配置、exports 和失败语义的支持范围；已确认退役的行为检查实现、测试与文档是否已同步清理，不因旧输入不再受支持而要求新增识别、拒绝或测试。
 - 架构维护性：领域、runtime、repository、adapter、transport、projection、client 的职责和依赖方向。
 - 范围与复杂度：新增机制是否有当前需求、契约、不变量、可复现失败、必要隔离边界或当前消费者作为依据；是否存在覆盖同一触发条件的更小安全改动。
 
@@ -31,9 +31,9 @@
 按 changed files 的实际模块执行专项检查；专项检查只验证模块边界和证据链，不补充业务语义：
 
 - Session 与 Run 入口：核对用户绑定、所有权、幂等与错误编码，追踪所有等价入口是否应用相同授权。
-- `src/openshell/`：检查可信控制面与 worker 的权限边界，以及接管后旧 generation 是否被拒、Session 和 Workspace 是否保留。
+- `apps/orchestrator/openshell/`：检查可信控制面与 worker 的权限边界，以及接管后旧 generation 是否被拒、Session 和 Workspace 是否保留。
 - 持久化与工具结果：检查写入顺序、恢复语义、重复请求和 UNKNOWN 结果是否保持不可自动重放。
-- 对外 API：检查 `src/index.ts` 的导出、兼容性和未声明的内部能力。
+- 对外 API：检查 `apps/orchestrator/index.ts` 的导出、兼容性和未声明的内部能力。
 - 测试、CI、脚本和文档：核对验收声称与实际执行对象是否一致；原始实验日志和远端配置不能混入公开文件。
 
 ## Finding economy gate

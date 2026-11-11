@@ -3,7 +3,8 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "start": "node run-worker.ts"
+        "start": "node run-worker.ts",
+        "typecheck": "tsc --noEmit"
     },
     "dependencies": {
         "@deepseek-ai/dsh-session-persistence": "0.2.1-rc.4",
