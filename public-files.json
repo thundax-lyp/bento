@@ -71,6 +71,8 @@
         "apps/web/src/ui.tsx",
         "apps/web/tsconfig.json",
         "apps/web/vite.config.ts",
+        "apps/worker/dsh-worker.ts",
+        "apps/worker/run-worker.ts",
         "deploy/web/nginx.conf",
         "deploy/web/start.sh",
         "src/task-entry/README.md"

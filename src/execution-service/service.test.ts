@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { PersistenceFence } from '../openshell/persistence-fence.ts';
 import { SingleHostExecution } from '../openshell/single-host.ts';
 import { localHost } from './local.ts';
-import { completedTurn } from './dsh-worker.ts';
+import { completedTurn } from '../../apps/worker/dsh-worker.ts';
 import { Store } from './store.ts';
 import { serveExecution, snapshotSha256 } from './service.ts';
 import type { ExecutionHost, FileText, WorkerRequest } from './types.ts';

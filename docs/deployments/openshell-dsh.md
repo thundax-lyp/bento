@@ -63,7 +63,7 @@ worker 经服务端执行入口访问 OpenShell；入口校验业务 capability 
 
 在仓库根目录执行 `pnpm install --frozen-lockfile`。部署端为每个控制器配置独占的私有 `BENTO_STATE_DIR`，注入 `BENTO_SERVICE_BEARER`，并选择一种宿主接入方式。
 
-- `BENTO_HOST_CONFIG` 指向私有 JSON。配置包含 Gateway 和 workspace scope、mTLS 文件、固定 SDK 的 `raw.js` 以及可信 `control` 和 `worker` 命令。控制命令负责项目导入、独立读卷、沙盒停启与状态观察。使用 DSH worker 入口时，由 worker 环境的 `BENTO_DSH_BOOTSTRAP` 提供运行时、模型和工具接线。协议见[命令宿主适配器](../../src/execution-service/command-host.ts)和[worker 入口](../../src/execution-service/run-worker.ts)。
+- `BENTO_HOST_CONFIG` 指向私有 JSON。配置包含 Gateway 和 workspace scope、mTLS 文件、固定 SDK 的 `raw.js` 以及可信 `control` 和 `worker` 命令。控制命令负责项目导入、独立读卷、沙盒停启与状态观察。使用 DSH worker 入口时，由 worker 环境的 `BENTO_DSH_BOOTSTRAP` 提供运行时、模型和工具接线。协议见[命令宿主适配器](../../src/execution-service/command-host.ts)和[worker 入口](../../apps/worker/run-worker.ts)。
 - `BENTO_HOST_MODULE` 指向实现 [`ExecutionHost`](../../src/execution-service/types.ts) 的可信模块，默认导出工厂并提供 SDK ingress 配置。
 
 ```sh
@@ -74,7 +74,7 @@ node --experimental-strip-types src/execution-service/start.ts
 
 启用 Temporal 调度时，按 [Temporal 开发环境](HOW-TO-TEMPORAL-DEV.md#接入-bento)为执行服务配置独占 Task Queue。
 
-在私有 `BENTO_HOST_CONFIG` 中设置 `"prewarmWorker": true`，并给 [DSH Worker 入口](../../src/execution-service/run-worker.ts)传入 `--warm`，即可启用单槽预热。Worker 导入 bootstrap 后进入空闲状态，每次收到 Run 才绑定当次 Session、Workspace 和授权。bootstrap 必须为每次调用创建独立运行时，并在回执前关闭该次运行的 Agent、连接和监听器。bootstrap 模块可预加载依赖，运行数据与授权只放在该次调用内。
+在私有 `BENTO_HOST_CONFIG` 中设置 `"prewarmWorker": true`，并给 [DSH Worker 入口](../../apps/worker/run-worker.ts)传入 `--warm`，即可启用单槽预热。Worker 导入 bootstrap 后进入空闲状态，每次收到 Run 才绑定当次 Session、Workspace 和授权。bootstrap 必须为每次调用创建独立运行时，并在回执前关闭该次运行的 Agent、连接和监听器。bootstrap 模块可预加载依赖，运行数据与授权只放在该次调用内。
 
 启用 Temporal 和预热后，在同一份宿主配置中设置 `"workerSlots": 2` 可开启两个槽位。每个 Run 占用一个槽位直到执行或恢复结束，两槽都占用时其他 Run 留在队列。项目与 Session、Workspace 一一绑定，同一项目仍只接受一个未结束的 Run。调低槽位数或回退到旧版本前，先排空执行宿主。
 
