@@ -29,6 +29,8 @@ apps/workspace/web/src/**/*.test.tsx
 !deploy/workspace/start.sh
 !apps/workspace/api/go/
 !apps/workspace/api/go/*.go
+!apps/workspace/api/go/auth.html
+!apps/workspace/api/go/auth.css
 !apps/workspace/api/go/go.mod
 !apps/workspace/api/go/go.sum
 apps/workspace/api/go/*_test.go

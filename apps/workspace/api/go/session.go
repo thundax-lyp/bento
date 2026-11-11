@@ -21,9 +21,10 @@ type accountReader interface {
 }
 
 type webSession struct {
-	Owner   string
-	Name    string
-	Expires time.Time
+	Owner    string
+	Name     string
+	Expires  time.Time
+	Identity *externalSession
 }
 
 type webSessions struct {
@@ -73,6 +74,10 @@ func (s *webSessions) key(r *http.Request) ([32]byte, bool) {
 }
 
 func (s *webSessions) start(r *http.Request, identity account) (*http.Cookie, error) {
+	return s.startIdentity(r, identity, nil)
+}
+
+func (s *webSessions) startIdentity(r *http.Request, identity account, external *externalSession) (*http.Cookie, error) {
 	var random [32]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return nil, err
@@ -90,7 +95,7 @@ func (s *webSessions) start(r *http.Request, identity account) (*http.Cookie, er
 	if old, ok := s.key(r); ok {
 		delete(s.sessions, old)
 	}
-	s.sessions[key] = &webSession{Owner: identity.Owner, Name: identity.Name, Expires: now.Add(sessionLifetime)}
+	s.sessions[key] = &webSession{Owner: identity.Owner, Name: identity.Name, Expires: now.Add(sessionLifetime), Identity: external}
 	return s.cookie(token, int(sessionLifetime/time.Second)), nil
 }
 

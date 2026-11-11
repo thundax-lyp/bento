@@ -3,7 +3,7 @@ FROM golang:1.25-bookworm AS go-build
 WORKDIR /build
 COPY apps/workspace/api/go/go.mod apps/workspace/api/go/go.sum ./
 RUN go mod download
-COPY apps/workspace/api/go/*.go ./
+COPY apps/workspace/api/go/*.go apps/workspace/api/go/auth.html apps/workspace/api/go/auth.css ./
 RUN CGO_ENABLED=0 go build -trimpath -o /out/bento-web-api .
 
 FROM ${NODE_IMAGE} AS dependencies

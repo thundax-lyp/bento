@@ -111,7 +111,10 @@
         "apps/worker/worker-frames.ts",
         "apps/workspace/api/go/password.go",
         "apps/workspace/api/go/password_test.go",
-        "apps/workspace/api/go/session.go"
+        "apps/workspace/api/go/session.go",
+        "apps/workspace/api/go/oidc.go",
+        "apps/workspace/api/go/auth.html",
+        "apps/workspace/api/go/auth.css"
     ],
     "patterns": ["src/**/*.ts"]
 }
