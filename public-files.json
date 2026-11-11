@@ -108,7 +108,10 @@
         "apps/worker/protocol.ts",
         "apps/worker/provider.ts",
         "apps/worker/remote-session.ts",
-        "apps/worker/worker-frames.ts"
+        "apps/worker/worker-frames.ts",
+        "apps/workspace/api/go/password.go",
+        "apps/workspace/api/go/password_test.go",
+        "apps/workspace/api/go/session.go"
     ],
     "patterns": ["src/**/*.ts"]
 }
