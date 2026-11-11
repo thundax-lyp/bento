@@ -6,7 +6,7 @@ import { Context } from '@deepseek-ai/cordis';
 import {
     reconcileSessionPersistence,
     remoteSessionPersistence,
-} from '../../apps/worker/remote-session.ts';
+} from '../../worker/remote-session.ts';
 import { SessionHistory } from './session-history.ts';
 
 test('reconciliation retries with the same writer after a dropped RPC', async () => {

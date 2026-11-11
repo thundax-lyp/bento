@@ -119,5 +119,9 @@
         "apps/workspace/api/go/space_storage.go",
         "apps/workspace/api/go/space_storage_test.go"
     ],
-    "patterns": ["src/**/*.ts"]
+    "patterns": [
+        "apps/orchestrator/index.ts",
+        "apps/orchestrator/execution-service/*.ts",
+        "apps/orchestrator/openshell/*.ts"
+    ]
 }

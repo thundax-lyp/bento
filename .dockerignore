@@ -16,13 +16,13 @@
 !apps/workspace/web/src/**
 apps/workspace/web/src/**/*.test.ts
 apps/workspace/web/src/**/*.test.tsx
-!src/
+!apps/orchestrator/
 !apps/workspace/auth/
 !apps/workspace/auth/auth-page.ts
 !apps/workspace/api/
 !apps/workspace/api/*.ts
-!src/execution-service/
-!src/execution-service/input.ts
+!apps/orchestrator/execution-service/
+!apps/orchestrator/execution-service/input.ts
 !deploy/
 !deploy/workspace/
 !deploy/workspace/nginx.conf

@@ -34,7 +34,7 @@ COPY --from=api-dependencies /app/package.json ./package.json
 COPY --from=api-dependencies /app/node_modules ./node_modules
 COPY apps/workspace/api/*.ts ./apps/workspace/api/
 COPY apps/workspace/auth/auth-page.ts ./apps/workspace/auth/auth-page.ts
-COPY src/execution-service/input.ts ./src/execution-service/input.ts
+COPY apps/orchestrator/execution-service/input.ts ./apps/orchestrator/execution-service/input.ts
 COPY --from=web-build /app/apps/workspace/web/dist/ /srv/bento/
 COPY deploy/workspace/nginx.conf /etc/nginx/bento.conf
 COPY deploy/workspace/start.sh /usr/local/bin/bento-web

@@ -14,6 +14,6 @@
 
 - 源码按 [Bento 工程结构](../30-designs/ENGINEERING-STRUCTURE-DESIGN.md) 划分工程边界。
 
-- 对外 API 由 `src/index.ts` 显式导出；内部模块只公开当前调用方需要的能力，不为缩短路径建立无职责的入口。
+- 对外 API 由 `apps/orchestrator/index.ts` 显式导出；内部模块只公开当前调用方需要的能力，不为缩短路径建立无职责的入口。
 - 保持 NodeNext/ESM 约定：引用仓库内 TypeScript 模块时使用当前源码的显式 `.ts` 路径，不引入未经配置的路径别名或目录导入。
 - 新增入口或移动文件时审阅职责、依赖方向和授权边界。执行入口必须保留 generation 校验和会话所有权约束；恢复流程保留原 Session 与 Workspace，不自动重放 UNKNOWN 工具调用。边界变化时同步 [Architecture](../research/architecture.md)。

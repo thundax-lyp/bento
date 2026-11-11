@@ -18,7 +18,7 @@ import type {
     WorkerRequest,
     WorkerResult,
 } from './types.ts';
-import { operationId } from '../../apps/worker/protocol.ts';
+import { operationId } from '../../worker/protocol.ts';
 
 type Run = ReturnType<Store['findRun']>;
 type Server = HttpServer | Http2Server;

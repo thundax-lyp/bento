@@ -31,9 +31,9 @@
 按 changed files 的实际模块执行专项检查；专项检查只验证模块边界和证据链，不补充业务语义：
 
 - Session 与 Run 入口：核对用户绑定、所有权、幂等与错误编码，追踪所有等价入口是否应用相同授权。
-- `src/openshell/`：检查可信控制面与 worker 的权限边界，以及接管后旧 generation 是否被拒、Session 和 Workspace 是否保留。
+- `apps/orchestrator/openshell/`：检查可信控制面与 worker 的权限边界，以及接管后旧 generation 是否被拒、Session 和 Workspace 是否保留。
 - 持久化与工具结果：检查写入顺序、恢复语义、重复请求和 UNKNOWN 结果是否保持不可自动重放。
-- 对外 API：检查 `src/index.ts` 的导出、兼容性和未声明的内部能力。
+- 对外 API：检查 `apps/orchestrator/index.ts` 的导出、兼容性和未声明的内部能力。
 - 测试、CI、脚本和文档：核对验收声称与实际执行对象是否一致；原始实验日志和远端配置不能混入公开文件。
 
 ## Finding economy gate

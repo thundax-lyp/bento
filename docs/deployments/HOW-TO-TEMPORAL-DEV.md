@@ -62,7 +62,7 @@ export BENTO_GO_CONTROL="$PWD/runtime/bento-orchestrator"
 export BENTO_TEMPORAL_ADDRESS=127.0.0.1:17233
 export BENTO_TEMPORAL_NAMESPACE=default
 export BENTO_TEMPORAL_TASK_QUEUE=bento-dev-host
-node --experimental-strip-types src/execution-service/start.ts
+node --experimental-strip-types apps/orchestrator/execution-service/start.ts
 ```
 
 为每个控制器状态目录分配独占 Task Queue。重启时保留状态目录、Namespace 和队列名。Go Temporal Worker 作为执行宿主的子进程启动，通过私有 stdio 协议交接。Activity 并发跟随宿主槽位数，默认一个槽位，启用 [DSH Worker 预热](openshell-dsh.md#执行服务)后可配置两个槽位。Temporal Worker 领取任务后，由受信宿主适配器分配 DSH 执行 Worker。使用 Go 1.25.3+ 构建控制面二进制；`pnpm install --frozen-lockfile` 安装 DSH 和 OpenShell 依赖。该模式面向受信网络内的开发服务。

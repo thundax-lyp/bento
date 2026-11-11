@@ -14,7 +14,7 @@
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "check": "pnpm check:go && pnpm check:publication && pnpm typecheck && pnpm lint && pnpm format:check && pnpm check:execution && pnpm --filter @bento/web check",
-        "check:execution": "node --experimental-strip-types --test src/execution-service/service.test.ts",
+        "check:execution": "node --experimental-strip-types --test apps/orchestrator/execution-service/service.test.ts",
         "check:publication": "python3 scripts/check-publication.py",
         "check:go": "(cd apps/orchestrator && go test ./... && go vet ./...) && (cd apps/workspace/api/go && go test ./... && go vet ./...)"
     },
@@ -37,7 +37,6 @@
         "openid-client": "6.8.9"
     },
     "files": [
-        "src",
         "apps/orchestrator",
         "apps/workspace/api",
         "apps/workspace/auth",

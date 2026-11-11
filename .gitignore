@@ -68,7 +68,6 @@
 !/pnpm-workspace.yaml
 !/tsconfig.json
 !/public-files.json
-!/src/
 !/apps/
 /apps/*
 !/apps/workspace/
@@ -79,6 +78,13 @@
 !/apps/orchestrator/
 /apps/orchestrator/*
 !/apps/orchestrator/*.go
+!/apps/orchestrator/index.ts
+!/apps/orchestrator/execution-service/
+/apps/orchestrator/execution-service/*
+!/apps/orchestrator/execution-service/*.ts
+!/apps/orchestrator/openshell/
+/apps/orchestrator/openshell/*
+!/apps/orchestrator/openshell/*.ts
 !/apps/orchestrator/go.mod
 !/apps/orchestrator/go.sum
 !/docs/

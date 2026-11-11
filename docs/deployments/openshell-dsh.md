@@ -48,7 +48,7 @@ worker 经服务端执行入口访问 OpenShell；入口校验业务 capability 
 
 ## 单执行宿主接入
 
-可信进程从 [Bento 入口](../../src/index.ts)实例化 `SingleHostExecution`。每组 SQLite 文件由一个控制器实例管理。部署端提供 `SingleHostSandbox`，按绑定对指定沙盒执行 stop/start，并通过宿主独立观察进程退出、启动状态、策略与挂载卷。停止观察需要排除旧 stop 延迟生效。以 OpenShell 官方 SDK 的固定 protobuf schema 作为 `sdkIngress` 的解码器，并把 Gateway mTLS 凭据只交给服务端。
+可信进程从 [Bento 入口](../../apps/orchestrator/index.ts)实例化 `SingleHostExecution`。每组 SQLite 文件由一个控制器实例管理。部署端提供 `SingleHostSandbox`，按绑定对指定沙盒执行 stop/start，并通过宿主独立观察进程退出、启动状态、策略与挂载卷。停止观察需要排除旧 stop 延迟生效。以 OpenShell 官方 SDK 的固定 protobuf schema 作为 `sdkIngress` 的解码器，并把 Gateway mTLS 凭据只交给服务端。
 
 1. 部署端导入项目到外部 Volume，验证沙盒挂载及策略，用 `bind` 登记 Session。用 `admit` 领取 Run，将短期 capability 与三个入口地址交给 worker。
 2. worker 安装 `remoteSessionPersistence`、官方 DSH checkpoint policy 和 `installOpenShellProvider`。执行有副作用的受控工具前，向 `POST /operations` 提交 `{id, input}`，只在收到 201 后派发。重试须沿用原操作 ID。409 表示该 ID 已登记，仍处于 UNKNOWN 的操作由可信侧查询对账。
@@ -63,11 +63,11 @@ worker 经服务端执行入口访问 OpenShell；入口校验业务 capability 
 
 在仓库根目录执行 `pnpm install --frozen-lockfile`。部署端为每个控制器配置独占的私有 `BENTO_STATE_DIR`，注入 `BENTO_SERVICE_BEARER`，并选择一种宿主接入方式。
 
-- `BENTO_HOST_CONFIG` 指向私有 JSON。配置包含 Gateway 和 workspace scope、mTLS 文件、固定 SDK 的 `raw.js` 以及可信 `control` 和 `worker` 命令。控制命令负责项目导入、独立读卷、沙盒停启与状态观察。使用 DSH worker 入口时，由 worker 环境的 `BENTO_DSH_BOOTSTRAP` 提供运行时、模型和工具接线。协议见[命令宿主适配器](../../src/execution-service/command-host.ts)和[worker 入口](../../apps/worker/run-worker.ts)。
-- `BENTO_HOST_MODULE` 指向实现 [`ExecutionHost`](../../src/execution-service/types.ts) 的可信模块，默认导出工厂并提供 SDK ingress 配置。
+- `BENTO_HOST_CONFIG` 指向私有 JSON。配置包含 Gateway 和 workspace scope、mTLS 文件、固定 SDK 的 `raw.js` 以及可信 `control` 和 `worker` 命令。控制命令负责项目导入、独立读卷、沙盒停启与状态观察。使用 DSH worker 入口时，由 worker 环境的 `BENTO_DSH_BOOTSTRAP` 提供运行时、模型和工具接线。协议见[命令宿主适配器](../../apps/orchestrator/execution-service/command-host.ts)和[worker 入口](../../apps/worker/run-worker.ts)。
+- `BENTO_HOST_MODULE` 指向实现 [`ExecutionHost`](../../apps/orchestrator/execution-service/types.ts) 的可信模块，默认导出工厂并提供 SDK ingress 配置。
 
 ```sh
-node --experimental-strip-types src/execution-service/start.ts
+node --experimental-strip-types apps/orchestrator/execution-service/start.ts
 ```
 
 启动成功时输出回环地址，监听端口可由 `BENTO_PORT` 设置。导入项目后先确认项目为 `ready`，再提交 Run，记录 Run ID 与 Session ID。用同一账号重新读取状态及 diff。使用 `SIGTERM` 停止服务，重启时沿用同一状态目录及宿主绑定。只验证本机服务时可用独立的状态目录，清除两种宿主配置并在命令末尾加 `--local`，此模式使用确定性夹具。
@@ -90,7 +90,7 @@ Temporal 模式在空出槽位时优先选择当前无在跑任务的账号。�
 
 受信启动器负责隔离 Worker 及其子进程，并将终止信号传给整个容器或进程组。异常退出、租约超时或需要人工核对的回执会淘汰该 Worker。执行服务在旧进程关闭后补位。关闭服务时等待预热进程退出，随后释放控制器锁。停用预热时，排空后移除私有配置中的 `prewarmWorker` 和 `workerSlots`，移除 Worker 命令的 `--warm`，再重启执行服务。
 
-遇到 worker 失联时，执行服务撤销旧代授权并在原卷上恢复 Session。恢复 worker 只对账会话历史，原 prompt 不重发。Run 进入 `needs_review` 时，可信部署端先独立核对预期修改，再通过[进程内 `reviewRun`](../../src/execution-service/service.ts) 提供代次、稳定操作 ID 和预期整卷哈希。执行服务核对恢复回执、绑定、UNKNOWN 操作及卷快照，原子保存确认记录和 diff。核对失败时，Run 继续等待可信核对，diff 暂不可用。
+遇到 worker 失联时，执行服务撤销旧代授权并在原卷上恢复 Session。恢复 worker 只对账会话历史，原 prompt 不重发。Run 进入 `needs_review` 时，可信部署端先独立核对预期修改，再通过[进程内 `reviewRun`](../../apps/orchestrator/execution-service/service.ts) 提供代次、稳定操作 ID 和预期整卷哈希。执行服务核对恢复回执、绑定、UNKNOWN 操作及卷快照，原子保存确认记录和 diff。核对失败时，Run 继续等待可信核对，diff 暂不可用。
 
 已收到 worker 完成回执的 Run 如果采集失败，控制器会重试读取快照和生成 diff。重启后继续采集，直到交付前同一项目保持占用。
 
@@ -98,4 +98,4 @@ Temporal 模式在空出槽位时优先选择当前无在跑任务的账号。�
 
 2026-11-09 的纵向验收使用单控制器、单执行宿主、一个受邀账号和固定文本编辑工具。经真实 OpenShell 和模型完成执行服务 HTTP 与任务页面两轮验证，覆盖工具回执前的 worker SIGKILL、同一 Session 和原卷恢复、旧代拒绝、UNKNOWN 保留及页面 diff 下载。命令隔离为 `partial`。真实多账号负载、任意工具、控制器各阶段故障及 HA 仍按[验收门槛](../research/implementation.md#验收门槛)验证。
 
-账号注销清理需要可信宿主实现幂等的工作区删除。命令宿主处理 `{action:"purge",binding}`，只删除该绑定独占的沙盒与卷，独立确认两者不存在后返回 `{sandbox,volume,absent:true}`。自定义宿主实现 `ExecutionHost.purge(binding)`。删除失败应报错，Bento 会保留清理请求以便重试。Docker 驱动的宿主可用 [dockerOpenShellPurge](../../src/execution-service/docker-openshell-purge.ts)，并提供与部署时一致的卷标签。
+账号注销清理需要可信宿主实现幂等的工作区删除。命令宿主处理 `{action:"purge",binding}`，只删除该绑定独占的沙盒与卷，独立确认两者不存在后返回 `{sandbox,volume,absent:true}`。自定义宿主实现 `ExecutionHost.purge(binding)`。删除失败应报错，Bento 会保留清理请求以便重试。Docker 驱动的宿主可用 [dockerOpenShellPurge](../../apps/orchestrator/execution-service/docker-openshell-purge.ts)，并提供与部署时一致的卷标签。
