@@ -9,14 +9,7 @@
         "verbatimModuleSyntax": true,
         "noEmit": true,
         "allowImportingTsExtensions": true,
-
         "skipLibCheck": true,
         "types": ["node"]
-    },
-    "include": [
-        "src/**/*.ts",
-        "apps/workspace/api/*.ts",
-        "apps/workspace/auth/*.ts",
-        "apps/worker/*.ts"
-    ]
+    }
 }

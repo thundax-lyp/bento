@@ -6,9 +6,6 @@ DRAFT.md
 
 # Immutable internal evidence and local runtime state
 validation/
-docs/research/archive/
-docs/ARCHITECTURE.md
-docs/DSH-OPENSHELL-V0.1.md
 .idea/
 **/runtime/
 **/cache/

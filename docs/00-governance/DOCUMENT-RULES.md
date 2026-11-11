@@ -12,10 +12,9 @@
 2. [需求](../10-requirements/README.md)和已确认的接口：约束可验收的产品行为、跨边界契约和兼容性。
 3. [设计](../30-designs/README.md)：记录如何实现需求与契约。
 4. [Readiness](../40-readiness/README.md)：记录实现覆盖、验证结果和未覆盖范围。
-5. [研究与实现验收](../research/README.md)：按主题维护现有架构、已验证能力、实施方案和验收边界。
-6. [OpenShell 部署说明](../deployments/openshell-dsh.md)与[公开发布范围](../PUBLISHING.md)：分别维护通用运行流程和发布边界。
+5. [部署手册](../../deploy/README.md)：维护通用运行流程。
 
-讨论、草稿与原始验证材料用于解释背景和追溯证据。结论确认后写入对应的工程文档；原始日志及远端配置按公开发布规则保留在本地。
+讨论、草稿与原始验证材料用于解释背景和追溯证据。结论确认后写入对应的工程文档；原始日志及远端配置留在本地受控工作区。
 
 当文档之间发生冲突时，不得静默选择方便实现的一方。应按文档职责、适用范围和已确认的需求、契约或决策依据判断。更新时间仅用于追溯变更，不能证明新内容已经确认，也不能让讨论稿或当前代码覆盖正式口径；无法消解时，将冲突记录为待讨论项并请求人工确认。
 
@@ -26,7 +25,7 @@
 - 保存稳定、跨任务适用的工程规则。
 - 不记录一次任务的执行过程、临时方案或完成历史。
 - 规则变化时检查直接引用它的入口和 Skill。
-- 系统组成、所有权和依赖边界由[平台架构](../research/architecture.md)定义；源码目录和导入约定由 `ARCHITECTURE-RULES.md` 定义；工程取舍和通用验证方法由 `ENGINEERING-RULES.md` 定义；测试体系、资产取舍与测试命名由 `TEST-RULES.md` 定义。依赖版本、provider 与源码接线由对应设计维护，治理文档只引用其入口。
+- 系统组成、所有权和依赖边界由[平台架构](../30-designs/PLATFORM-ARCHITECTURE-DESIGN.md)定义；源码目录和导入约定由 `ARCHITECTURE-RULES.md` 定义。依赖版本、provider 与源码接线由对应设计维护，治理文档只引用其入口。
 - 暂存、提交和历史修改规则统一由 `COMMIT-RULES.md` 定义。
 - 分支、PR、Review、CI 和合并规则统一由 `PR-RULES.md` 定义。
 
@@ -47,7 +46,6 @@
 - 保存模块设计、状态机、数据所有权、依赖方向和专项设计。
 - 设计必须关联需求或契约，不能替代产品决策。
 - 复杂临时任务可以使用 `RUNBOOK-*.md`；任务关闭时必须迁移长期结论并删除 RUNBOOK。
-- RUNBOOK 的适用条件、低级 LLM 执行模型、决策完备性、颗粒度和收口规则统一由 `RUNBOOK-RULES.md` 定义。
 
 ### `40-readiness`
 
@@ -55,33 +53,26 @@
 - 证据必须记录日期、验证范围、环境或 commit 边界、执行方式、结果和 `Not Covered`。
 - “进程已启动”“端口正在监听”或单次命令成功不能自动证明业务就绪。
 
-### 运维
+### `deploy/README.md`
 
 - 保存可重复执行的启动、停止、诊断、恢复、升级、发布和故障处置流程。
 - 操作文档必须列出前置条件、执行步骤、成功判据、失败处理和恢复方式。
 - 自动化脚本是执行入口时，文档应引用脚本而不是复制一份可能漂移的实现。
 
-### 讨论与历史
-
-- 保存产品讨论稿、外部调研、决策背景、会议记录和历史材料。
-- 文件必须清楚标记其状态以及是否可以作为实现依据。
-- 已确认结论应迁移到对应工程文档；不在多处保留相互竞争的当前口径。
-
 ## Repository Entry And Design Ownership
 
 [README](../../README.md) 链接仓库的使用、设计和开发入口。完整规则由对应文件维护，Skill 引用规则并提供操作流程，不另建规则副本。
 
-- 实现和验证：[架构规则](./ARCHITECTURE-RULES.md)、[工程规则](./ENGINEERING-RULES.md)、[测试规则](./TEST-RULES.md)。
+- 实现和验证：[架构规则](./ARCHITECTURE-RULES.md)。
 - 小步交付：[Commit 规则](./COMMIT-RULES.md)、[PR 规则](./PR-RULES.md)。
-- 临时执行手册的编写与收口见 [RUNBOOK 规则](./RUNBOOK-RULES.md)。
 
-| 文档                                                  | 维护内容                                                |
-| ----------------------------------------------------- | ------------------------------------------------------- |
-| [平台架构](../research/architecture.md)               | 系统组成、Session 与 Workspace 的所有权、执行与权限边界 |
-| [能力与证据](../research/capabilities.md)             | 已验证能力、证据的适用条件和未覆盖边界                  |
-| [实现方案与验收](../research/implementation.md)       | 实现阶段、必要扩展和验收条件                            |
-| [OpenShell 部署说明](../deployments/openshell-dsh.md) | 接入、运行和部署前提                                    |
-| [公开发布范围](../PUBLISHING.md)                      | 可公开文件、内部证据和发布检查                          |
+| 文档                                                             | 维护内容                                                |
+| ---------------------------------------------------------------- | ------------------------------------------------------- |
+| [平台架构](../30-designs/PLATFORM-ARCHITECTURE-DESIGN.md)        | 系统组成、Session 与 Workspace 的所有权、执行与权限边界 |
+| [能力与证据](../40-readiness/DSH-OPENSHELL-EVIDENCE.md)          | 已验证能力、证据的适用条件和未覆盖边界                  |
+| [实施设计](../30-designs/DSH-OPENSHELL-IMPLEMENTATION-DESIGN.md) | 实现阶段和必要扩展                                      |
+| [交付验收](../40-readiness/DSH-OPENSHELL-ACCEPTANCE.md)          | 放行条件和验收所需证据                                  |
+| [部署手册](../../deploy/README.md)                               | 接入、运行和部署前提                                    |
 
 ## File Naming
 
@@ -92,7 +83,7 @@
 - 模块设计命名为 `*-DESIGN.md`，专项设计命名为 `*-SPECIAL-DESIGN.md`。
 - 临时执行手册命名为 `RUNBOOK-*.md`。
 - 可重复操作说明命名为 `HOW-TO-*.md`。
-- 验证证据命名为 `*-EVIDENCE.md`，实现覆盖命名为 `*-IMPLEMENTATION-COVERAGE.md`。
+- 验证证据命名为 `*-EVIDENCE.md`，交付门槛命名为 `*-ACCEPTANCE.md`，实现覆盖命名为 `*-IMPLEMENTATION-COVERAGE.md`。
 - 讨论材料应通过文件名明确标记 `DRAFT`、`RESEARCH` 或 `ARCHIVE` 等状态。
 
 ## Language And Style
@@ -106,7 +97,7 @@
 
 ## Required Structures
 
-以下清单规定必须覆盖的语义，不要求逐项使用同名独立章节。可以合并标题、表格或引用已有真相源；不得省略当前任务相关的内容，也不为无关主题填充空泛段落。不适用项可以集中说明及给出原因。RUNBOOK 的机械结构仍遵循其专项规则。
+以下清单规定必须覆盖的语义，不要求逐项使用同名独立章节。可以合并标题、表格或引用已有真相源；不得省略当前任务相关的内容，也不为无关主题填充空泛段落。不适用项可以集中说明及给出原因。
 
 需求文档覆盖：
 
@@ -157,13 +148,15 @@ readiness 证据覆盖：
 变更收口前至少检查：
 
 - 产品行为或接口变化：更新对应需求、跨边界契约或当前维护其语义的主题文档。
-- 系统组成、所有权或依赖方向变化：更新[平台架构](../research/architecture.md)。
-- 实现结构、状态机或失败处理变化：更新[实现方案与验收](../research/implementation.md)中受影响的口径。
+- 系统组成、所有权或依赖方向变化：更新[平台架构](../30-designs/PLATFORM-ARCHITECTURE-DESIGN.md)。
+- 实现结构、状态机或失败处理变化：更新对应设计。DSH / OpenShell 的实施顺序和复用方案由[实施设计](../30-designs/DSH-OPENSHELL-IMPLEMENTATION-DESIGN.md)维护。
 - 验证范围、交付状态或已知缺口变化：更新对应验收或证据，注明基线和未覆盖项。
 - 启动、恢复、升级或发布方式变化：更新受影响的部署或发布说明。
 - 固定工程做法变化：更新对应治理规则及直接引用它的入口。仅落实既有规则的代码迁移不要求改写规则。
 
-纯实现补齐且未改变既有口径时，不应顺手改写无关文档。公开文件范围和 Markdown 相对文件链接使用 `pnpm check:publication` 检查，章节锚点和远程链接由审阅核对。
+纯实现补齐且未改变既有口径时，不应顺手改写无关文档。公开文件以 [public-files.json](../../public-files.json) 为准，npm 打包范围由 [package.json](../../package.json) 的 `files` 独立维护。原始验证材料和远端配置保存在受控工作区，公开证据使用审阅过的脱敏副本。
+
+提交前核对暂存文件与公开白名单、敏感信息和文档链接。CI 的 Repository checks 拒绝 Git 跟踪的 Python 文件。使用 `npm pack --dry-run --json` 检查 npm 打包文件。
 
 ## Skill Boundary
 

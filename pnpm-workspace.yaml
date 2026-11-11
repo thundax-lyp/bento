@@ -1,4 +1,6 @@
 packages:
+    - apps/orchestrator
+    - apps/workspace/api
     - apps/workspace/web
     - apps/worker
 

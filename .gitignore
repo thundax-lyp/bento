@@ -6,11 +6,11 @@
 /.github/workflows/*
 !/.github/workflows/checks.yml
 !/.dockerignore
-!/Dockerfile
-!/compose.yaml
-!/compose.keycloak.yaml
 !/deploy/
 /deploy/*
+!/deploy/compose.yaml
+!/deploy/compose.keycloak.yaml
+!/deploy/README.md
 !/deploy/worker/
 /deploy/worker/*
 !/deploy/worker/Dockerfile
@@ -68,7 +68,6 @@
 !/pnpm-workspace.yaml
 !/tsconfig.json
 !/public-files.json
-!/src/
 !/apps/
 /apps/*
 !/apps/workspace/
@@ -79,14 +78,21 @@
 !/apps/orchestrator/
 /apps/orchestrator/*
 !/apps/orchestrator/*.go
+!/apps/orchestrator/index.ts
+!/apps/orchestrator/package.json
+!/apps/orchestrator/tsconfig.json
+!/apps/orchestrator/execution-service/
+/apps/orchestrator/execution-service/*
+!/apps/orchestrator/execution-service/*.ts
+!/apps/orchestrator/openshell/
+/apps/orchestrator/openshell/*
+!/apps/orchestrator/openshell/*.ts
 !/apps/orchestrator/go.mod
 !/apps/orchestrator/go.sum
 !/docs/
-!/scripts/
 
 # Only reviewed public documents and tooling are eligible.
 /docs/*
-!/docs/PUBLISHING.md
 !/docs/00-governance/
 /docs/00-governance/*
 !/docs/00-governance/*-RULES.md
@@ -98,33 +104,21 @@
 !/docs/30-designs/
 /docs/30-designs/*
 !/docs/30-designs/README.md
+!/docs/30-designs/PLATFORM-ARCHITECTURE-DESIGN.md
+!/docs/30-designs/DSH-OPENSHELL-IMPLEMENTATION-DESIGN.md
+!/docs/30-designs/WORKSPACE-AUTH-AND-ACCOUNTS-DESIGN.md
 !/docs/30-designs/ENGINEERING-STRUCTURE-DESIGN.md
-!/docs/30-designs/USER-DATABASE-DESIGN.md
 !/docs/40-readiness/
 /docs/40-readiness/*
 !/docs/40-readiness/README.md
-!/docs/40-readiness/MVP-PREFLIGHT-EVIDENCE.md
+!/docs/40-readiness/DSH-OPENSHELL-EVIDENCE.md
+!/docs/40-readiness/DSH-OPENSHELL-ACCEPTANCE.md
+!/docs/40-readiness/THREE-ACCOUNT-REMOTE-EVIDENCE.md
 !/docs/40-readiness/TEMPORAL-DEV-EVIDENCE.md
 !/docs/40-readiness/WEB-DOCKER-EVIDENCE.md
-!/docs/research/
-!/docs/deployments/
-/docs/research/*
-!/docs/research/README.md
-!/docs/research/architecture.md
-!/docs/research/capabilities.md
-!/docs/research/implementation.md
-/docs/deployments/*
-!/docs/deployments/openshell-dsh.md
-!/docs/deployments/HOW-TO-WEB-DOCKER.md
-!/docs/deployments/HOW-TO-TEMPORAL-DEV.md
-/scripts/*
-!/scripts/check-publication.py
 
 # Private evidence and deployment material stay local, byte-identical.
 /validation/
-/docs/research/archive/
-/docs/ARCHITECTURE.md
-/docs/DSH-OPENSHELL-V0.1.md
 
 # Secrets, IDE state and generated runtime material are never public inputs.
 **/.idea/

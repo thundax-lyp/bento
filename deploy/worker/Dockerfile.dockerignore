@@ -3,9 +3,6 @@
 !pnpm-lock.yaml
 !pnpm-workspace.yaml
 !apps/
-!apps/workspace/
-!apps/workspace/web/
-!apps/workspace/web/package.json
 !apps/worker/
 !apps/worker/package.json
 !apps/worker/*.ts

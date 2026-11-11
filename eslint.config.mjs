@@ -9,7 +9,6 @@ export default tseslint.config(
             'coverage/**',
             '**/DRAFT.md',
             'validation/**',
-            'docs/research/archive/**',
             '**/.idea/**',
             '**/runtime/**',
             '**/cache/**',
