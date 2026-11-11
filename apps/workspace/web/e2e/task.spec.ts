@@ -8,10 +8,14 @@ async function register(
     password: string,
 ) {
     await page.getByRole('link', { name: '使用邀请码注册' }).click();
-    await page.getByLabel('账号').fill(account);
-    await page.getByLabel('邀请码').fill('demo-invite');
-    await page.getByLabel('新密码').fill(password);
-    await page.getByRole('button', { name: '注册', exact: true }).click();
+    const form = page.locator('form').filter({
+        has: page.getByRole('heading', { name: '受邀注册', exact: true }),
+    });
+    await expect(form).toBeVisible();
+    await form.getByLabel('账号').fill(account);
+    await form.getByLabel('邀请码').fill('demo-invite');
+    await form.getByLabel('新密码').fill(password);
+    await form.getByRole('button', { name: '注册', exact: true }).click();
     await expect(page).toHaveURL(/\/login(?:\?|$)/);
 }
 
