@@ -1,0 +1,15 @@
+:root {
+    color-scheme: light;
+}
+html.login-pf,
+.login-pf body {
+    background: #e9eee8;
+}
+#kc-header-wrapper {
+    color: #25382b;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+}
+#kc-login {
+    background: #315941;
+}
