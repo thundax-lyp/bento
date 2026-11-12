@@ -2,10 +2,14 @@
 /*
 !/.github/
 /.github/*
+!/.github/pull_request_template.md
 !/.github/workflows/
 /.github/workflows/*
 !/.github/workflows/checks.yml
 !/.dockerignore
+!/assets/
+/assets/*
+!/assets/architecture.svg
 !/deploy/
 /deploy/*
 !/deploy/compose.yaml
@@ -99,7 +103,7 @@
 /docs/00-governance/*
 !/docs/00-governance/*-RULES.md
 !/docs/00-governance/ARCHITECTURE.md
-!/docs/00-governance/architecture.svg
+!/docs/00-governance/MODULE-DESIGN-TEMPLATE.md
 !/docs/10-requirements/
 /docs/10-requirements/*
 !/docs/10-requirements/README.md
@@ -114,7 +118,7 @@
 !/docs/30-designs/WEB-DESIGN.md
 !/docs/40-readiness/
 /docs/40-readiness/*
-!/docs/40-readiness/README.md
+!/docs/40-readiness/CURRENT-READINESS.md
 
 # Local debugging files and deployment configuration.
 /debug-workspace/

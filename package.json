@@ -32,13 +32,13 @@
         "apps/workspace/auth",
         "apps/worker",
         "docs/00-governance/ARCHITECTURE.md",
-        "docs/00-governance/architecture.svg",
+        "assets/architecture.svg",
         "docs/10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md",
         "docs/10-requirements/WEB-REQUIREMENTS.md",
         "docs/20-interfaces/WEB-INTERFACE.md",
         "docs/30-designs/APPLICATION-BOUNDARIES-DESIGN.md",
         "docs/30-designs/WEB-DESIGN.md",
-        "docs/40-readiness/README.md",
+        "docs/40-readiness/CURRENT-READINESS.md",
         "deploy/README.md",
         "public-files.json"
     ]

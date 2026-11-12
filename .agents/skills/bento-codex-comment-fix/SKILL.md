@@ -5,7 +5,7 @@ description: Explicitly invoked workflow for processing unresolved Codex review 
 
 # Bento Codex Comment Fix
 
-只有用户显式调用 `$bento-codex-comment-fix` 时，才处理指定 PR 的未关闭 Codex review threads 与尚未处置的 Codex review-summary findings；参数可为 `#5`、`5`，或省略以解析当前分支 PR。单独说“Codex 有评论”不应自动触发该 skill。一次明确调用即授权在本任务范围内进行 reaction、代码修改、验证、commit、回复和可用时的 resolve。push 或删除评论须另有明确授权；不自动开 PR 或合并。
+只有用户显式调用 `$bento-codex-comment-fix` 时，才处理指定 PR 的未关闭 Codex review threads 与尚未处置的 Codex review-summary findings；参数可为 `#5`、`5`，或省略以解析当前分支 PR。单独说“Codex 有评论”不应自动触发该 skill。一次明确调用即授权在本任务范围内进行 reaction、代码修改、验证、commit、回复和可用时的 resolve。修复通过验证后，直接快进推送到已核实的现有 PR 远端分支。新建本地或远端分支、删除评论须有明确授权。本流程使用已有 PR。
 
 ## 参数与目标
 
@@ -99,7 +99,7 @@ You have reached your Codex usage limits for code reviews.
     - `defer-or-decision`：thread finding 添加 👎；summary finding 记录 reaction `Not Applicable`。不修改代码，回复 blocker、缺失决策或 follow-up 条件；thread 保持 unresolved，summary 标记为 `deferred`。
 4. 对修复运行与改动匹配的最窄验证；跨边界、状态机、协议或生命周期变更运行根目录 `pnpm check`，并按工程规则补做能覆盖实际运行契约的验证。
 5. 只提交当前任务文件，使用符合 `COMMIT-RULES.md` 的 commit message；不要 amend、rebase、squash 或 reset。
-6. 独立解析 `comment PR` 和当前分支对应的 `fix PR`。只有已有 push 授权且当前分支有 base 为 `main` 的 open PR 时，才向核实过的远端分支推送并核对 commit 已进入该 PR。永远不 push `main`。没有推送或远端未包含修复时，仅报告本地 commit，保持接受项 unresolved，回复 follow-up 时不声称 PR 已修复。
+6. 独立解析 `comment PR` 和当前分支对应的 `fix PR`。当前分支有 base 为 `main` 的 open PR 时，验证通过后直接快进推送到已核实的现有远端分支，并核对 commit 已进入该 PR。永远不 push `main`。没有推送或远端未包含修复时，仅报告本地 commit，保持接受项 unresolved，回复 follow-up 时不声称 PR 已修复。
 7. 回复并回读：thread 只有 reply 成功后才 resolve；summary finding 按“Review Summary Finding”写入并回读带标记的汇总 issue comment，不能 resolve。接受的 actionable finding 回复必须包含处理结论、`comment PR`、`fix PR`、`fix commit` 和实际验证结果；不采纳 finding 的回复必须包含 `comment PR` 和具体依据；暂缓 finding 只能说明 follow-up 状态。`accept-with-smaller-fix` 的回复还必须分别说明原 finding 的触发条件、未采用建议方案的原因，以及更小修复如何消除同一触发条件并保持必要边界。
 8. 推送后重新读取 PR threads、review summaries、summary 回复标记和 checks，处理本轮由修复引起的新 Codex findings；达到停止条件后结束。
 
@@ -122,7 +122,7 @@ You have reached your Codex usage limits for code reviews.
     2. 如果工具返回 `integration forbidden`、权限不足，或明确不支持目标操作，改用本机已认证的 GitHub CLI（`gh`）；这属于连接器与本机凭据的权限差异，不得直接判定任务失败。
     3. 使用 `gh` 前确认当前仓库、PR 编号、线程/评论 ID 与目标一致，并确认 `gh auth status` 显示可用账号和仓库访问权限。
     4. 每次写操作后必须通过 GitHub API 或 `gh` 回读对应资源确认结果；命令返回成功不等于 GitHub 状态已完成。
-    5. fallback 只改变调用通道，不扩大用户已授权的操作范围；不得借此自动执行额外的删除、关闭、合并、push 或其他写操作。
+    5. fallback 只改变调用通道，不扩大用户已授权的操作范围；不得借此自动执行额外的删除、关闭、合并、新建分支或其他超出本流程的写操作。
 - 用 GitHub REST API 获取 PR reviews、PR review comments 和 issue comments，用 GraphQL `reviewThreads` 判断 `isResolved`，用 reaction API 添加 `+1` 或 `-1`；这些读取和写入也可在上述 fallback 条件满足时通过 `gh api` 完成。
 - 仅在已获删除授权且满足“冗余额度提示”全部条件时，按其资源调用对应的 REST DELETE endpoint，并重新读取该来源；不得用 delete 代替处理真实 finding。
 - resolve 必须使用 GraphQL `resolveReviewThread`，且必须在 reply 成功之后执行。

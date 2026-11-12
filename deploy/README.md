@@ -46,7 +46,7 @@ Compose 在数据库、Keycloak 和 Orchestrator 健康后启动 Web。使用默
 2. 为 Workspace 准备独立持久 Volume。受测 Docker driver 启用 `allow_driver_config`，卷使用 `sandbox-attachable=true` 和 `sandbox-attachable-workspace=default` 标签。部署后核对沙盒挂载、工作目录与策略。
 3. 通过测试 Session 验证文件和命令访问同一卷。重建沙盒时保留原卷，确认旧执行已退出、新沙盒的策略和挂载正确后再发布新代 READY。严格隔离模式应拒绝仅提供 partial enforcement 的环境。
 
-运行边界和既有实验结果见[需求完成状况](../docs/40-readiness/README.md)。
+运行边界和既有实验结果见[需求完成状况](../docs/40-readiness/CURRENT-READINESS.md)。
 
 ### 配置执行服务
 
@@ -88,4 +88,4 @@ docker compose -f deploy/compose.yaml --profile dev exec temporal temporal opera
 
 Temporal UI 位于宿主回环 `18233`，Mailpit 位于 `18494`。Temporal 开发实例使用持久卷保存 SQLite。开发模式命令见 [Temporal CLI 文档](https://github.com/temporalio/cli/blob/main/README.md#run-via-docker)。反向代理路径配置见 [Keycloak 文档](https://www.keycloak.org/server/reverseproxy)。
 
-诊断时按 Workflow ID 查询 `advanceRun` 历史，与 Bento Run 状态核对。停用 Temporal 前先排空执行宿主，再停止并清除三项 Temporal 配置。完成状况见[需求完成状况](../docs/40-readiness/README.md)。
+诊断时按 Workflow ID 查询 `advanceRun` 历史，与 Bento Run 状态核对。停用 Temporal 前先排空执行宿主，再停止并清除三项 Temporal 配置。完成状况见[需求完成状况](../docs/40-readiness/CURRENT-READINESS.md)。

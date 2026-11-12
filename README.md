@@ -6,9 +6,9 @@
 
 ## 架构
 
-![Bento 目标架构九宫格，按应用入口、控制与编排、隔离执行分层](docs/00-governance/architecture.svg)
+![Bento 目标架构九宫格，按应用入口、控制与编排、隔离执行分层](assets/architecture.svg)
 
-[整体架构与当前接线](docs/00-governance/ARCHITECTURE.md) · [需求完成状况](docs/40-readiness/README.md)
+[整体架构与当前接线](docs/00-governance/ARCHITECTURE.md) · [需求完成状况](docs/40-readiness/CURRENT-READINESS.md)
 
 ## 当前代码入口
 
@@ -25,7 +25,7 @@
 
 ## 设计与验证
 
-- [需求](docs/10-requirements/README.md) · [验证与交付](docs/40-readiness/README.md)
+- [需求](docs/10-requirements/README.md) · [验证与交付](docs/40-readiness/CURRENT-READINESS.md)
 
 ## 开发
 
