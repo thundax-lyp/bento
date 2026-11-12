@@ -62,6 +62,10 @@ export class SingleHostExecution {
         this.authority.purge(binding.session);
     }
 
+    hasUnknownOperations(session: string, generation: number): boolean {
+        return this.authority.hasUnknownOperations(session, generation);
+    }
+
     operation(session: string, generation: number, id: string) {
         return this.authority.operation(session, generation, id);
     }

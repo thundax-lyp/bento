@@ -44,6 +44,10 @@ function startSlot({ command, args = [], cwd, env = {} }: Launch) {
         ready,
         closed,
         stop,
+        onClose(callback: () => void) {
+            child.once('close', callback);
+            return () => child.off('close', callback);
+        },
         async run(request: Parameters<ExecutionHost['worker']>[0]) {
             await ready;
             if (
@@ -63,6 +67,7 @@ export function prewarmedWorker(launch: Launch, count: 1 | 2 = 1) {
     const slots = Array.from({ length: count }, () => warmSlot(launch));
     return {
         workerSlots: count,
+        supportsRunningCancellation: true as const,
         warmWorker(signal: AbortSignal) {
             const close = slots.map((slot) => slot.warmWorker(signal));
             return async () => {
@@ -73,10 +78,11 @@ export function prewarmedWorker(launch: Launch, count: 1 | 2 = 1) {
             request: Parameters<ExecutionHost['worker']>[0],
             signal: AbortSignal,
             index = 0,
+            onWorkerExit?: () => void,
         ) {
             const slot = slots[index];
             if (!slot) throw new Error('Invalid warm worker slot');
-            return slot.worker(request, signal);
+            return slot.worker(request, signal, index, onWorkerExit);
         },
     };
 }
@@ -125,11 +131,13 @@ function warmSlot(
                 await slot?.closed;
             };
         },
-        async worker(request, signal) {
+        async worker(request, signal, _index, onWorkerExit) {
             signal.throwIfAborted();
             if (busy) throw new Error('Warm worker is occupied');
             const current = ensureSlot();
             busy = true;
+            const removeExitListener =
+                onWorkerExit && current.onClose(onWorkerExit);
             signal.addEventListener('abort', current.stop, { once: true });
             try {
                 const result = await current.run(request);
@@ -145,6 +153,7 @@ function warmSlot(
                 throw error;
             } finally {
                 busy = false;
+                removeExitListener?.();
                 signal.removeEventListener('abort', current.stop);
                 if (!slot && !lifetime?.aborted) schedule();
             }

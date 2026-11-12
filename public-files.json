@@ -86,6 +86,7 @@
         "apps/worker/run-worker.ts",
         "apps/workspace/api/account-store.ts",
         "apps/workspace/api/auth.ts",
+        "apps/workspace/api/cancel-run.test.ts",
         "apps/workspace/api/execution-service-http.ts",
         "apps/workspace/api/file-delete-hold.test.ts",
         "apps/workspace/api/go/accounts.go",
