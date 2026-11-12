@@ -61,6 +61,7 @@
         "apps/workspace/web/src/api.ts",
         "apps/workspace/web/src/draft.test.ts",
         "apps/workspace/web/src/draft.ts",
+        "apps/workspace/web/src/file-diff.ts",
         "apps/workspace/web/src/main.tsx",
         "apps/workspace/web/src/pages.tsx",
         "apps/workspace/web/src/space-api.test.ts",

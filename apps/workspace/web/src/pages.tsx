@@ -734,7 +734,10 @@ export function RunDetails() {
                         <Notice message={errorMessage(diff.error)} />
                     )}
                     {diff.data !== undefined ? (
-                        <DiffPreview text={diff.data} />
+                        <DiffPreview
+                            key={JSON.stringify([account, project, runId])}
+                            text={diff.data}
+                        />
                     ) : (
                         !diff.error && (
                             <p className="text-sm text-zinc-600">
