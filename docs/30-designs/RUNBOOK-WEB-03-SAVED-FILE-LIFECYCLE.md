@@ -16,38 +16,9 @@ WEB-03 单文件生命周期与 WEB-07 取消 Run 各在独立分支编写和验
 
 ## 机械步骤
 
-### T5：持久接受删除并完成对象清理
-
-前置状态：HEAD 已包含 acquireFileDeleteHold 与 releaseFileDeleteHold 的 HTTP 和 mock 接线。workspace-api typecheck、file-delete-hold.test.ts 两个 fixture 已通过。spaceStorage.size/remove 的不存在判定与删除后回读保持现有语义。
-
-允许修改：`apps/workspace/api/space.ts`、`apps/workspace/api/space-execution.ts`、`apps/workspace/api/server.ts`、`apps/workspace/api/space-files.test.ts`、`apps/workspace/web/src/space-api.ts`、`apps/workspace/web/src/space.tsx` 及本文。另核对 `apps/workspace/api/space-storage.ts` 与 `apps/workspace/api/protocol.ts`，创建和删除临时 fixture `space.sqlite`。共 10 个文件。
-
-禁止修改：存储实现、上传清理、项目删除、执行源快照和 Run/diff。
-
-执行：
-
-1. `spaceExecution` 新增 `deletionProject(owner:string,spaceId:string,fileId:string): string|null`。查本空间当前 owner 绑定，仅检查不可变 `inputs[].fileId`。目标被 validating/importing 初始化引用时抛出 `409 project_importing`，无引用或没有 execution project ID 返回 null，其他有引用返回该 projectId。将 `view` 改为按同 owner/project/file 的 `state='saved'` 计算 `inputs[].available`，保留其余字段和历史。
-2. `mySpace` 新建 `space_file_deletions(fileId TEXT PRIMARY KEY REFERENCES space_uploads(id) ON DELETE CASCADE, operationId TEXT NOT NULL, executionProjectId TEXT, phase TEXT NOT NULL CHECK(phase IN ('checking','deleting','releasing'))) STRICT`。同 owner 的上传记录保留为终态 `deleted` 墓碑，文件 ID 即公开重试键。对新 `DELETE /api/space/files/{fileId}`，先按 owner 与 UUID 查文件。缺失或非 saved/deleting/deleted 用原 404，deleted 直接 204，deleting 直接 202。初次 saved 在同步段检查初始化引用并写原意图，opId 用 `node:crypto` 的 `randomUUID()`。有执行引用时写 checking 后才调用 T4 acquire。无引用时同一 SQLite 事务写 deleting 意图及上传 deleting 状态，无 await，因而与现有同步初始化选择互斥。
-3. 在每文件现有锁内使用 `checkFileDeletion(row: Upload): Promise<'held'|'denied'>`。checking 用原 opId 取得门禁。denied 删除意图且保留 saved，本次显式 DELETE 返回 `409 project_busy`；后台则只保留 saved。held 用同一 SQLite 事务把上传和意图改为 deleting。远端异常或非预期 released 保留 checking，显式请求回 `503 file_delete_unconfirmed` 并提示重试，后台复用原键。checking 期间文件仍 saved，只有已有执行绑定会进入 checking，现有规则拒绝启动新的初始化。显式请求只调用 check，受理返回 202。并发若锁占用，重读上传，deleting/deleted 返回 202/204，否则回 503，禁止新建操作。
-4. 复用 `mySpace.sweep` 的定时器和每文件锁扫描删除意图，调用 `advanceFileDeletion(row: Upload): Promise<void>`。checking 先调用 check，denied 即结束，held 继续清理。deleting 先 `storage.size`；非 null 时调用已有 `storage.remove`，该函数确认 HEAD 不存在才返回。已确认缺失后记录 releasing；此时可释放远端 Run 门禁。调用原 opId release（无绑定则跳过），只接受 released，最后在事务内标 deleted 并删除本地意图。任何清理或释放错误保留阶段；重试 HEAD 或 release，绝不恢复 saved。 `statesWithSpace` 加 deleting，GET 空间的 `saved` 汇总含 deleting，deleted 不计额度且不进入空间列表。确认缺失并收到释放回执后一次回收。deleting 不可用于初始化、预览或下载，保留原占用路径。预览和下载在异步签名返回前重查 saved，避免已受理删除后发出新地址。账号注销沿用已有每文件锁和对象删除，外键级联删除本地意图。后续同名上传使用新 ID。已删除 ID 的状态查询仅向原 owner 返回墓碑，且原注册 ID 不可复活。
-5. `taskEntryServer` 的同源 Origin 校验扩至空间文件 DELETE，复用 POST 的 400。映射 `{deleteStatus:202}` 为 `202 {state:'deleting'}`，`{deleteStatus:204}` 为无正文 204。浏览器列表 Upload 类型只增加 deleting，状态显示「正在删除」。planUpload 把 deleting 与 saved/cleaning 同样视为占用，禁止续传。复用原 GET upload 状态，新增 `getUpload(id:string): Promise<Omit<Upload,'state'> & {state:Upload['state']|'deleted'}>`。仅在本地缓存 ID 存在、无计划续传 ID 且不在空间列表时查询该 ID。只有确认 deleted 才丢弃缓存并生成新 ID，404 或查询失败仍用原 ID，以免改变未知注册回执的恢复行为。上传请求形状和 transferFile 不改。本步只让读侧识别新状态，删除按钮留给 T6。
-6. 扩充 `space-files.test.ts`，用 T1 临时 DB 和可切换的门禁/存储 fixture。断言跨账号与不存在相同；初始化引用拒绝；denied 保持 saved；acquire 丢回执后仍用同 opId；202 起预览下载均 404 且已用额度保留。用 `node:test` mock timers 推进现有 30 秒 sweep，等待 fixture 的本轮异步调用完成。注入一次 remove 回执丢失且对象已不存在，关闭重开同 DB 后再推进 sweep，断言只按原对象继续、release 回执失败可重试、最终同 owner 重复 204，额度只释放一次，记录消失而来源清单标不可用。验收只以合成资源执行，不变动旧上传清理。
-
-验证：
-
-```bash
-pnpm --filter @bento/workspace-api typecheck
-pnpm --filter @bento/web typecheck
-node --experimental-strip-types --test apps/workspace/api/space-files.test.ts
-```
-
-PASS：三条退出 0，拒绝、未知结果、重启恢复、停止签发、额度和重复删除断言成立。
-
-STOP：不能确认远端结果或对象不存在时保持持久阶段，禁止释放额度或改回 saved。fixture 任一断言失败即停止本步。
-
 ### T6：单文件删除确认与反馈
 
-前置状态：T5 的删除端点、清理恢复和只读状态已验证并提交。
+前置状态：HEAD 已包含空间 DELETE 端点、删除阶段持久化、sweep 恢复和浏览器只读 deleting 状态。workspace-api 与 Web typecheck、space-files.test.ts 两个 fixture 已通过。
 
 允许修改：`apps/workspace/web/src/space-api.ts`、`apps/workspace/web/src/space.tsx`、`apps/workspace/web/e2e/space-preview.spec.ts` 及本文。另核对 `apps/workspace/web/playwright.config.ts`。共 5 个文件。
 

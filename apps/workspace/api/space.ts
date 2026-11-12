@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import type { CompletedPart } from '@aws-sdk/client-s3';
 import { notFound, object, RequestError } from './protocol.ts';
@@ -15,7 +16,7 @@ const previewLimit = 256 * 1024;
 const partSize = 16 * 1024 * 1024;
 const lifetime = 24 * 60 * 60 * 1000;
 const statesWithSpace =
-    "('preparing','uploading','completing','cleaning','saved')";
+    "('preparing','uploading','completing','cleaning','saved','deleting')";
 type Upload = {
     id: string;
     project: string;
@@ -29,6 +30,8 @@ type Upload = {
         | 'completing'
         | 'cleaning'
         | 'saved'
+        | 'deleting'
+        | 'deleted'
         | 'cancelled'
         | 'expired'
         | 'failed';
@@ -36,6 +39,12 @@ type Upload = {
     expires: number;
     signedUntil: number;
     cleanup: 'cancelled' | 'expired' | 'failed' | null;
+};
+
+type FileDeletion = {
+    operationId: string;
+    executionProjectId: string | null;
+    phase: 'checking' | 'deleting' | 'releasing';
 };
 
 function id(value: unknown): string {
@@ -84,6 +93,11 @@ export function mySpace(
             path TEXT NOT NULL, size INTEGER NOT NULL, manifest TEXT NOT NULL,
             state TEXT NOT NULL, storageId TEXT, expires INTEGER NOT NULL,
             signedUntil INTEGER NOT NULL DEFAULT 0, cleanup TEXT
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS space_file_deletions (
+            fileId TEXT PRIMARY KEY REFERENCES space_uploads(id) ON DELETE CASCADE,
+            operationId TEXT NOT NULL, executionProjectId TEXT,
+            phase TEXT NOT NULL CHECK(phase IN ('checking','deleting','releasing'))
         ) STRICT;
         CREATE INDEX IF NOT EXISTS space_owner ON space_uploads(owner, state);
         CREATE INDEX IF NOT EXISTS space_project ON space_uploads(project, state);
@@ -164,6 +178,11 @@ export function mySpace(
                 .get(uploadId) as Upload | undefined;
             if (existing) {
                 if (existing.owner !== owner) throw notFound();
+                if (
+                    existing.state === 'deleting' ||
+                    existing.state === 'deleted'
+                )
+                    throw conflict('该文件正在删除或已删除，请重新选择文件。');
                 if (
                     existing.project !== project ||
                     existing.path !== path ||
@@ -317,6 +336,142 @@ export function mySpace(
         setState(row, row.cleanup ?? outcome);
     }
 
+    const deletionUnconfirmed = () =>
+        new RequestError(
+            503,
+            'file_delete_unconfirmed',
+            '暂未确认删除结果，请刷新后重试。',
+        );
+    function fileDeletion(fileId: string) {
+        return db
+            .prepare(
+                'SELECT operationId,executionProjectId,phase FROM space_file_deletions WHERE fileId=?',
+            )
+            .get(fileId) as FileDeletion | undefined;
+    }
+
+    function commitDeletionChange(change: () => void) {
+        db.exec('BEGIN IMMEDIATE');
+        try {
+            change();
+            db.exec('COMMIT');
+        } catch (error) {
+            db.exec('ROLLBACK');
+            throw error;
+        }
+    }
+
+    async function fileDeleteHold(
+        row: Upload,
+        intent: FileDeletion,
+        kind: 'acquireFileDeleteHold' | 'releaseFileDeleteHold',
+    ) {
+        if (!intent.executionProjectId)
+            throw new Error('Missing execution project for file deletion');
+        const result = await backend(row.owner, {
+            kind,
+            projectId: intent.executionProjectId,
+            operationId: intent.operationId,
+        });
+        if (!('json' in result) || !('state' in result.json))
+            throw new Error('Missing file deletion hold receipt');
+        return result.json.state;
+    }
+
+    async function checkFileDeletion(row: Upload): Promise<'held' | 'denied'> {
+        const intent = fileDeletion(row.id);
+        if (intent?.phase !== 'checking')
+            throw new Error('Missing checking phase');
+        const state = await fileDeleteHold(
+            row,
+            intent,
+            'acquireFileDeleteHold',
+        );
+        if (state === 'denied') {
+            db.prepare('DELETE FROM space_file_deletions WHERE fileId=?').run(
+                row.id,
+            );
+            return state;
+        }
+        if (state !== 'held')
+            throw new Error('Unexpected file deletion hold state');
+        commitDeletionChange(() => {
+            setState(row, 'deleting');
+            db.prepare(
+                "UPDATE space_file_deletions SET phase='deleting' WHERE fileId=?",
+            ).run(row.id);
+        });
+        return state;
+    }
+
+    async function advanceFileDeletion(row: Upload): Promise<void> {
+        const intent = fileDeletion(row.id);
+        if (!intent) return;
+        if (
+            intent.phase === 'checking' &&
+            (await checkFileDeletion(row)) === 'denied'
+        )
+            return;
+        if (intent.phase !== 'releasing') {
+            if ((await storage.size(key(row))) !== null)
+                await storage.remove(key(row));
+            db.prepare(
+                "UPDATE space_file_deletions SET phase='releasing' WHERE fileId=?",
+            ).run(row.id);
+        }
+        if (
+            intent.executionProjectId &&
+            (await fileDeleteHold(row, intent, 'releaseFileDeleteHold')) !==
+                'released'
+        )
+            throw new Error('File deletion hold release unconfirmed');
+        commitDeletionChange(() => {
+            setState(row, 'deleted');
+            db.prepare('DELETE FROM space_file_deletions WHERE fileId=?').run(
+                row.id,
+            );
+        });
+    }
+
+    async function deleteFile(owner: string, fileId: string) {
+        const row = upload(owner, fileId);
+        if (row.state === 'deleted') return { deleteStatus: 204 } as const;
+        if (row.state === 'deleting') return { deleteStatus: 202 } as const;
+        if (row.state !== 'saved') throw notFound();
+        if (active.has(fileId)) throw deletionUnconfirmed();
+        return locked(fileId, async () => {
+            if (!fileDeletion(fileId)) {
+                const projectId = execution.deletionProject(
+                    owner,
+                    row.project,
+                    fileId,
+                );
+                commitDeletionChange(() => {
+                    db.prepare(
+                        'INSERT INTO space_file_deletions VALUES (?,?,?,?)',
+                    ).run(
+                        fileId,
+                        randomUUID(),
+                        projectId,
+                        projectId ? 'checking' : 'deleting',
+                    );
+                    if (!projectId) setState(row, 'deleting');
+                });
+                if (!projectId) return { deleteStatus: 202 } as const;
+            }
+            const decision = await checkFileDeletion(row).catch(() => {
+                throw deletionUnconfirmed();
+            });
+            if (decision === 'denied')
+                throw new RequestError(
+                    409,
+                    'project_busy',
+                    '文件正在被未结束的任务使用。',
+                );
+            return { deleteStatus: 202 } as const;
+        });
+    }
+
     async function sweep() {
         const rows = db
             .prepare(
@@ -341,6 +496,18 @@ export function mySpace(
                     await clean(current, 'expired');
             }).catch(() => {
                 // Keep the durable state for the next reconciliation attempt.
+            });
+        }
+        const deletions = db
+            .prepare(
+                'SELECT u.* FROM space_file_deletions d JOIN space_uploads u ON u.id=d.fileId',
+            )
+            .all() as Upload[];
+        for (const row of deletions) {
+            if (closing) return;
+            if (active.has(row.id)) continue;
+            await locked(row.id, () => advanceFileDeletion(row)).catch(() => {
+                // Keep the original intent and retry its last durable phase.
             });
         }
     }
@@ -368,13 +535,14 @@ export function mySpace(
                 .all(owner);
             const uploads = db
                 .prepare(
-                    'SELECT * FROM space_uploads WHERE owner = ? ORDER BY rowid DESC',
+                    "SELECT * FROM space_uploads WHERE owner = ? AND state <> 'deleted' ORDER BY rowid DESC",
                 )
                 .all(owner) as Upload[];
             let saved = 0;
             let reserved = 0;
             for (const row of uploads) {
-                if (row.state === 'saved') saved += row.size;
+                if (row.state === 'saved' || row.state === 'deleting')
+                    saved += row.size;
                 else if (
                     !['cancelled', 'expired', 'failed'].includes(row.state)
                 )
@@ -440,26 +608,30 @@ export function mySpace(
                 view(await prepare(upload(owner, uploadId))),
             );
         }
-        if (group === 'files' && action === 'preview' && method === 'GET') {
+        if (group === 'files' && action === undefined && method === 'DELETE')
+            return deleteFile(owner, resource);
+        if (
+            group === 'files' &&
+            (action === 'preview' || action === 'download') &&
+            method === 'GET'
+        ) {
             const row = upload(owner, resource);
             if (row.state !== 'saved') throw notFound();
-            if (row.size > previewLimit)
+            if (action === 'preview' && row.size > previewLimit)
                 throw new RequestError(
                     413,
                     'preview_too_large',
                     '文件超过 256 KiB，无法预览。',
                 );
-            return { redirect: await storage.preview(key(row)) };
-        }
-        if (group === 'files' && action === 'download' && method === 'GET') {
-            const row = upload(owner, resource);
-            if (row.state !== 'saved') throw notFound();
-            return {
-                redirect: await storage.download(
-                    key(row),
-                    row.path.split('/').at(-1)!,
-                ),
-            };
+            const redirect =
+                action === 'preview'
+                    ? await storage.preview(key(row))
+                    : await storage.download(
+                          key(row),
+                          row.path.split('/').at(-1)!,
+                      );
+            if (upload(owner, resource).state !== 'saved') throw notFound();
+            return { redirect };
         }
         if (group !== 'uploads') throw notFound();
         if (!action && method === 'GET') {

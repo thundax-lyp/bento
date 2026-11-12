@@ -12,6 +12,7 @@ export type Upload = {
         | 'completing'
         | 'cleaning'
         | 'saved'
+        | 'deleting'
         | 'cancelled'
         | 'expired'
         | 'failed';
@@ -73,6 +74,10 @@ export const prepareWorkspace = (id: string, fileIds: string[], key: string) =>
     post<Execution>(projectPath(id) + '/execution', { fileIds }, key);
 export const cancelUpload = (id: string) =>
     post<Upload>(uploadPath(id) + '/cancel', {});
+export const getUpload = (id: string) =>
+    json<Omit<Upload, 'state'> & { state: Upload['state'] | 'deleted' }>(
+        uploadPath(id),
+    );
 export const downloadFileUrl = (id: string) =>
     root + '/files/' + encodeURIComponent(id) + '/download';
 

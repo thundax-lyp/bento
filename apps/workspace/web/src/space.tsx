@@ -6,6 +6,7 @@ import {
     cancelUpload,
     createSpaceProject,
     downloadFileUrl,
+    getUpload,
     prepareWorkspace,
     previewFile,
     spaceProjectQuery,
@@ -199,7 +200,8 @@ function planUpload(choices: UploadChoice[], config: Space, project: string) {
                 if (
                     prior.path !== path ||
                     prior.state === 'saved' ||
-                    prior.state === 'cleaning'
+                    prior.state === 'cleaning' ||
+                    prior.state === 'deleting'
                 )
                     label = '目标路径已被占用。';
                 else if (prior.size !== file.size)
@@ -311,9 +313,16 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                     file.size,
                 ]);
                 try {
-                    const cached = uploadId
-                        ? null
-                        : sessionStorage.getItem(key);
+                    let cached = uploadId ? null : sessionStorage.getItem(key);
+                    if (
+                        cached &&
+                        !config.uploads.some((item) => item.id === cached)
+                    ) {
+                        const status = await getUpload(cached).catch(
+                            () => undefined,
+                        );
+                        if (status?.state === 'deleted') cached = null;
+                    }
                     const ended =
                         cached &&
                         config.uploads.some(
@@ -577,6 +586,7 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                                             uploading: '可续传',
                                             completing: '正在确认',
                                             cleaning: '清理中',
+                                            deleting: '正在删除',
                                             cancelled: '已取消',
                                             expired: '已过期',
                                             failed: '失败',
