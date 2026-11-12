@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import type { FormEvent } from 'react';
+import type { ChangeEvent, DragEvent, FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router';
 import {
     cancelUpload,
@@ -111,11 +111,121 @@ export function CloudProjectRoute() {
     );
 }
 
+type UploadChoice =
+    { path: string; file: File } | { path: string; file: null; reason: string };
+type UploadItem = { path: string; file: File; uploadId?: string };
+
+function droppedChoices(items: DataTransferItemList): UploadChoice[] {
+    return Array.from(items)
+        .filter((item) => item.kind === 'file')
+        .map((item) => {
+            const entry = item.webkitGetAsEntry?.();
+            if (entry?.isDirectory)
+                return {
+                    path: entry.name,
+                    file: null,
+                    reason: '请用文件夹选择入口。',
+                };
+            const file = entry?.isFile ? item.getAsFile() : null;
+            return file
+                ? { path: file.name, file }
+                : {
+                      path: entry?.name ?? '拖入项',
+                      file: null,
+                      reason: '无法读取拖入项，请使用选择入口。',
+                  };
+        });
+}
+
+function hasReleasedPath(state: Space['uploads'][number]['state']) {
+    return state === 'cancelled' || state === 'expired' || state === 'failed';
+}
+
+function pathPrefixes(path: string) {
+    const prefixes: string[] = [];
+    for (
+        let end = path.indexOf('/');
+        end !== -1;
+        end = path.indexOf('/', end + 1)
+    )
+        prefixes.push(path.slice(0, end));
+    return prefixes;
+}
+
+function planUpload(choices: UploadChoice[], config: Space, project: string) {
+    const rows = choices.map((choice) => {
+        const { path, file } = choice;
+        let reason = '';
+        if (!file) reason = choice.reason;
+        else if (
+            path.length > 1024 ||
+            /[\\\p{Cc}\p{Surrogate}]/u.test(path) ||
+            path.split('/').some((segment) => ['', '.', '..'].includes(segment))
+        )
+            reason = '文件路径无效。';
+        else if (file.size > config.fileLimit) reason = '单文件最多 4 GB。';
+        return { ...choice, reason };
+    });
+    const paths = new Map<string, number>();
+    const directories = new Set<string>();
+    for (const { path, reason } of rows) {
+        if (reason) continue;
+        paths.set(path, (paths.get(path) ?? 0) + 1);
+        for (const prefix of pathPrefixes(path)) directories.add(prefix);
+    }
+    const existing = config.uploads.filter(
+        (item) => item.project === project && !hasReleasedPath(item.state),
+    );
+    const available = config.quota - config.saved - config.reserved;
+    let remaining = available;
+    const selected: UploadItem[] = [];
+    const checklist = rows.map(({ path, file, reason }) => {
+        let label = reason;
+        if (file && !label) {
+            const prior = existing.find(
+                (item) =>
+                    item.path === path ||
+                    item.path.startsWith(path + '/') ||
+                    path.startsWith(item.path + '/'),
+            );
+            if ((paths.get(path) ?? 0) > 1) label = '清单内目标路径重复。';
+            else if (
+                directories.has(path) ||
+                pathPrefixes(path).some((prefix) => paths.has(prefix))
+            )
+                label = '清单内文件与目录路径冲突。';
+            else if (prior) {
+                if (
+                    prior.path !== path ||
+                    prior.state === 'saved' ||
+                    prior.state === 'cleaning'
+                )
+                    label = '目标路径已被占用。';
+                else if (prior.size !== file.size)
+                    label = '请选择同一上传的原文件。';
+                else {
+                    selected.push({ path, file, uploadId: prior.id });
+                    label = '待校验续传';
+                }
+            } else if (file.size > remaining) label = '账号可用额度不足。';
+            else {
+                remaining -= file.size;
+                selected.push({ path, file });
+                label = '待上传';
+            }
+        }
+        return { path, size: file?.size, label };
+    });
+    return { available, checklist, selected };
+}
+
 function CloudProject({ account, id }: { account: string; id: string }) {
     const client = useQueryClient();
     const space = useQuery(spaceQuery(account));
     const project = useQuery(spaceProjectQuery(account, id));
     const [progress, setProgress] = useState('');
+    const [fileChoices, setFileChoices] = useState<UploadChoice[]>([]);
+    const [folderChoices, setFolderChoices] = useState<UploadChoice[]>([]);
     const [files, setFiles] = useState<string[]>([]);
     async function refresh() {
         await Promise.all([
@@ -132,50 +242,74 @@ function CloudProject({ account, id }: { account: string; id: string }) {
             selected,
             config,
         }: {
-            selected: File[];
+            selected: UploadItem[];
             config: Space;
         }) {
-            const paths = selected.map(
-                (file) => file.webkitRelativePath || file.name,
-            );
-            if (new Set(paths).size !== paths.length)
-                throw new Error('所选文件存在重复路径。');
-            for (const file of selected) {
-                const filename = file.webkitRelativePath || file.name;
-                if (file.size > config.fileLimit)
-                    throw new Error('单个文件最大 4 GB。');
-                const prior = config.uploads.find(
-                    (item) => item.project === id && item.path === filename,
-                );
-                const row =
-                    prior &&
-                    !['cancelled', 'expired', 'failed'].includes(prior.state)
-                        ? prior
-                        : undefined;
-                if (row && row.size !== file.size)
-                    throw new Error('此路径已有不同大小的文件，请选择原文件。');
+            const results: { path: string; status: string }[] = [];
+            let signedOut = false;
+            for (const { path, file, uploadId } of selected) {
+                if (signedOut) {
+                    results.push({ path, status: '请重新登录后重选文件。' });
+                    continue;
+                }
                 const key = JSON.stringify([
                     'bento:upload',
                     account,
                     id,
-                    filename,
+                    path,
                     file.size,
                 ]);
-                const uploadId =
-                    row?.id ??
-                    (prior ? null : sessionStorage.getItem(key)) ??
-                    crypto.randomUUID();
-                sessionStorage.setItem(key, uploadId);
-                await transferFile(
-                    id,
-                    uploadId,
-                    file,
-                    filename,
-                    config.partSize,
-                    setProgress,
-                );
-                sessionStorage.removeItem(key);
+                try {
+                    const cached = uploadId
+                        ? null
+                        : sessionStorage.getItem(key);
+                    const ended =
+                        cached &&
+                        config.uploads.some(
+                            (item) =>
+                                item.id === cached &&
+                                hasReleasedPath(item.state),
+                        );
+                    const currentId =
+                        uploadId ??
+                        (ended ? null : cached) ??
+                        crypto.randomUUID();
+                    sessionStorage.setItem(key, currentId);
+                    await transferFile(
+                        id,
+                        currentId,
+                        file,
+                        path,
+                        config.partSize,
+                        (status) => {
+                            setProgress(path + ' · ' + status);
+                        },
+                    );
+                    results.push({ path, status: '已保存' });
+                    try {
+                        if (sessionStorage.getItem(key) === currentId)
+                            sessionStorage.removeItem(key);
+                    } catch {
+                        // A cache failure cannot change the server's saved result.
+                    }
+                } catch (error) {
+                    signedOut =
+                        error instanceof Error &&
+                        'status' in error &&
+                        error.status === 401;
+                    results.push({
+                        path,
+                        status: signedOut
+                            ? '登录已过期，请重新登录。'
+                            : message(error),
+                    });
+                }
             }
+            return results;
+        },
+        onSuccess() {
+            setFileChoices([]);
+            setFolderChoices([]);
         },
         onSettled: refresh,
     });
@@ -208,14 +342,30 @@ function CloudProject({ account, id }: { account: string; id: string }) {
     const selectable =
         execution.state === 'uninitialized' ||
         (execution.state === 'failed' && !execution.projectId);
+    const choices = [...fileChoices, ...folderChoices];
+    const { available, checklist, selected } = planUpload(choices, config, id);
+    function pick(
+        event: ChangeEvent<HTMLInputElement>,
+        set: (choices: UploadChoice[]) => void,
+    ) {
+        const next = Array.from(event.currentTarget.files ?? [], (file) => ({
+            path: file.webkitRelativePath || file.name,
+            file,
+        }));
+        event.currentTarget.value = '';
+        if (next.length) set(next);
+    }
     function send(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
-        const selected = [
-            ...event.currentTarget.querySelectorAll<HTMLInputElement>(
-                'input[type="file"]',
-            ),
-        ].flatMap((input) => Array.from(input.files ?? []));
-        if (selected.length) upload.mutate({ selected, config });
+        if (upload.isPending || !selected.length) return;
+        setProgress('');
+        upload.mutate({ selected, config });
+    }
+    function drop(event: DragEvent<HTMLFormElement>) {
+        if (!event.dataTransfer.types.includes('Files')) return;
+        event.preventDefault();
+        if (!upload.isPending)
+            setFileChoices(droppedChoices(event.dataTransfer.items));
     }
     return (
         <main className="mx-auto max-w-4xl space-y-5 px-5 py-10">
@@ -225,16 +375,24 @@ function CloudProject({ account, id }: { account: string; id: string }) {
             <h1 className="text-2xl font-semibold">{name}</h1>
             <form
                 onSubmit={send}
+                onDragOver={(event) => {
+                    if (event.dataTransfer.types.includes('Files'))
+                        event.preventDefault();
+                }}
+                onDrop={drop}
+                aria-label="文件拖放上传"
                 className="space-y-3 rounded-xl border border-zinc-200 p-5"
             >
                 <h2 className="font-semibold">上传文件</h2>
                 <p className="text-sm text-zinc-600">
-                    单文件最大 4 GB。中断后重新选择原文件可续传。
+                    将文件拖到这里，或使用选择入口。单文件最大 4
+                    GB，中断后可重选原文件续传。
                 </p>
                 <label>
                     文件{' '}
                     <input
                         name="file"
+                        onChange={(event) => pick(event, setFileChoices)}
                         type="file"
                         multiple
                         disabled={upload.isPending}
@@ -244,6 +402,7 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                     文件夹{' '}
                     <input
                         name="folder"
+                        onChange={(event) => pick(event, setFolderChoices)}
                         type="file"
                         ref={(input) => {
                             input?.setAttribute('webkitdirectory', '');
@@ -252,16 +411,61 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                         disabled={upload.isPending}
                     />
                 </label>
-                <Button primary disabled={upload.isPending}>
-                    上传或续传
+                {checklist.length > 0 && (
+                    <section
+                        aria-label="上传前清单"
+                        className="space-y-2 text-sm"
+                    >
+                        <p>目标项目：{name}</p>
+                        <p>
+                            总大小{' '}
+                            {checklist.reduce(
+                                (sum, row) => sum + (row.size ?? 0),
+                                0,
+                            )}{' '}
+                            字节， 可用额度 {available}{' '}
+                            字节（以服务端受理时为准）。
+                        </p>
+                        <ul>
+                            {checklist.map(({ path, size, label }, index) => (
+                                <li key={index} className="break-all">
+                                    {path} ·{' '}
+                                    {size === undefined
+                                        ? '大小未知'
+                                        : size + ' 字节'}{' '}
+                                    · {label}
+                                </li>
+                            ))}
+                        </ul>
+                    </section>
+                )}
+                <Button primary disabled={upload.isPending || !selected.length}>
+                    确认上传
                 </Button>
+                {checklist.length > 0 && (
+                    <Button
+                        type="button"
+                        disabled={upload.isPending}
+                        onClick={() => {
+                            setFileChoices([]);
+                            setFolderChoices([]);
+                        }}
+                    >
+                        放弃本次选择
+                    </Button>
+                )}
                 <p role="status" className="text-sm text-zinc-600">
-                    {upload.isSuccess
-                        ? '文件已保存。'
-                        : upload.isPending
-                          ? progress
-                          : ''}
+                    {upload.isPending ? progress : ''}
                 </p>
+                {upload.data && (
+                    <ul aria-label="上传结果" className="text-sm">
+                        {upload.data.map(({ path, status }) => (
+                            <li key={path} className="break-all">
+                                {path} · {status}
+                            </li>
+                        ))}
+                    </ul>
+                )}
                 {upload.error && <Notice message={message(upload.error)} />}
             </form>
             <section className="space-y-3 rounded-xl border border-zinc-200 p-5">
