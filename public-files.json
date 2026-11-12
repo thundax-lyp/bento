@@ -11,6 +11,8 @@
         ".agents/skills/bento-pr-review/scripts/collect-review-context.mjs",
         ".agents/skills/bento-runbook-worker/SKILL.md",
         ".agents/skills/bento-runbook-worker/agents/openai.yaml",
+        ".agents/skills/bento-runbook-master/SKILL.md",
+        ".agents/skills/bento-runbook-master/agents/openai.yaml",
         ".dockerignore",
         ".editorconfig",
         ".github/pull_request_template.md",

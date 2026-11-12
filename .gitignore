@@ -55,6 +55,10 @@
 !/.agents/skills/bento-runbook-worker/agents/
 !/.agents/skills/bento-runbook-worker/SKILL.md
 !/.agents/skills/bento-runbook-worker/agents/openai.yaml
+!/.agents/skills/bento-runbook-master/
+!/.agents/skills/bento-runbook-master/SKILL.md
+!/.agents/skills/bento-runbook-master/agents/
+!/.agents/skills/bento-runbook-master/agents/openai.yaml
 !/.agents/skills/bento-codex-comment-fix/
 /.agents/skills/bento-codex-comment-fix/**
 !/.agents/skills/bento-pr-review/
