@@ -1,6 +1,6 @@
 # Bento 整体架构
 
-本文说明 Bento 的系统组成、职责、数据所有权和依赖方向。实现覆盖见[验证与交付](../40-readiness/README.md)。
+本文说明 Bento 的系统组成、职责、数据所有权和依赖方向。实现覆盖见[验证与交付](../40-readiness/CURRENT-READINESS.md)。
 
 ## 架构决策
 

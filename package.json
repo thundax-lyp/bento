@@ -38,7 +38,7 @@
         "docs/20-interfaces/WEB-INTERFACE.md",
         "docs/30-designs/APPLICATION-BOUNDARIES-DESIGN.md",
         "docs/30-designs/WEB-DESIGN.md",
-        "docs/40-readiness/README.md",
+        "docs/40-readiness/CURRENT-READINESS.md",
         "deploy/README.md",
         "public-files.json"
     ]

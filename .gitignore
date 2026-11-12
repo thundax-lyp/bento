@@ -114,7 +114,7 @@
 !/docs/30-designs/WEB-DESIGN.md
 !/docs/40-readiness/
 /docs/40-readiness/*
-!/docs/40-readiness/README.md
+!/docs/40-readiness/CURRENT-READINESS.md
 
 # Local debugging files and deployment configuration.
 /debug-workspace/

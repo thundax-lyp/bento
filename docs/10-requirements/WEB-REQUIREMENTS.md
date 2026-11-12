@@ -149,4 +149,4 @@
 - [Web 系统设计](../30-designs/WEB-DESIGN.md)
 - [现有任务入口](../../apps/workspace/api/README.md)
 - [平台架构](../00-governance/ARCHITECTURE.md)
-- [实现覆盖与待验收范围](../40-readiness/README.md)
+- [实现覆盖与待验收范围](../40-readiness/CURRENT-READINESS.md)

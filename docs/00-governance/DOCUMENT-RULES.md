@@ -11,7 +11,7 @@
 1. [整体架构](ARCHITECTURE.md)与[工程治理](./DOCUMENT-RULES.md)：`docs/00-governance/` 维护稳定的开发、验证和交付规则。
 2. [需求](../10-requirements/README.md)和已确认的接口：约束可验收的产品行为、跨边界契约和兼容性。
 3. [需求对应的设计](../10-requirements/README.md)：记录如何实现需求与契约。
-4. [Readiness](../40-readiness/README.md)：记录实现覆盖、验证结果和未覆盖范围。
+4. [Readiness](../40-readiness/CURRENT-READINESS.md)：记录实现覆盖、验证结果和未覆盖范围。
 5. [部署手册](../../deploy/README.md)：维护通用运行流程。
 
 讨论、草稿与原始验证材料用于解释背景和追溯证据。结论确认后写入对应的工程文档；原始日志及远端配置留在本地受控工作区。
@@ -50,7 +50,7 @@
 
 ### `40-readiness`
 
-- 使用一份 [Readiness](../40-readiness/README.md) 维护「需求清单、完成状况、说明」。按需求编号链接验收条件，说明列记录已覆盖范围、证据基线和剩余项。
+- 使用一份 [Readiness](../40-readiness/CURRENT-READINESS.md) 维护「需求清单、完成状况、说明」。按需求编号链接验收条件，说明列记录已覆盖范围、证据基线和剩余项。
 - 证据必须记录日期、验证范围、环境或 commit 边界、执行方式、结果和 `Not Covered`。
 - “进程已启动”“端口正在监听”或单次命令成功不能自动证明业务就绪。
 
@@ -69,7 +69,7 @@
 | 文档                                                                      | 维护内容                                                |
 | ------------------------------------------------------------------------- | ------------------------------------------------------- |
 | [平台架构](ARCHITECTURE.md)                                               | 系统组成、Session 与 Workspace 的所有权、执行与权限边界 |
-| [需求完成状况](../40-readiness/README.md)                                 | 需求完成状况、证据及未覆盖范围                          |
+| [需求完成状况](../40-readiness/CURRENT-READINESS.md)                      | 需求完成状况、证据及未覆盖范围                          |
 | [实施设计](../30-designs/APPLICATION-BOUNDARIES-DESIGN.md#执行链实施设计) | 实现阶段和必要扩展                                      |
 | [部署手册](../../deploy/README.md)                                        | 接入、运行和部署前提                                    |
 
