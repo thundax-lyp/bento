@@ -404,6 +404,53 @@ if (process.argv[2] === '--effect-worker') {
         }
     });
 
+    test('running cancellation ledger', async () => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-cancel-ledger-'));
+        const file = join(state, 'business.sqlite');
+        let store = new Store(file);
+        try {
+            const { id: project } = store.addProject('A', 'Project', []);
+            store.importResult(project, 'ready');
+            const id = store.addRun('A', project, 'first', 'prompt').run.id;
+            assert(store.start(id, [], 1));
+            const cancel = () =>
+                store.requestRunningCancellation('A', project, id, 1);
+            const intent = cancel();
+            assert.equal(intent.status, 'cancelling');
+            assert.deepEqual(
+                store.dispatchSnapshot(1).occupied.map((row) => ({ ...row })),
+                [{ owner: 'A', status: 'cancelling' }],
+            );
+            assert.throws(
+                () => store.addRun('A', project, 'second', 'prompt'),
+                { status: 409 },
+            );
+            store.received(id);
+            assert.equal(store.findRun(id).receipt, 0);
+            assert.deepEqual(cancel(), intent);
+            store.close();
+            store = new Store(file);
+            assert.deepEqual(cancel(), intent);
+            assert.deepEqual(store.schedulableRuns(), [id]);
+            assert.equal(store.finishCancellation(id, 1, 'cancelled'), false);
+            store.markCancellationWorkerClosed(id, 1);
+            assert.equal(store.finishCancellation(id, 1, 'cancelled'), true);
+            assert.deepEqual(store.dispatchSnapshot(1).occupied, []);
+            const next = store.addRun('A', project, 'second', 'prompt').run.id;
+            assert(store.start(next, [], 1));
+            store.received(next);
+            const completed = store.findRun(next);
+            assert.throws(
+                () => store.requestRunningCancellation('A', project, next, 2),
+                { status: 409 },
+            );
+            assert.deepEqual(store.findRun(next), completed);
+        } finally {
+            store.close();
+            await rm(state, { recursive: true, force: true });
+        }
+    });
+
     test('tenant queue limits and selected reservations survive restart and count recovery', async () => {
         const state = await mkdtemp(join(tmpdir(), 'bento-fair-queue-'));
         const file = join(state, 'business.sqlite');

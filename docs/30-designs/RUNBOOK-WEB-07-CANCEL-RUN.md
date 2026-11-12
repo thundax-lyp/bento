@@ -25,34 +25,9 @@
 
 ## 机械步骤
 
-### T2：持久化运行中的取消意图
-
-前置状态：HEAD 标题为「Feat(execution-service): 原子取消排队 Run」，工作树干净。私有 cancel 路由与 Store.cancelQueuedRun 存在。Orchestrator 类型检查和 2 项 queued cancellation 测试通过。
-
-文件清单（4）：修改 `apps/orchestrator/execution-service/{types,store,service.test}.ts` 和本 RUNBOOK。
-
-禁止修改：HTTP 入口、Worker 生命周期和控制面。
-
-执行：
-
-1. `RunStatus` 加 `cancelling`。 `Store` 新建数据库的 runs 定义和内部 Run 类型加上述两个字段。新增 `requestRunningCancellation(owner: string, project: string, id: string, generation: number): ReturnType<Store['run']>`。同 T1 事务校验归属，只在 running 且 receipt=0 时写取消意图、`cancelling`、`now()`、固定摘要 `Cancellation requested.`。generation 为 0 时同时置 closed=1；其他初始为 0。已有取消意图且状态为 cancelling/cancelled/needs_review 时返回当前详情。冲突复用 T1 code。
-2. 新增 `markCancellationWorkerClosed(id: string, generation: number): void`，只更新匹配代次的 cancelling 行。新增 `finishCancellation(id: string, generation: number, status: 'cancelled' | 'needs_review'): boolean`，只终结匹配代次且 closed=1 的 cancelling 行。写服务器时间、空 diff 和固定摘要：`Run stopped and cancelled.` 或「旧执行已停止，操作结果未确认，等待核对。」。可信沙盒停止证明由 T3 调用方持有。 `pending`、`next('active')`、`dispatchSnapshot`、`reserveDispatch`、`schedulableRuns`、`start` 的在用槽位条件均把 cancelling 作为活动状态；原 queued 过滤不动。现有 `received` 的 running 条件不动。
-3. 加 `running cancellation ledger` Store fixture。录入一条 running 后请求取消，断言仍占一槽、同项目拒绝新 Run、迟到的 `received` 无效、重复不改详情。重开 SQLite 后验证意图和槽位保留，未闭合时 `finishCancellation` 返回 false，标闭合后可终结并释放。另一个 Run 先 `received` 再取消，断言 409，原状态及回执不动。此步仅 Store 测试触发新状态。
-
-验证：
-
-```bash
-pnpm --filter @bento/orchestrator typecheck
-node --experimental-strip-types --test --test-name-pattern='running cancellation ledger' apps/orchestrator/execution-service/service.test.ts
-```
-
-PASS：退出 0，指定用例执行，状态及槽位证据与上文一致。
-
-STOP：旧回执覆盖意图、意图丢失、早释放或需要改旧部署迁移。
-
 ### T3：接入停止、撤权与权威终态
 
-前置状态：T2 的 Store 转换、容量和回执门禁已提交且通过。
+前置状态：HEAD 标题为「Feat(execution-service): 持久化运行取消意图」，工作树干净。Store.requestRunningCancellation 和 finishCancellation 存在。Orchestrator 类型检查及 running cancellation ledger 测试通过。
 
 文件清单（10）：修改 `apps/orchestrator/execution-service/{service,http,types,service.test,warm-worker}.ts`、`apps/orchestrator/openshell/{authority,single-host}.ts` 和本 RUNBOOK。专门核对 `apps/orchestrator/execution-service/{store,worker}.ts`。
 

@@ -45,6 +45,7 @@ export type RunStatus =
     | 'running'
     | 'recovering'
     | 'needs_review'
+    | 'cancelling'
     | 'cancelled'
     | 'succeeded'
     | 'failed';
