@@ -114,7 +114,7 @@ async function route(
     path: string,
 ): Promise<Operation> {
     const method = request.method;
-    const [, api, projects, rawProject, runs, rawRun, diff, ...rest] =
+    const [, api, projects, rawProject, runs, rawRun, action, ...rest] =
         path.split('/');
     if (api !== 'api' || projects !== 'projects' || rest.length)
         throw notFound();
@@ -151,10 +151,14 @@ async function route(
         }
     }
 
-    if (rawRun !== undefined && method === 'GET') {
+    if (rawRun !== undefined) {
         const runId = decodeId(rawRun);
-        if (diff === undefined) return { kind: 'run', projectId, runId };
-        if (diff === 'diff') return { kind: 'diff', projectId, runId };
+        if (method === 'GET' && action === undefined)
+            return { kind: 'run', projectId, runId };
+        if (method === 'GET' && action === 'diff')
+            return { kind: 'diff', projectId, runId };
+        if (method === 'POST' && action === 'cancel')
+            return { kind: 'cancelRun', projectId, runId };
     }
     throw notFound();
 }

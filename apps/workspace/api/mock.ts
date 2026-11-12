@@ -82,17 +82,27 @@ export function mockBackend(): Backend {
         const { run, prompt } = item;
 
         setTimeout(() => {
+            if (run.status !== 'queued') return;
             run.status = 'running';
             run.updatedAt = now();
         }, 400).unref();
         if (prompt === 'mock:review') {
             setTimeout(() => {
+                if (run.status !== 'running') return;
                 run.status = 'recovering';
                 run.updatedAt = now();
             }, 1100).unref();
         }
         setTimeout(() => {
-            if (prompt === 'mock:review') {
+            if (run.status === 'cancelled') {
+                busy = false;
+                advance();
+                return;
+            }
+            if (run.status === 'cancelling') {
+                run.status = 'cancelled';
+                run.summary = 'Run stopped and cancelled.';
+            } else if (prompt === 'mock:review') {
                 run.status = 'needs_review';
                 run.summary = '模拟执行已暂停，等待可信侧核对。';
             } else if (prompt === 'mock:failed') {
@@ -123,7 +133,9 @@ export function mockBackend(): Backend {
                         item.project.status === 'importing' ||
                         [...item.runs.values()].some(
                             ({ run }) =>
-                                !['succeeded', 'failed'].includes(run.status),
+                                !['succeeded', 'failed', 'cancelled'].includes(
+                                    run.status,
+                                ),
                         ),
                 )
             )
@@ -201,7 +213,10 @@ export function mockBackend(): Backend {
                 throw conflict('请等项目导入完成。');
             if (
                 [...project.runs.values()].some(
-                    ({ run }) => !['succeeded', 'failed'].includes(run.status),
+                    ({ run }) =>
+                        !['succeeded', 'failed', 'cancelled'].includes(
+                            run.status,
+                        ),
                 )
             ) {
                 throw conflict('该项目已有尚未结束的任务。');
@@ -228,6 +243,26 @@ export function mockBackend(): Backend {
         if (!item) throw notFound();
         if (operation.kind === 'run')
             return { status: 200, json: { ...item.run, prompt: item.prompt } };
+        if (operation.kind === 'cancelRun') {
+            const { run, prompt } = item;
+            if (run.status === 'queued') {
+                const index = queue.findIndex((job) => job.item === item);
+                if (index !== -1) queue.splice(index, 1);
+                run.status = 'cancelled';
+                run.summary = 'Cancelled before start.';
+                run.updatedAt = now();
+            } else if (run.status === 'running') {
+                run.status = 'cancelling';
+                run.summary = 'Cancellation requested.';
+                run.updatedAt = now();
+            } else if (
+                run.status !== 'cancelling' &&
+                run.status !== 'cancelled'
+            ) {
+                throw conflict('当前任务状态不能取消。');
+            }
+            return { status: 200, json: { ...run, prompt } };
+        }
         if (item.run.status !== 'succeeded') throw conflict('成果尚未可用。');
         return { status: 200, diff: item.diff };
     };

@@ -25,34 +25,9 @@
 
 ## 机械步骤
 
-### T4：个人端 API 转发与权限校验
-
-前置状态：HEAD 标题为「Feat(execution-service): 确认撤权与退出后结束取消」，工作树干净。私有取消路由已接入 Worker 退出与沙盒停止证明。Orchestrator 类型检查和 5 项账本、HTTP、预热 Worker fixture 通过。
-
-文件清单（8）：修改 `apps/workspace/api/{protocol,server,execution-service-http,mock}.ts`、`public-files.json` 和本 RUNBOOK。新增 `apps/workspace/api/cancel-run.test.ts`。专门核对 `apps/workspace/api/go/main.go` 的通用代理。
-
-禁止修改：认证、CSRF、会话归属、既有路径及错误行为。
-
-执行：
-
-1. TS `runStatuses` 加 cancelling/cancelled，Run 路由组加 `cancelRun`。 `publicJson` 用详情投影，并要求取消的 200 状态是 cancelling、cancelled 或 needs_review。 `server.ts` 加 POST cancel，复用原 `decodeId`、同源校验和会话 owner。 `httpBackend` 转发私有无正文 POST，`upstreamError` 对取消 409 用公共固定文案。
-2. 当前 Go `main.go` 把 `/api/` 通用代理给 task-entry，未注册 `projects.go` 的直接路由。取消沿用已部署的代理，不修改 Go。新增 `cancel-run.test.ts`，用 Node 回环 HTTP fixture 调 `httpBackend`，断言 POST 私有路径、无正文、owner、200 三种取消状态、404、409 和原 GET 读回。新测试加入公开文件清单。
-3. `mockBackend.advance` 保留原计时，拿到 job 后的 queued 仍允许取消。取消 queued 写 cancelled 并从 queue 移除（若已取出，现有计时回调读到 cancelled 时不得启动或 patch，结束回调不写入终态或时间，只释放 busy）。取消 running 写 cancelling；原 mock:review 中间定时器仅在仍为 running 时改 recovering，结束回调遇 cancelling 则写 cancelled、跳过 patch、释放 busy 并继续。重复返回已有详情；两处终态清理/单活跃判断加入 cancelled。
-
-验证：
-
-```bash
-pnpm --filter @bento/workspace-api typecheck
-node --experimental-strip-types --test apps/workspace/api/cancel-run.test.ts
-```
-
-PASS：类型检查与指定 TS 转发 fixture 通过，沿用同账号归属与既有 Go 通用代理。
-
-STOP：任何入口允许绕过归属或同源校验，或无法兼容既有详情读取。
-
 ### T5：任务详情展示取消与服务器状态
 
-前置状态：现有公共入口已接线，TS 代理 fixture 通过并提交。
+前置状态：HEAD 标题为「Feat(task-entry): 转发取消并回读 Run 状态」，工作树干净。个人端 POST cancel 与原详情 GET 已接线。Workspace API 类型检查及 cancel-run.test.ts 通过。
 
 文件清单（5）：修改 `apps/workspace/web/src/{api.ts,pages.tsx}`、`apps/workspace/web/e2e/task.spec.ts` 和本 RUNBOOK。专门核对 `apps/workspace/web/playwright.config.ts`。
 

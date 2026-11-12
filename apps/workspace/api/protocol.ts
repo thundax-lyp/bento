@@ -4,6 +4,8 @@ const runStatuses = [
     'running',
     'recovering',
     'needs_review',
+    'cancelling',
+    'cancelled',
     'succeeded',
     'failed',
 ] as const;
@@ -37,7 +39,7 @@ export type Operation =
     | { kind: 'createProject'; input: ProjectInput; key?: string }
     | { kind: 'project' | 'listRuns'; projectId: string }
     | { kind: 'createRun'; projectId: string; prompt: string; key: string }
-    | { kind: 'run' | 'diff'; projectId: string; runId: string };
+    | { kind: 'run' | 'diff' | 'cancelRun'; projectId: string; runId: string };
 
 export type Result =
     | {
@@ -260,6 +262,16 @@ export function publicJson(operation: Operation, value: unknown) {
             return run(value, operation.projectId);
         case 'run':
             return run(value, operation.projectId, operation.runId);
+        case 'cancelRun': {
+            const result = run(value, operation.projectId, operation.runId);
+            if (
+                !['cancelling', 'cancelled', 'needs_review'].includes(
+                    result.status,
+                )
+            )
+                throw new Error('Invalid cancellation status');
+            return result;
+        }
         default:
             throw new Error('Unexpected operation');
     }
