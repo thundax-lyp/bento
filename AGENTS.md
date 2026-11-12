@@ -6,3 +6,4 @@
 - TypeScript 工程在各自的 `package.json` 声明运行依赖。仓库内 TypeScript 导入使用显式 `.ts` 路径。Orchestrator 的 TypeScript 公共入口是 `apps/orchestrator/index.ts`。
 - 变更目录、入口或部署配置时，同步检查 README、架构设计、启动命令和发布清单。实现覆盖和验证结果按实际代码记录。
 - 工程、测试和文档规则见 [仓库治理说明](docs/00-governance/DOCUMENT-RULES.md)。
+- 创建、修改、审计、执行或收口临时 RUNBOOK 前，读取 [RUNBOOK Rules](docs/00-governance/RUNBOOK-RULES.md)。

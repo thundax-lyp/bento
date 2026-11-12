@@ -46,7 +46,7 @@
 - 保存模块设计、状态机、数据所有权、依赖方向和专项设计。
 - 每份需求对应一份设计。需求与设计双向链接，并在需求索引登记。一个需求内的子主题写入对应设计的章节。
 - 整体架构在 [ARCHITECTURE.md](ARCHITECTURE.md) 维护系统组成、职责、所有权和依赖方向。各需求的实现机制由对应设计维护。
-- 复杂临时任务可以使用 `RUNBOOK-*.md`；任务关闭时必须迁移长期结论并删除 RUNBOOK。
+- 复杂临时任务使用 `RUNBOOK-*.md` 的条件、执行标准和关闭流程见 [RUNBOOK Rules](./RUNBOOK-RULES.md)。
 
 ### `40-readiness`
 
@@ -94,6 +94,15 @@
 - 同一规则只保留一个当前真相源，其他文档使用链接引用。
 - Mermaid 流程图应显式使用 ELK 布局；非流程图不强制。
 
+```mermaid
+---
+config:
+  layout: elk
+---
+flowchart LR
+    Request["接收请求"] --> Response["返回结果"]
+```
+
 ## Required Structures
 
 以下清单规定必须覆盖的语义，不要求逐项使用同名独立章节。可以合并标题、表格或引用已有真相源；不得省略当前任务相关的内容，也不为无关主题填充空泛段落。不适用项可以集中说明及给出原因。
@@ -118,7 +127,7 @@
 - `Compatibility`
 - `Related Documents`
 
-设计文档覆盖：
+设计文档覆盖以下内容，起稿可参考[模块设计模板](./MODULE-DESIGN-TEMPLATE.md)：
 
 - `Purpose`
 - `Scope And Non-goals`
