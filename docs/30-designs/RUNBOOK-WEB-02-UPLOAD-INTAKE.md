@@ -10,29 +10,9 @@
 
 ## 机械步骤
 
-### T2 · 验证现有上传入口
-
-前置状态：`git diff --quiet -- apps/workspace/web/src/space.tsx` 通过，HEAD 中的 `CloudProject` 已包含文件 drop、上传前清单与「确认上传」。Web typecheck 和 `src/space-api.test.ts` 已通过。
-
-文件清单：5 个。新增 `apps/workspace/web/e2e/upload-intake.spec.ts`，核对 `apps/workspace/web/src/space.tsx` 与 `apps/workspace/web/playwright.config.ts`，临时新建和删除 fixture `root/nested.txt`，PASS 后从本 RUNBOOK 移除此步。
-
-禁止修改：生产逻辑与 mock 服务。
-
-执行：用一个 Playwright 用例，复用现有 Chromium/Vite 配置，在 `page.route` 固定会话、项目、空间和上传接口。用模拟 drop 提供两个文件项和一个目录项。一个文件为项目已保存的同名路径，另一个为 0 字节的新文件。通过 entry fixture 明确区分文件与目录。断言项目名、清单、可用额度、同名冲突和目录 picker 提示。放弃时零写入，重拖后确认时只有新文件发送注册和完成，注册摘要为空且无需分块。同一用例先用 `mkdtemp` 建立 1 字节的 `root/nested.txt`，目录 picker 选 root，断言清单出现 `root/nested.txt` 后放弃，finally 删除该临时目录。
-
-验证：
-
-```bash
-pnpm --filter @bento/web test:e2e upload-intake.spec.ts
-git diff --check
-```
-
-PASS：退出 0，确认之前无写入，确认后两个拒收项均无写入，新文件保存。
-STOP：任一断言不符，报告失败断言及对应的页面行为。真实 S3 和原生目录拖放不计入本轮验证。
-
 ### T3 · 同步已验证范围并收口
 
-前置状态：页面实现已提交，现有续传单测和本 RUNBOOK 指定的 Chromium 用例均通过。
+前置状态：HEAD 含 `apps/workspace/web/src/space.tsx` 的上传确认逻辑和 `apps/workspace/web/e2e/upload-intake.spec.ts` 的浏览器用例，两个路径无待提交改动。Web typecheck、`test src/space-api.test.ts` 与 `test:e2e upload-intake.spec.ts` 均已退出 0。
 
 文件清单：3 个。修改 `docs/30-designs/WEB-DESIGN.md`、`docs/40-readiness/CURRENT-READINESS.md` 的 WEB-02 描述，最后删除本 RUNBOOK。
 
