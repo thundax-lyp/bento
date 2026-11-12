@@ -16,34 +16,9 @@ WEB-03 单文件生命周期与 WEB-07 取消 Run 各在独立分支编写和验
 
 ## 机械步骤
 
-### T4：接通空间 API 与私有门禁
-
-前置状态：HEAD 已包含 Store 的持久门禁及 executionHttp 私有路由。Orchestrator typecheck 和 file deletion hold fences Run admission 已通过。
-
-允许修改：`apps/workspace/api/protocol.ts`、`apps/workspace/api/execution-service-http.ts`、`apps/workspace/api/mock.ts`、新增 `apps/workspace/api/file-delete-hold.test.ts`、`public-files.json` 及本文。共 6 个文件。
-
-禁止修改：公开删除路由、生产部署与现有任务错误映射。
-
-执行：
-
-1. 向 `Backend` 的 Operation 加 `{kind:'acquireFileDeleteHold'|'releaseFileDeleteHold'; projectId:string; operationId:string}`，Result 的 JSON 分支增加 T3 状态对象。 `publicJson` 只接受 held/denied/released 字符串枚举并投影为 `{state}`。 `httpBackend` 复用现有 bearer、owner 和超时，按 T3 编码路径及无请求体的 POST/DELETE，仅接受 200。4xx/5xx/超时沿用当前映射，不能作为 denied 回执。
-2. 在 `mockBackend` 每项目存 operationId 到状态的 Map，复用 owner/项目检查。acquire 写前检查 importing 和现有非终态 Run，按原键重放；release 写 released；在 createRun 的原提交键回读后、创建前拒绝 held 项目。现有 mock 项目注销删除项目时一并丢弃 Map。
-3. 新 Node fixture 用本地 HTTP 断言方法、路径、owner 与枚举校验，拒绝未知状态。另用 `mockBackend` fixture 验证 held 阻止新 Run、release 后同 op 仍 released，登记测试文件到公开清单。
-
-验证：
-
-```bash
-pnpm --filter @bento/workspace-api typecheck
-node --experimental-strip-types --test apps/workspace/api/file-delete-hold.test.ts
-```
-
-PASS：两条退出 0，真实传输适配器和 mock 都保持相同门禁结果形状。
-
-STOP：需把私有门禁暴露给浏览器，或错误被误译为 denied。
-
 ### T5：持久接受删除并完成对象清理
 
-前置状态：T4 已提交。 `spaceStorage.size/remove` 能识别不存在，并在 remove 后核对不存在。
+前置状态：HEAD 已包含 acquireFileDeleteHold 与 releaseFileDeleteHold 的 HTTP 和 mock 接线。workspace-api typecheck、file-delete-hold.test.ts 两个 fixture 已通过。spaceStorage.size/remove 的不存在判定与删除后回读保持现有语义。
 
 允许修改：`apps/workspace/api/space.ts`、`apps/workspace/api/space-execution.ts`、`apps/workspace/api/server.ts`、`apps/workspace/api/space-files.test.ts`、`apps/workspace/web/src/space-api.ts`、`apps/workspace/web/src/space.tsx` 及本文。另核对 `apps/workspace/api/space-storage.ts` 与 `apps/workspace/api/protocol.ts`，创建和删除临时 fixture `space.sqlite`。共 10 个文件。
 

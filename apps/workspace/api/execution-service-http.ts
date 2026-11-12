@@ -7,6 +7,12 @@ function route(operation: Operation): string {
     if (!('projectId' in operation)) return projects;
     const project = projects + '/' + encodeURIComponent(operation.projectId);
     if (operation.kind === 'project') return project;
+    if ('operationId' in operation)
+        return (
+            project +
+            '/file-deletion-holds/' +
+            encodeURIComponent(operation.operationId)
+        );
     const runs = project + '/runs';
     if (!('runId' in operation)) return runs;
     const run = runs + '/' + encodeURIComponent(operation.runId);
@@ -75,7 +81,13 @@ export function httpBackend(
         const signal = AbortSignal.timeout(timeoutMs);
         try {
             const response = await fetch(origin + route(operation), {
-                method: body === undefined ? 'GET' : 'POST',
+                method:
+                    operation.kind === 'releaseFileDeleteHold'
+                        ? 'DELETE'
+                        : operation.kind === 'acquireFileDeleteHold' ||
+                            body !== undefined
+                          ? 'POST'
+                          : 'GET',
                 headers,
                 redirect: 'error',
                 signal,

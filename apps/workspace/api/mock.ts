@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { conflict, notFound } from './protocol.ts';
-import type { Backend, Project, Run } from './protocol.ts';
+import type { Backend, FileDeleteHold, Project, Run } from './protocol.ts';
 
 type MockProject = {
     ownerId: string;
@@ -9,6 +9,7 @@ type MockProject = {
     files: Map<string, string>;
     runs: Map<string, MockRun>;
     submissions: Map<string, MockRun>;
+    deletionHolds: Map<string, FileDeleteHold['state']>;
 };
 
 type MockRun = { run: Run; prompt: string; diff: string };
@@ -169,6 +170,7 @@ export function mockBackend(): Backend {
                 files: new Map(files.map(({ path, text }) => [path, text])),
                 runs: new Map(),
                 submissions: new Map(),
+                deletionHolds: new Map(),
             });
             if (key) imports.set(key, { input, project });
             setTimeout(() => {
@@ -179,6 +181,24 @@ export function mockBackend(): Backend {
 
         const project = projects.get(operation.projectId);
         if (!project || project.ownerId !== ownerId) throw notFound();
+        if (operation.kind === 'releaseFileDeleteHold') {
+            project.deletionHolds.set(operation.operationId, 'released');
+            return { status: 200, json: { state: 'released' } };
+        }
+        if (operation.kind === 'acquireFileDeleteHold') {
+            const prior = project.deletionHolds.get(operation.operationId);
+            if (prior) return { status: 200, json: { state: prior } };
+            if (draining.has(ownerId)) throw conflict('账号已注销。');
+            const busy = [...project.runs.values()].some(
+                ({ run }) => !['succeeded', 'failed'].includes(run.status),
+            );
+            const state =
+                project.project.status === 'importing' || busy
+                    ? 'denied'
+                    : 'held';
+            project.deletionHolds.set(operation.operationId, state);
+            return { status: 200, json: { state } };
+        }
         if (operation.kind === 'project')
             return { status: 200, json: project.project };
         if (operation.kind === 'listRuns') {
@@ -197,6 +217,8 @@ export function mockBackend(): Backend {
                     throw conflict('此提交键已用于其他任务内容。');
                 return { status: 200, json: prior.run };
             }
+            if ([...project.deletionHolds.values()].includes('held'))
+                throw conflict('项目文件正在删除。');
             if (project.project.status !== 'ready')
                 throw conflict('请等项目导入完成。');
             if (
