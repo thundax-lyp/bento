@@ -32,7 +32,7 @@
         "apps/workspace/auth",
         "apps/worker",
         "docs/00-governance/ARCHITECTURE.md",
-        "docs/00-governance/architecture.svg",
+        "assets/architecture.svg",
         "docs/10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md",
         "docs/10-requirements/WEB-REQUIREMENTS.md",
         "docs/20-interfaces/WEB-INTERFACE.md",

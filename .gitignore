@@ -6,6 +6,9 @@
 /.github/workflows/*
 !/.github/workflows/checks.yml
 !/.dockerignore
+!/assets/
+/assets/*
+!/assets/architecture.svg
 !/deploy/
 /deploy/*
 !/deploy/compose.yaml
@@ -99,7 +102,6 @@
 /docs/00-governance/*
 !/docs/00-governance/*-RULES.md
 !/docs/00-governance/ARCHITECTURE.md
-!/docs/00-governance/architecture.svg
 !/docs/10-requirements/
 /docs/10-requirements/*
 !/docs/10-requirements/README.md

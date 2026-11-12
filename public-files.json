@@ -32,7 +32,7 @@
         "tsconfig.json",
         "public-files.json",
         "docs/00-governance/ARCHITECTURE.md",
-        "docs/00-governance/architecture.svg",
+        "assets/architecture.svg",
         "docs/00-governance/COMMIT-RULES.md",
         "docs/00-governance/DOCUMENT-RULES.md",
         "docs/00-governance/PR-RULES.md",
