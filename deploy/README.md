@@ -1,6 +1,6 @@
 # Bento 部署
 
-从仓库根目录执行 Bento 的构建和启动命令。[平台架构](../docs/30-designs/PLATFORM-ARCHITECTURE-DESIGN.md)说明组件职责。
+从仓库根目录执行 Bento 的构建和启动命令。[平台架构](../docs/00-governance/ARCHITECTURE.md)说明组件职责。
 
 ## Web Docker
 
@@ -56,7 +56,7 @@ Compose 默认将容器的 `8080` 发布到宿主机回环。生产由宿主机 
 
 Go Temporal 调度运行在执行宿主侧，按 [Temporal 接入](#接入-bento)独立构建部署。
 
-历史远端构建版本、已验证路径和覆盖范围见 [Web Docker 验收](../docs/40-readiness/WEB-DOCKER-EVIDENCE.md)。
+历史远端构建版本、已验证路径和覆盖范围见 [Web Docker 验收](../docs/40-readiness/README.md)。
 
 ### Keycloak 受邀认证
 
@@ -116,7 +116,7 @@ Keycloak 管理台走本地 `18491/admin/`，Mailpit 走本地 `18494`。Bento �
 2. 为 Workspace 准备独立持久 Volume。受测 Docker driver 启用 `allow_driver_config`，卷使用 `sandbox-attachable=true` 和 `sandbox-attachable-workspace=default` 标签。部署后核对沙盒挂载、工作目录与策略。
 3. 通过测试 Session 验证文件和命令访问同一卷。重建沙盒时保留原卷，确认旧执行已退出、新沙盒的策略和挂载正确后再发布新代 READY。严格隔离模式应拒绝仅提供 partial enforcement 的环境。
 
-运行边界和既有实验结果见 [DSH / OpenShell 能力证据](../docs/40-readiness/DSH-OPENSHELL-EVIDENCE.md)及[交付验收](../docs/40-readiness/DSH-OPENSHELL-ACCEPTANCE.md)。
+运行边界和既有实验结果见 [需求完成状况](../docs/40-readiness/README.md)。
 
 ### 启动执行服务
 
@@ -202,7 +202,7 @@ ssh -N -o ExitOnForwardFailure=yes \
 
 浏览器打开 `http://127.0.0.1:18233`。客户端使用 `127.0.0.1:17233` 和 `default` Namespace。每次探针生成独立 Workflow ID 和 Task Queue，避免领取其他运行的任务。Worker 轮询 Task Queue。[Temporal Tasks](https://docs.temporal.io/tasks)
 
-探针和覆盖范围见 [Temporal 开发环境验收](../docs/40-readiness/TEMPORAL-DEV-EVIDENCE.md)。
+探针和覆盖范围见 [Temporal 开发环境验收](../docs/40-readiness/README.md)。
 
 ### 接入 Bento
 

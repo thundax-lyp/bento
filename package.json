@@ -31,10 +31,14 @@
         "apps/workspace/api",
         "apps/workspace/auth",
         "apps/worker",
-        "docs/30-designs/PLATFORM-ARCHITECTURE-DESIGN.md",
-        "docs/30-designs/DSH-OPENSHELL-IMPLEMENTATION-DESIGN.md",
-        "docs/40-readiness/DSH-OPENSHELL-EVIDENCE.md",
-        "docs/40-readiness/DSH-OPENSHELL-ACCEPTANCE.md",
+        "docs/00-governance/ARCHITECTURE.md",
+        "docs/00-governance/architecture.svg",
+        "docs/10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md",
+        "docs/10-requirements/WEB-REQUIREMENTS.md",
+        "docs/20-interfaces/WEB-INTERFACE.md",
+        "docs/30-designs/APPLICATION-BOUNDARIES-DESIGN.md",
+        "docs/30-designs/WEB-DESIGN.md",
+        "docs/40-readiness/README.md",
         "deploy/README.md",
         "public-files.json"
     ]

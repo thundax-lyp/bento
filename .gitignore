@@ -96,26 +96,23 @@
 !/docs/00-governance/
 /docs/00-governance/*
 !/docs/00-governance/*-RULES.md
+!/docs/00-governance/ARCHITECTURE.md
+!/docs/00-governance/architecture.svg
 !/docs/10-requirements/
 /docs/10-requirements/*
 !/docs/10-requirements/README.md
+!/docs/10-requirements/WEB-REQUIREMENTS.md
 !/docs/10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md
-!/docs/10-requirements/WEB-AUTH-REQUIREMENTS.md
+!/docs/20-interfaces/
+/docs/20-interfaces/*
+!/docs/20-interfaces/WEB-INTERFACE.md
 !/docs/30-designs/
 /docs/30-designs/*
-!/docs/30-designs/README.md
-!/docs/30-designs/PLATFORM-ARCHITECTURE-DESIGN.md
-!/docs/30-designs/DSH-OPENSHELL-IMPLEMENTATION-DESIGN.md
-!/docs/30-designs/WORKSPACE-AUTH-AND-ACCOUNTS-DESIGN.md
-!/docs/30-designs/ENGINEERING-STRUCTURE-DESIGN.md
+!/docs/30-designs/APPLICATION-BOUNDARIES-DESIGN.md
+!/docs/30-designs/WEB-DESIGN.md
 !/docs/40-readiness/
 /docs/40-readiness/*
 !/docs/40-readiness/README.md
-!/docs/40-readiness/DSH-OPENSHELL-EVIDENCE.md
-!/docs/40-readiness/DSH-OPENSHELL-ACCEPTANCE.md
-!/docs/40-readiness/THREE-ACCOUNT-REMOTE-EVIDENCE.md
-!/docs/40-readiness/TEMPORAL-DEV-EVIDENCE.md
-!/docs/40-readiness/WEB-DOCKER-EVIDENCE.md
 
 # Private evidence and deployment material stay local, byte-identical.
 /validation/

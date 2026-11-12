@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="710" viewBox="0 0 1080 710" role="img" aria-labelledby="title description">
+    <title id="title">Bento 目标架构</title>
+    <desc id="description">九宫格分为应用入口、控制与编排、隔离执行三层。任务从个人端或管理端进入 Orchestrator，由 DSH Worker 调用 OpenShell 执行。管理端和 Go Orchestrator 接管权威账本为目标能力。</desc>
+    <defs>
+        <linearGradient id="canvas" x1="0" y1="0" x2="1" y2="1">
+            <stop stop-color="#101b2b"/>
+            <stop offset="1" stop-color="#0b121e"/>
+        </linearGradient>
+        <linearGradient id="primary" x1="0" y1="0" x2="1" y2="1">
+            <stop stop-color="#172c38"/>
+            <stop offset="1" stop-color="#142333"/>
+        </linearGradient>
+        <pattern id="dots" width="18" height="18" patternUnits="userSpaceOnUse">
+            <circle cx="1" cy="1" r="1" fill="#a0b6d4" opacity=".12"/>
+        </pattern>
+        <marker id="arrow" viewBox="0 0 8 8" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M1 1 7 4 1 7" fill="none" stroke="#8199b6" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+        <marker id="activeArrow" viewBox="0 0 8 8" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+            <path d="M1 1 7 4 1 7" fill="none" stroke="#64e9bc" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"/>
+        </marker>
+    </defs>
+    <style>
+        text { font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; }
+        .title { fill: #f4f8ff; font-size: 31px; font-weight: 700; }
+        .label { fill: #aabbd2; font-size: 15px; font-weight: 600; }
+        .name { fill: #f1f6fe; font-size: 24px; font-weight: 650; }
+        .detail { fill: #afc0d6; font-size: 16px; }
+        .tag { fill: #8fa9c8; font-size: 12px; font-weight: 650; }
+        .accent { fill: #79edc6; }
+        .card { fill: #152132; stroke: #34445a; stroke-width: 1.2; }
+        .main { fill: url(#primary); stroke: #3c826f; }
+        .planned { stroke-dasharray: 6 5; }
+        .side { fill: none; stroke: #8199b6; stroke-width: 1.6; marker-end: url(#arrow); }
+        .route { fill: none; stroke: #64e9bc; stroke-width: 2.2; marker-end: url(#activeArrow); }
+        .pulse { fill: none; stroke: #e0fff5; stroke-width: 3; stroke-linecap: round; stroke-dasharray: 9 151; stroke-dashoffset: 9; opacity: 0; animation: travel 3.8s linear infinite; }
+        .second { animation-delay: .65s; }
+        .third { animation-delay: 1.3s; }
+        @keyframes travel {
+            0% { opacity: 0; stroke-dashoffset: 9; }
+            4% { opacity: 1; }
+            24% { opacity: 1; }
+            28%, 100% { opacity: 0; stroke-dashoffset: -45; }
+        }
+        @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+    </style>
+
+    <rect x="1" y="1" width="1078" height="708" rx="27" fill="url(#canvas)" stroke="#263950"/>
+    <rect x="18" y="18" width="1044" height="674" rx="20" fill="url(#dots)"/>
+    <text x="42" y="64" class="title">Bento 目标架构</text>
+    <path d="M42 86H1038" stroke="#34445a"/>
+
+    <text x="42" y="123" class="label">应用入口</text>
+    <text x="42" y="298" class="label">控制与编排</text>
+    <text x="42" y="473" class="label">隔离执行</text>
+
+    <!-- Dependency paths sit in the grid gutters. -->
+    <path d="M342 199H388" class="side"/>
+    <path d="M490 258V277H190V313" class="side"/>
+    <path d="M390 378H344" class="side"/>
+    <path d="M690 378H736" class="side"/>
+    <path d="M888 258V277H575V316" class="side planned"/>
+    <path d="M888 608V619H199V610" class="side"/>
+    <path d="M520 258V316" class="route"/>
+    <path d="M520 433V491" class="route"/>
+    <path d="M690 553H736" class="route"/>
+
+    <!-- Row 1 -->
+    <g transform="translate(42 140)">
+        <rect width="300" height="118" rx="14" class="card"/>
+        <text x="22" y="35" class="tag">身份服务</text>
+        <text x="22" y="66" class="name">Keycloak</text>
+        <text x="22" y="95" class="detail">组织邀请 · 登录 · 独立 Realm</text>
+    </g>
+    <g transform="translate(390 140)">
+        <rect width="300" height="118" rx="14" class="card main"/>
+        <text x="22" y="35" class="tag accent">任务入口</text>
+        <text x="22" y="66" class="name">个人端</text>
+        <text x="22" y="95" class="detail">认证 · Web · API</text>
+    </g>
+    <g transform="translate(738 140)">
+        <rect width="300" height="118" rx="14" class="card planned"/>
+        <text x="22" y="35" class="tag">待实现</text>
+        <text x="22" y="66" class="name">管理端</text>
+        <text x="22" y="95" class="detail">独立认证 · Web · API</text>
+    </g>
+
+    <!-- Row 2 -->
+    <g transform="translate(42 315)">
+        <rect width="300" height="118" rx="14" class="card"/>
+        <text x="22" y="35" class="tag">持久化</text>
+        <text x="22" y="66" class="name">业务存储</text>
+        <text x="22" y="95" class="detail">账号 · 原始文件 · 执行账本</text>
+    </g>
+    <g transform="translate(390 315)">
+        <rect width="300" height="118" rx="14" class="card main"/>
+        <text x="22" y="35" class="tag accent">权威账本待 Go 接管</text>
+        <text x="22" y="66" class="name">Go Orchestrator</text>
+        <text x="22" y="95" class="detail">Run 派发 · 授权 · 恢复</text>
+    </g>
+    <g transform="translate(738 315)">
+        <rect width="300" height="118" rx="14" class="card"/>
+        <text x="22" y="35" class="tag">编排历史</text>
+        <text x="22" y="66" class="name">Temporal</text>
+        <text x="22" y="95" class="detail">Workflow · Activity · 重投</text>
+    </g>
+
+    <!-- Row 3 -->
+    <g transform="translate(42 490)">
+        <rect width="300" height="118" rx="14" class="card"/>
+        <text x="22" y="35" class="tag">执行数据</text>
+        <text x="22" y="66" class="name">Workspace Volume</text>
+        <text x="22" y="95" class="detail">持久文件 · 挂载与恢复</text>
+    </g>
+    <g transform="translate(390 490)">
+        <rect width="300" height="118" rx="14" class="card main"/>
+        <text x="22" y="35" class="tag accent">共享执行池</text>
+        <text x="22" y="66" class="name">DSH Worker</text>
+        <text x="22" y="95" class="detail">Agent 会话 · 工具调用</text>
+    </g>
+    <g transform="translate(738 490)">
+        <rect width="300" height="118" rx="14" class="card main"/>
+        <text x="22" y="35" class="tag accent">Session 沙盒</text>
+        <text x="22" y="66" class="name">OpenShell</text>
+        <text x="22" y="95" class="detail">隔离执行 · 沙盒生命周期</text>
+    </g>
+
+    <path d="M520 263V308" class="pulse"/>
+    <path d="M520 438V483" class="pulse second"/>
+    <path d="M692 553H732" class="pulse third"/>
+
+    <path d="M42 631H1038" stroke="#34445a"/>
+    <path d="M43 664H71" stroke="#64e9bc" stroke-width="2"/>
+    <text x="81" y="669" class="label">Run 执行路径</text>
+    <path d="M216 664H244" stroke="#8199b6" stroke-width="1.6"/>
+    <text x="254" y="669" class="label">依赖与资源连接</text>
+    <path d="M421 664H449" stroke="#8199b6" stroke-width="1.6" stroke-dasharray="6 5"/>
+    <text x="459" y="669" class="label">待接通</text>
+</svg>

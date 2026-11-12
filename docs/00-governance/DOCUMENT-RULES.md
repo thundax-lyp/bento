@@ -8,9 +8,9 @@
 
 按文档职责读取最小必要范围：
 
-1. [工程治理](./DOCUMENT-RULES.md)：`docs/00-governance/` 维护稳定的开发、验证和交付规则。
+1. [整体架构](ARCHITECTURE.md)与[工程治理](./DOCUMENT-RULES.md)：`docs/00-governance/` 维护稳定的开发、验证和交付规则。
 2. [需求](../10-requirements/README.md)和已确认的接口：约束可验收的产品行为、跨边界契约和兼容性。
-3. [设计](../30-designs/README.md)：记录如何实现需求与契约。
+3. [需求对应的设计](../10-requirements/README.md)：记录如何实现需求与契约。
 4. [Readiness](../40-readiness/README.md)：记录实现覆盖、验证结果和未覆盖范围。
 5. [部署手册](../../deploy/README.md)：维护通用运行流程。
 
@@ -25,7 +25,7 @@
 - 保存稳定、跨任务适用的工程规则。
 - 不记录一次任务的执行过程、临时方案或完成历史。
 - 规则变化时检查直接引用它的入口和 Skill。
-- 系统组成、所有权和依赖边界由[平台架构](../30-designs/PLATFORM-ARCHITECTURE-DESIGN.md)定义；源码目录和导入约定由 `ARCHITECTURE-RULES.md` 定义。依赖版本、provider 与源码接线由对应设计维护，治理文档只引用其入口。
+- 系统组成、所有权和依赖边界由[平台架构](ARCHITECTURE.md)定义；源码目录和导入约定见 [AGENTS.md](../../AGENTS.md)。依赖版本、provider 与源码接线由对应设计维护，治理文档只引用其入口。
 - 暂存、提交和历史修改规则统一由 `COMMIT-RULES.md` 定义。
 - 分支、PR、Review、CI 和合并规则统一由 `PR-RULES.md` 定义。
 
@@ -44,12 +44,13 @@
 ### `30-designs`
 
 - 保存模块设计、状态机、数据所有权、依赖方向和专项设计。
-- 设计必须关联需求或契约，不能替代产品决策。
+- 每份需求对应一份设计。需求与设计双向链接，并在需求索引登记。一个需求内的子主题写入对应设计的章节。
+- 整体架构在 [ARCHITECTURE.md](ARCHITECTURE.md) 维护系统组成、职责、所有权和依赖方向。各需求的实现机制由对应设计维护。
 - 复杂临时任务可以使用 `RUNBOOK-*.md`；任务关闭时必须迁移长期结论并删除 RUNBOOK。
 
 ### `40-readiness`
 
-- 保存实现覆盖矩阵、测试结果、运行时证据、未覆盖项和交付状态。
+- 使用一份 [Readiness](../40-readiness/README.md) 维护「需求清单、完成状况、说明」。按需求编号链接验收条件，说明列记录已覆盖范围、证据基线和剩余项。
 - 证据必须记录日期、验证范围、环境或 commit 边界、执行方式、结果和 `Not Covered`。
 - “进程已启动”“端口正在监听”或单次命令成功不能自动证明业务就绪。
 
@@ -63,21 +64,19 @@
 
 [README](../../README.md) 链接仓库的使用、设计和开发入口。完整规则由对应文件维护，Skill 引用规则并提供操作流程，不另建规则副本。
 
-- 实现和验证：[架构规则](./ARCHITECTURE-RULES.md)。
 - 小步交付：[Commit 规则](./COMMIT-RULES.md)、[PR 规则](./PR-RULES.md)。
 
-| 文档                                                             | 维护内容                                                |
-| ---------------------------------------------------------------- | ------------------------------------------------------- |
-| [平台架构](../30-designs/PLATFORM-ARCHITECTURE-DESIGN.md)        | 系统组成、Session 与 Workspace 的所有权、执行与权限边界 |
-| [能力与证据](../40-readiness/DSH-OPENSHELL-EVIDENCE.md)          | 已验证能力、证据的适用条件和未覆盖边界                  |
-| [实施设计](../30-designs/DSH-OPENSHELL-IMPLEMENTATION-DESIGN.md) | 实现阶段和必要扩展                                      |
-| [交付验收](../40-readiness/DSH-OPENSHELL-ACCEPTANCE.md)          | 放行条件和验收所需证据                                  |
-| [部署手册](../../deploy/README.md)                               | 接入、运行和部署前提                                    |
+| 文档                                                                      | 维护内容                                                |
+| ------------------------------------------------------------------------- | ------------------------------------------------------- |
+| [平台架构](ARCHITECTURE.md)                                               | 系统组成、Session 与 Workspace 的所有权、执行与权限边界 |
+| [需求完成状况](../40-readiness/README.md)                                 | 需求完成状况、证据及未覆盖范围                          |
+| [实施设计](../30-designs/APPLICATION-BOUNDARIES-DESIGN.md#执行链实施设计) | 实现阶段和必要扩展                                      |
+| [部署手册](../../deploy/README.md)                                        | 接入、运行和部署前提                                    |
 
 ## File Naming
 
 - 治理文件沿用 `*-RULES.md`；同主题新文档沿用现有目录的命名风格，不使用中文或空格。以下命名约定用于独立的工程文档，不要求重命名现有主题文档。
-- 固定入口文件可以使用 `README.md` 和 `AGENTS.md`。
+- 固定入口文件可以使用 `README.md` 和 `AGENTS.md`。系统总览使用 `00-governance/ARCHITECTURE.md`。
 - 需求文档命名为 `*-REQUIREMENTS.md`。
 - 接口文档命名为 `*-INTERFACE.md`，机器契约使用相同主题名称。
 - 模块设计命名为 `*-DESIGN.md`，专项设计命名为 `*-SPECIAL-DESIGN.md`。
@@ -129,13 +128,7 @@
 - `Security And Observability`
 - `Acceptance`
 
-readiness 证据覆盖：
-
-- `Scope`
-- `Validated Contract`
-- `Executed Validation`
-- `Not Covered`
-- `Closure`
+Readiness 使用「需求清单、完成状况、说明」三列。说明列记录可追溯的基线、验证方法、结果和未覆盖项。
 
 ## Document Lifecycle
 
@@ -148,8 +141,8 @@ readiness 证据覆盖：
 变更收口前至少检查：
 
 - 产品行为或接口变化：更新对应需求、跨边界契约或当前维护其语义的主题文档。
-- 系统组成、所有权或依赖方向变化：更新[平台架构](../30-designs/PLATFORM-ARCHITECTURE-DESIGN.md)。
-- 实现结构、状态机或失败处理变化：更新对应设计。DSH / OpenShell 的实施顺序和复用方案由[实施设计](../30-designs/DSH-OPENSHELL-IMPLEMENTATION-DESIGN.md)维护。
+- 系统组成、所有权或依赖方向变化：更新[平台架构](ARCHITECTURE.md)。
+- 实现结构、状态机或失败处理变化：更新对应设计。DSH / OpenShell 的实施顺序和复用方案见[执行链实施设计](../30-designs/APPLICATION-BOUNDARIES-DESIGN.md#执行链实施设计)。
 - 验证范围、交付状态或已知缺口变化：更新对应验收或证据，注明基线和未覆盖项。
 - 启动、恢复、升级或发布方式变化：更新受影响的部署或发布说明。
 - 固定工程做法变化：更新对应治理规则及直接引用它的入口。仅落实既有规则的代码迁移不要求改写规则。
