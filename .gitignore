@@ -9,8 +9,11 @@
 !/deploy/
 /deploy/*
 !/deploy/compose.yaml
-!/deploy/compose.keycloak.yaml
 !/deploy/README.md
+!/deploy/orchestrator/
+/deploy/orchestrator/*
+!/deploy/orchestrator/Dockerfile
+!/deploy/orchestrator/Dockerfile.dockerignore
 !/deploy/worker/
 /deploy/worker/*
 !/deploy/worker/Dockerfile
@@ -21,7 +24,6 @@
 !/deploy/workspace/start.sh
 !/deploy/keycloak/
 /deploy/keycloak/*
-!/deploy/keycloak/compose.yaml
 !/deploy/keycloak/theme/
 /deploy/keycloak/theme/*
 !/deploy/keycloak/theme/login/
@@ -114,13 +116,12 @@
 /docs/40-readiness/*
 !/docs/40-readiness/README.md
 
-# Private evidence and deployment material stay local, byte-identical.
-/validation/
+# Local debugging files and deployment configuration.
+/debug-workspace/
 
 # Secrets, IDE state and generated runtime material are never public inputs.
 **/.idea/
 **/node_modules/
-**/runtime/
 **/cache/
 **/.cache/
 **/_logs/

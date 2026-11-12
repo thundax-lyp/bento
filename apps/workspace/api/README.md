@@ -1,6 +1,6 @@
 # Bento 任务入口
 
-任务入口处理 Bento Web 的业务 HTTP API 与会话认证。Docker 部署由 Go 提供 API 入口和 MySQL 账号仓储。浏览器使用 [独立 Web 前端](../web/README.md)完成登录、项目导入、任务提交和 diff 下载。开发时由 Vite 转发 `/api`。[Docker 单镜像部署](../../../deploy/README.md#web-docker)由 NGINX 同域提供前端静态文件，并将 `/api/*` 转发到容器内 `127.0.0.1:4102` 的 Go 入口，再转发至 `4101` 的 task-entry。
+任务入口处理 Bento Web 的业务 HTTP API 与会话认证。Docker 部署由 Go 提供 API 入口和 MySQL 账号仓储。浏览器使用 [独立 Web 前端](../web/README.md)完成登录、项目导入、任务提交和 diff 下载。开发时由 Vite 转发 `/api`。[Compose 中的 Web 服务](../../../deploy/README.md#启动与检查)由 NGINX 同域提供前端静态文件，并将 `/api/*` 转发到容器内 `127.0.0.1:4102` 的 Go 入口，再转发至 `4101` 的 task-entry。
 
 模拟模式的启动命令、测试账号及端口见前端说明。模拟后端提供普通任务和 `mock:empty`、`mock:failed`、`mock:review`。重启模拟进程会清空记录。
 
@@ -21,7 +21,8 @@
 本地直接启动任务入口时，可以用环境文件配置。真实模式需同时启动 Go 入口与 MySQL。
 
 ```sh
-node --env-file=runtime/task-entry.env apps/workspace/api/main.ts
+mkdir -p debug-workspace
+node --env-file=debug-workspace/task-entry.env apps/workspace/api/main.ts
 ```
 
 关闭页面再打开时，任务列表会从服务端重新加载。提交结果暂未确认时，浏览器只存账号及项目范围内的提交键与描述摘要。用原任务描述重试会沿用该键。空 diff 可以预览状态并下载为空文件。
@@ -60,4 +61,4 @@ Compose 同步设置 `BENTO_MYSQL_HOST=mysql:3306`、`BENTO_MYSQL_USER=bento`、
 
 设置 `BENTO_OIDC_ISSUER` 后，任务入口用 OIDC 授权码与 S256 PKCE 接受 Keycloak 身份。服务器验证 state、nonce、签名及 Token 声明。只有邮箱已验证且属于配置组织的身份才能取得 Bento 会话。Go 账号仓储在 MySQL 以 `(oidc_issuer, oidc_subject)` 唯一绑定 `owner_id`，并发回调读取同一个绑定。邮箱用于展示。
 
-`/auth` 独立提供认证界面，OIDC 回调使用 `/api/oidc/callback`。此模式关闭任务入口的密码登录、注册和密码确认注销端点。普通退出使用 OIDC RP-Initiated Logout。业务注销要求用原身份重新认证，随后按现有机制关闭账号并清理资源。登录会话及未完成的 OIDC 事务随 task-entry 重启失效，身份绑定和关闭状态保留。部署配置见 [Web Docker 部署](../../../deploy/README.md#keycloak-受邀认证)。
+`/auth` 独立提供认证界面，OIDC 回调使用 `/api/oidc/callback`。此模式关闭任务入口的密码登录、注册和密码确认注销端点。普通退出使用 OIDC RP-Initiated Logout。业务注销要求用原身份重新认证，随后按现有机制关闭账号并清理资源。登录会话及未完成的 OIDC 事务随 task-entry 重启失效，身份绑定和关闭状态保留。部署配置见 [部署配置](../../../deploy/README.md#准备配置)。

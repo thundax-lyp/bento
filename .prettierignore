@@ -4,10 +4,9 @@ coverage/
 pnpm-lock.yaml
 DRAFT.md
 
-# Immutable internal evidence and local runtime state
-validation/
+# Local debugging files
+/debug-workspace/
 .idea/
-**/runtime/
 **/cache/
 
 apps/workspace/web/playwright-report/

@@ -19,8 +19,7 @@ services:
                 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
                 FROM dependencies AS web-build
-                ARG VITE_BENTO_KEYCLOAK_AUTH=0
-                ENV VITE_BENTO_KEYCLOAK_AUTH=$${VITE_BENTO_KEYCLOAK_AUTH}
+                ENV VITE_BENTO_KEYCLOAK_AUTH=1
                 COPY apps/workspace/web/package.json ./apps/workspace/web/
                 RUN pnpm --filter bento --filter @bento/web install --frozen-lockfile
                 COPY apps/workspace/web/ ./apps/workspace/web/
@@ -63,10 +62,14 @@ services:
         ports:
             - '127.0.0.1:8080:8080'
         env_file:
-            - path: ../runtime/web.env
+            - path: ../debug-workspace/web.env
               required: false
         environment:
-            BENTO_ONE_ACCOUNTS_FILE: /run/bento/accounts.json
+            BENTO_AUTH_MODE: keycloak
+            BENTO_ONE_ORIGIN: ${BENTO_PUBLIC_ORIGIN:-http://127.0.0.1:8080}
+            BENTO_OIDC_ISSUER: ${BENTO_PUBLIC_ORIGIN:-http://127.0.0.1:8080}/identity/realms/${BENTO_KEYCLOAK_REALM:-bento}
+            BENTO_ONE_TWO_URL: http://orchestrator:8788
+            BENTO_ONE_TWO_BEARER: ${BENTO_EXECUTION_BEARER:?Set BENTO_EXECUTION_BEARER}
             BENTO_MYSQL_HOST: mysql:3306
             BENTO_MYSQL_USER: bento
             BENTO_MYSQL_DATABASE: bento
@@ -74,13 +77,11 @@ services:
         depends_on:
             mysql:
                 condition: service_healthy
+            keycloak:
+                condition: service_healthy
+            orchestrator:
+                condition: service_healthy
         volumes:
-            - type: bind
-              source: ../runtime/accounts.json
-              target: /run/bento/accounts.json
-              read_only: true
-              bind:
-                  create_host_path: false
             - bento-web-data:/data
         stop_grace_period: 60s
         restart: unless-stopped
@@ -103,6 +104,138 @@ services:
             - bento-mysql-data:/var/lib/mysql
         restart: unless-stopped
 
+    orchestrator:
+        build:
+            context: ..
+            dockerfile: deploy/orchestrator/Dockerfile
+        init: true
+        restart: unless-stopped
+        env_file:
+            - path: ../debug-workspace/execution.env
+              required: false
+        environment:
+            BENTO_STATE_DIR: /data
+            BENTO_BIND_HOST: 0.0.0.0
+            BENTO_PORT: '8788'
+            BENTO_SERVICE_BEARER: ${BENTO_EXECUTION_BEARER:?Set BENTO_EXECUTION_BEARER}
+        command: [node, apps/orchestrator/execution-service/start.ts]
+        volumes:
+            - bento-execution-data:/data
+            - type: bind
+              source: ../debug-workspace/execution
+              target: /app/private
+              read_only: true
+              bind:
+                  create_host_path: false
+        healthcheck:
+            test:
+                [
+                    CMD,
+                    node,
+                    -e,
+                    "fetch('http://127.0.0.1:8788/v1/projects').then(r => { if (r.status !== 401) process.exitCode = 1 })",
+                ]
+            interval: 5s
+            timeout: 3s
+            retries: 20
+        stop_grace_period: 15s
+
+    postgres:
+        image: postgres:17
+        restart: unless-stopped
+        environment:
+            POSTGRES_DB: keycloak
+            POSTGRES_USER: keycloak
+            POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Set KEYCLOAK_DB_PASSWORD}
+        healthcheck:
+            test: [CMD-SHELL, 'pg_isready -U keycloak -d keycloak']
+            interval: 5s
+            timeout: 3s
+            retries: 20
+        volumes:
+            - keycloak-db:/var/lib/postgresql/data
+
+    keycloak:
+        image: quay.io/keycloak/keycloak:26.8.2
+        command: [start, --import-realm]
+        restart: unless-stopped
+        environment:
+            KC_DB: postgres
+            KC_DB_URL_HOST: postgres
+            KC_DB_USERNAME: keycloak
+            KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Set KEYCLOAK_DB_PASSWORD}
+            KC_BOOTSTRAP_ADMIN_USERNAME: bento-dev-admin
+            KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD}
+            KC_HOSTNAME: ${BENTO_PUBLIC_ORIGIN:-http://127.0.0.1:8080}/identity
+            KC_HTTP_ENABLED: 'true'
+            KC_HTTP_RELATIVE_PATH: /identity
+            KC_PROXY_HEADERS: xforwarded
+            KC_HEALTH_ENABLED: 'true'
+            KC_HTTP_MANAGEMENT_RELATIVE_PATH: /
+        depends_on:
+            postgres:
+                condition: service_healthy
+        healthcheck:
+            test:
+                - CMD-SHELL
+                - >-
+                    bash -ec 'exec 3<>/dev/tcp/127.0.0.1/9000;
+                    printf "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3;
+                    read -r status <&3; [[ "$$status" == "HTTP/1.1 200 "* ]]'
+            interval: 5s
+            timeout: 3s
+            start_period: 30s
+            retries: 30
+        volumes:
+            - ./keycloak/theme:/opt/keycloak/themes/bento:ro
+            - type: bind
+              source: ../debug-workspace/keycloak-import
+              target: /opt/keycloak/data/import
+              read_only: true
+              bind:
+                  create_host_path: false
+
+    temporal:
+        image: temporalio/temporal:1.10.0
+        profiles: [dev]
+        command:
+            [
+                server,
+                start-dev,
+                --ip,
+                0.0.0.0,
+                --db-filename,
+                /data/temporal.sqlite,
+            ]
+        ports:
+            - '127.0.0.1:18233:8233'
+        volumes:
+            - temporal-dev-data:/data
+        restart: unless-stopped
+
+    mailpit:
+        image: axllent/mailpit:v1.27.10
+        profiles: [dev]
+        restart: unless-stopped
+        environment:
+            MP_DATABASE: /data/mailpit.db
+            MP_MAX_MESSAGES: '100'
+        volumes:
+            - keycloak-mail:/data
+        ports:
+            - '127.0.0.1:18494:8025'
+
+    bento-worker:
+        image: bento-worker:local
+        profiles: [worker-image]
+        build:
+            context: ..
+            dockerfile: deploy/worker/Dockerfile
+
 volumes:
     bento-web-data:
     bento-mysql-data:
+    bento-execution-data:
+    keycloak-db:
+    keycloak-mail:
+    temporal-dev-data:

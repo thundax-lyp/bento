@@ -28,12 +28,12 @@ stop() {
 
 trap 'stop; exit 0' TERM INT
 
+nginx -c /etc/nginx/bento.conf -g 'daemon off;' &
+nginx_pid=$!
 bento-web-api &
 go_pid=$!
 node apps/workspace/api/main.ts &
 api_pid=$!
-nginx -c /etc/nginx/bento.conf -g 'daemon off;' &
-nginx_pid=$!
 
 # Exit when any child stops so Docker can restart the service.
 status=0

@@ -22,10 +22,12 @@
 
 ## 当前实现接线
 
+[统一 Compose](../../deploy/compose.yaml)部署个人端、MySQL、Keycloak、PostgreSQL 和 Orchestrator。开发用 Temporal 与 Mailpit 在同一文件启用。执行服务调用受信 OpenShell 适配器，外部沙盒、模型与对象存储由部署环境提供。
+
 个人端独立认证前端构建、管理端和 Go Orchestrator 接管执行账本及受信执行路径仍待实现。当前 TypeScript 执行服务位于 `apps/orchestrator/execution-service/`，受信 OpenShell 控制面位于 `apps/orchestrator/openshell/`。
 
-- Run 编排已接入 Temporal [单执行宿主模式](../../deploy/README.md#接入-bento)。Temporal 持有调度历史，Bento 在 SQLite 持久化 Run 状态、Session、Workspace 绑定和执行授权。Activity 重投以持久 Run 状态决定派发或恢复。账号身份、密码哈希与注销清理状态使用 MySQL；执行宿主的 Run、Session、Workspace 和授权账本继续使用持久 SQLite。
-- [Web 部署](../../deploy/README.md#web-docker)由 NGINX 同域提供静态前端并代理 Go Web API 入口。Go 提供 MySQL 账号仓储，现有 TypeScript task-entry 处理业务 API 与会话认证；浏览器直传 S3。
+- Run 编排已接入 Temporal [单执行宿主模式](../../deploy/README.md#temporal-配置)。Temporal 持有调度历史，Bento 在 SQLite 持久化 Run 状态、Session、Workspace 绑定和执行授权。Activity 重投以持久 Run 状态决定派发或恢复。账号身份、密码哈希与注销清理状态使用 MySQL；执行宿主的 Run、Session、Workspace 和授权账本继续使用持久 SQLite。
+- [Web 部署](../../deploy/README.md#启动与检查)由 NGINX 同域提供静态前端并代理 Go Web API 入口。Go 提供 MySQL 账号仓储，现有 TypeScript task-entry 处理业务 API 与会话认证；浏览器直传 S3。
 - 启用 Temporal 时，Go 控制面负责租户公平派发策略与 Temporal Client/Worker。TypeScript 执行宿主通过私有标准输入输出协议提供队列快照、原子预留和推进 Run 的能力，继续持有 generation fencing、OpenShell 绑定和恢复账本。Go 选出的 Run 必须经过宿主的容量和状态条件写入后才能发布 Workflow。
 
 ### 当前分层

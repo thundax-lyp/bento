@@ -106,7 +106,7 @@
 
 ### Acceptance
 
-本机 Docker 和远程 Keycloak 的浏览器验证见 [需求完成状况](../40-readiness/README.md)。部署配置见 [部署配置](../../deploy/README.md#keycloak-受邀认证)。
+本机 Docker 和远程 Keycloak 的浏览器验证见 [需求完成状况](../40-readiness/README.md)。部署配置见 [部署配置](../../deploy/README.md#准备配置)。
 
 ## 工作区初始化
 

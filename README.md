@@ -21,7 +21,7 @@
 | [`apps/worker`](apps/worker/run-worker.ts)                                              | DSH Worker 进程入口                                                    |
 | [`apps/orchestrator/execution-service`](apps/orchestrator/execution-service/service.ts) | 当前的执行 HTTP 服务和 Run 权威账本                                    |
 
-[部署手册](deploy/README.md)提供 Web Docker、Keycloak、OpenShell 执行宿主和 Temporal 开发环境的操作步骤。
+[部署手册](deploy/README.md)说明如何通过[统一 Compose](deploy/compose.yaml)启动 Bento，以及如何接入 OpenShell 和 Temporal。
 
 ## 设计与验证
 
