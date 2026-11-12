@@ -39,6 +39,7 @@ type Options = {
     state: string;
     token: string;
     port?: number;
+    bindHost?: '127.0.0.1' | '0.0.0.0';
     workerPort?: { persistence?: number; operation?: number; sdk?: number };
     workerTimeoutMs?: number;
     retryMs?: number;
@@ -102,7 +103,7 @@ export async function serveExecution(options: Options) {
         lock.close();
     }
 
-    async function listen(server: Server, port = 0) {
+    async function listen(server: Server, port = 0, bindHost = '127.0.0.1') {
         servers.push(server);
         server.on('connection', (socket: Socket) => {
             sockets.add(socket);
@@ -110,7 +111,7 @@ export async function serveExecution(options: Options) {
         });
         await new Promise<void>((resolve, reject) => {
             server.once('error', reject);
-            server.listen(port, '127.0.0.1', resolve);
+            server.listen(port, bindHost, resolve);
         });
         const address = server.address();
         if (!address || typeof address === 'string')
@@ -578,6 +579,7 @@ export async function serveExecution(options: Options) {
         const url = await listen(
             executionHttp(db, token, wake, purgeOwner),
             options.port,
+            options.bindHost,
         );
         wake();
         return { url, close, reviewRun };

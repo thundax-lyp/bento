@@ -36,13 +36,13 @@ node .agents/skills/bento-pr-review/scripts/collect-review-context.mjs snapshot 
 
 按 [Document Rules](../../../docs/00-governance/DOCUMENT-RULES.md) 区分文档职责和权威。只加载能解释当前 diff 的最小上下文。先读取 [PR Rules](../../../docs/00-governance/PR-RULES.md)，再按改动范围补读：
 
-| 改动范围                                    | 当前依据                                                                                                                                                                                                                          |
-| ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 产品代码或设计                              | [平台架构](../../../docs/30-designs/PLATFORM-ARCHITECTURE-DESIGN.md)及相关需求                                                                                                                                                    |
-| Session、Run、Workspace、权限、持久化与接管 | [平台架构](../../../docs/30-designs/PLATFORM-ARCHITECTURE-DESIGN.md)与[实施设计](../../../docs/30-designs/DSH-OPENSHELL-IMPLEMENTATION-DESIGN.md)及[交付验收](../../../docs/40-readiness/DSH-OPENSHELL-ACCEPTANCE.md)中的相关边界 |
-| 源码目录和入口                              | [架构规则](../../../docs/00-governance/ARCHITECTURE-RULES.md)                                                                                                                                                                     |
-| 测试与验证声明                              | [能力与证据](../../../docs/40-readiness/DSH-OPENSHELL-EVIDENCE.md)                                                                                                                                                                |
-| 运行、诊断、恢复或发布                      | [OpenShell 部署说明](../../../deploy/README.md#openshell-执行宿主)                                                                                                                                                                |
+| 改动范围                                    | 当前依据                                                                                                                                                                                                                                                         |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 产品代码或设计                              | [平台架构](../../../docs/00-governance/ARCHITECTURE.md)及相关需求                                                                                                                                                                                                |
+| Session、Run、Workspace、权限、持久化与接管 | [平台架构](../../../docs/00-governance/ARCHITECTURE.md)与[实施设计](../../../docs/30-designs/APPLICATION-BOUNDARIES-DESIGN.md#执行链实施设计)及[执行链验收门槛](../../../docs/10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#执行链验收门槛)中的相关边界 |
+| 源码目录和入口                              | [仓库协作约定](../../../AGENTS.md)和[平台架构](../../../docs/00-governance/ARCHITECTURE.md)                                                                                                                                                                      |
+| 测试与验证声明                              | [需求完成状况](../../../docs/40-readiness/README.md)                                                                                                                                                                                                             |
+| 运行、诊断、恢复或发布                      | [OpenShell 部署说明](../../../deploy/README.md#openshell-执行宿主)                                                                                                                                                                                               |
 
 实现与验证文档只证明其记录的范围；依据冲突或不足时记录缺口，不凭当前代码补出产品规则。
 

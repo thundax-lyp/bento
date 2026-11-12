@@ -1,0 +1,17 @@
+**
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!apps/
+!apps/orchestrator/
+!apps/orchestrator/package.json
+!apps/orchestrator/*.go
+!apps/orchestrator/go.mod
+!apps/orchestrator/go.sum
+!apps/orchestrator/execution-service/
+!apps/orchestrator/execution-service/*.ts
+!apps/orchestrator/openshell/
+!apps/orchestrator/openshell/*.ts
+!apps/worker/
+!apps/worker/package.json
+!apps/worker/*.ts

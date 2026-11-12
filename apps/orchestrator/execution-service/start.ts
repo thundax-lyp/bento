@@ -17,6 +17,7 @@ async function main() {
         BENTO_HOST_CONFIG,
         BENTO_REVIEW_MODULE,
         BENTO_PORT,
+        BENTO_BIND_HOST = '127.0.0.1',
         BENTO_TENANT_QUEUE_LIMIT,
         BENTO_TEMPORAL_ADDRESS,
         BENTO_TEMPORAL_NAMESPACE,
@@ -28,6 +29,8 @@ async function main() {
     const port = Number(BENTO_PORT ?? 8788);
     if (!Number.isInteger(port) || port < 0 || port > 65535)
         throw new Error('Invalid port');
+    if (BENTO_BIND_HOST !== '127.0.0.1' && BENTO_BIND_HOST !== '0.0.0.0')
+        throw new Error('Invalid execution API bind host');
 
     let host: ExecutionHost;
     const [mode, extra] = process.argv.slice(2);
@@ -84,6 +87,7 @@ async function main() {
         state,
         token: BENTO_SERVICE_BEARER,
         port,
+        bindHost: BENTO_BIND_HOST,
         host,
         ...(BENTO_TENANT_QUEUE_LIMIT === undefined
             ? {}
