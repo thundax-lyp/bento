@@ -132,12 +132,22 @@ export async function serveExecution(options: Options) {
         const db = store;
         const execution = control;
         const live = new Map<string, WorkerRequest['mode']>();
+        const executing = new Map<
+            string,
+            {
+                generation: number;
+                abort: AbortController;
+                exitConfirmed: boolean;
+            }
+        >();
         // Authority resolves the token to its Session, Run and generation.
         // This map admits only grants dispatched by this controller.
         const canPersist = (grant: WorkerRequest['grant']) =>
-            live.has(grant.token);
+            live.has(grant.token) &&
+            db.findRun(grant.run).status !== 'cancelling';
         const canExecute = (grant: WorkerRequest['grant']) =>
-            live.get(grant.token) === 'execute';
+            live.get(grant.token) === 'execute' &&
+            db.findRun(grant.run).status !== 'cancelling';
         const persistenceUrl = await listen(
             execution.persistenceIngress(canPersist),
             options.workerPort?.persistence,
@@ -231,6 +241,71 @@ export async function serveExecution(options: Options) {
             db.confirmReview(runId, proof, diff);
         }
 
+        function requestCancellation(
+            owner: string,
+            project: string,
+            id: string,
+        ) {
+            db.run(owner, project, id);
+            const run = db.findRun(id);
+            if (run.cancelGeneration !== null)
+                return db.requestRunningCancellation(
+                    owner,
+                    project,
+                    id,
+                    run.cancelGeneration,
+                );
+            if (run.status !== 'running')
+                return db.cancelQueuedRun(owner, project, id);
+
+            const current = execution.inspect(run.sessionId);
+            const worker = executing.get(id);
+            const binding = db.binding(run);
+            if (
+                current.session !== binding.session ||
+                current.tenant !== binding.tenant ||
+                current.project !== binding.project ||
+                current.sandbox !== binding.sandbox ||
+                current.volume !== binding.volume
+            )
+                throw conflict(
+                    'run_not_cancellable',
+                    'The Run cannot be cancelled in its current state.',
+                );
+            let generation: number;
+            if (
+                current.state === 'READY' &&
+                current.run === null &&
+                !current.hasCapability
+            ) {
+                generation = 0;
+            } else if (
+                current.state === 'RUNNING' &&
+                current.run === id &&
+                host.supportsRunningCancellation === true &&
+                worker?.generation === current.generation
+            ) {
+                generation = current.generation;
+            } else {
+                throw conflict(
+                    'run_not_cancellable',
+                    'The Run cannot be cancelled in its current state.',
+                );
+            }
+            const intent = db.requestRunningCancellation(
+                owner,
+                project,
+                id,
+                generation,
+            );
+            if (worker?.generation === generation) {
+                worker.abort.abort();
+                if (worker.exitConfirmed)
+                    db.markCancellationWorkerClosed(id, generation);
+            }
+            return intent;
+        }
+
         async function worker(
             run: Run,
             binding: Binding,
@@ -245,9 +320,38 @@ export async function serveExecution(options: Options) {
                 workerTimeoutMs,
             );
             live.set(grant.token, mode);
+            const attempt =
+                mode === 'execute'
+                    ? {
+                          generation: grant.generation,
+                          abort: new AbortController(),
+                          exitConfirmed: false,
+                      }
+                    : undefined;
+            if (attempt) executing.set(run.id, attempt);
+            const onWorkerExit =
+                attempt && host.supportsRunningCancellation === true
+                    ? () => {
+                          if (
+                              stop.signal.aborted ||
+                              executing.get(run.id) !== attempt
+                          )
+                              return;
+                          attempt.exitConfirmed = true;
+                          try {
+                              db.markCancellationWorkerClosed(
+                                  run.id,
+                                  attempt.generation,
+                              );
+                          } catch {
+                              // Retain the observed exit for the next advancement.
+                          }
+                      }
+                    : undefined;
             const signal = AbortSignal.any([
                 stop.signal,
                 AbortSignal.timeout(workerTimeoutMs),
+                ...(attempt ? [attempt.abort.signal] : []),
             ]);
             let onAbort: () => void = () => {};
             const aborted = new Promise<never>((_resolve, reject) => {
@@ -267,13 +371,18 @@ export async function serveExecution(options: Options) {
                     },
                     signal,
                     slot,
+                    onWorkerExit,
                 );
                 return await Promise.race([task, aborted]);
             } finally {
                 live.delete(grant.token);
                 signal.removeEventListener('abort', onAbort);
                 // A replacement must wait for the single slot to close on lease expiry.
-                if (closeWarmWorker && signal.aborted)
+                if (
+                    closeWarmWorker &&
+                    signal.aborted &&
+                    !attempt?.abort.signal.aborted
+                )
                     await task?.catch(() => {});
             }
         }
@@ -392,7 +501,68 @@ export async function serveExecution(options: Options) {
             }
         }
 
+        async function driveCancellation(run: Run): Promise<void> {
+            const generation = run.cancelGeneration;
+            if (generation === null)
+                throw new Error('Cancellation intent unavailable');
+            const binding = db.binding(run);
+            const current =
+                generation === 0
+                    ? execution.inspect(run.sessionId)
+                    : await execution.takeover(run.sessionId, generation);
+            stop.signal.throwIfAborted();
+            if (
+                current.state !== 'READY' ||
+                current.run !== null ||
+                current.hasCapability ||
+                (generation !== 0 && current.generation !== generation + 1) ||
+                current.session !== binding.session ||
+                current.tenant !== binding.tenant ||
+                current.project !== binding.project ||
+                current.sandbox !== binding.sandbox ||
+                current.volume !== binding.volume
+            )
+                throw new Error('Cancellation stop evidence unavailable');
+
+            const worker = executing.get(run.id);
+            if (worker?.generation === generation && worker.exitConfirmed)
+                db.markCancellationWorkerClosed(run.id, generation);
+            if (!db.findRun(run.id).cancelWorkerClosed)
+                throw new Error('Cancellation Worker exit unconfirmed');
+            executing.delete(run.id);
+
+            let unknown: boolean;
+            try {
+                unknown =
+                    generation !== 0 &&
+                    (host.sdk !== undefined ||
+                        execution.hasUnknownOperations(
+                            run.sessionId,
+                            generation,
+                        ));
+                if (!unknown) {
+                    const before = textSnapshot(
+                        JSON.parse(run.baseline ?? 'null'),
+                    );
+                    const after = textSnapshot(await host.snapshot(binding));
+                    unknown = snapshotSha256(before) !== snapshotSha256(after);
+                }
+            } catch {
+                unknown = true;
+            }
+            stop.signal.throwIfAborted();
+            if (
+                !db.finishCancellation(
+                    run.id,
+                    generation,
+                    unknown ? 'needs_review' : 'cancelled',
+                )
+            )
+                throw new Error('Cancellation result changed');
+        }
+
         async function driveRun(run: Run, slot: number) {
+            if (run.status === 'cancelling') return driveCancellation(run);
             if (run.status === 'running' || run.status === 'recovering') {
                 await settle(run, slot);
                 return;
@@ -421,7 +591,12 @@ export async function serveExecution(options: Options) {
             } catch {
                 // Worker failure is ambiguous once admission may have occurred.
             }
-            if (!stop.signal.aborted) await settle(db.findRun(queued.id), slot);
+            if (stop.signal.aborted) return;
+            const current = db.findRun(queued.id);
+            if (current.status === 'cancelling')
+                return driveCancellation(current);
+            executing.delete(queued.id);
+            await settle(current, slot);
         }
 
         const assigned = new Map<number, string>();
@@ -576,7 +751,7 @@ export async function serveExecution(options: Options) {
         }
 
         const url = await listen(
-            executionHttp(db, token, wake, purgeOwner),
+            executionHttp(db, token, wake, purgeOwner, requestCancellation),
             options.port,
             options.bindHost,
         );

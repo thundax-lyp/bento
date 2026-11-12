@@ -331,6 +331,7 @@ if (process.argv[2] === '--effect-worker') {
         const prompts: (string | undefined)[] = [];
         let target = '';
         let blocked = false;
+        let workerSignal: AbortSignal | undefined;
         const service = await start(state, {
             ...base,
             async snapshot(binding) {
@@ -344,6 +345,7 @@ if (process.argv[2] === '--effect-worker') {
             },
             async worker(request, signal) {
                 prompts.push(request.prompt);
+                workerSignal = signal;
                 workerStarted.resolve();
                 await releaseWorker.promise;
                 return base.worker(request, signal);
@@ -389,6 +391,8 @@ if (process.argv[2] === '--effect-worker') {
             await workerStarted.promise;
             assert.deepEqual(prompts, ['noop']);
             assert.equal((await api(next + '/cancel', 'POST')).status, 409);
+            assert.equal((await api(next)).json().status, 'running');
+            assert.equal(workerSignal?.aborted, false);
             releaseWorker.resolve();
             await until(
                 () => api(next),
@@ -447,6 +451,44 @@ if (process.argv[2] === '--effect-worker') {
             assert.deepEqual(store.findRun(next), completed);
         } finally {
             store.close();
+            await rm(state, { recursive: true, force: true });
+        }
+    });
+
+    test('running cancellation stop', { timeout: 15_000 }, async () => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-running-cancel-'));
+        const base = localHost(join(state, 'volume'));
+        const running = barrier();
+        let workers = 0;
+        const service = await start(state, {
+            ...base,
+            supportsRunningCancellation: true,
+            async worker(_request, signal, _slot, onWorkerExit) {
+                workers++;
+                running.resolve();
+                await delay(60_000, undefined, { signal }).catch(() => {});
+                onWorkerExit?.();
+                return 'review';
+            },
+        });
+        try {
+            const api = client(service.url);
+            const target = await project(api);
+            const run = await submit(api, target, 'noop', 'first');
+            await running.promise;
+            assert.equal((await api(run)).json().status, 'running');
+            const response = await api(run + '/cancel', 'POST');
+            assert.equal(response.status, 200);
+            assert.equal(response.json().status, 'cancelling');
+            await until(
+                () => api(run),
+                (value) => value.json().status === 'cancelled',
+                'cancelled',
+            );
+            assert.equal((await api(run + '/diff')).status, 409);
+            assert.equal(workers, 1);
+        } finally {
+            await service.close();
             await rm(state, { recursive: true, force: true });
         }
     });
@@ -549,18 +591,28 @@ if (process.argv[2] === '--effect-worker') {
         );
         const lifetime = new AbortController();
         const close = pool.warmWorker(lifetime.signal);
-        const run = (prompt: string, signal = lifetime.signal, slot = 0) =>
+        const run = (
+            prompt: string,
+            signal = lifetime.signal,
+            slot = 0,
+            onWorkerExit?: () => void,
+        ) =>
             pool.worker(
                 { mode: 'execute', prompt } as WorkerRequest,
                 signal,
                 slot,
+                onWorkerExit,
             );
         try {
             assert.equal(await run('1'), 'completed');
             assert.equal(await run('2'), 'completed');
             assert.equal(await run('1', lifetime.signal, 1), 'completed');
             const lease = new AbortController();
-            const blocked = run('block', lease.signal);
+            let exited = 0,
+                otherExited = 0;
+            const blocked = run('block', lease.signal, 0, () => {
+                exited++;
+            });
             await until(
                 () =>
                     readFile(dispatched).then(
@@ -571,9 +623,16 @@ if (process.argv[2] === '--effect-worker') {
                 'warm worker received request',
             );
             await assert.rejects(run('3'), /occupied/);
-            assert.equal(await run('2', lifetime.signal, 1), 'completed');
+            assert.equal(
+                await run('2', lifetime.signal, 1, () => {
+                    otherExited++;
+                }),
+                'completed',
+            );
             lease.abort();
             await assert.rejects(blocked);
+            assert.equal(exited, 1);
+            assert.equal(otherExited, 0);
             assert.equal(await run('3', lifetime.signal, 1), 'completed');
             assert.equal(await run('1'), 'completed');
         } finally {

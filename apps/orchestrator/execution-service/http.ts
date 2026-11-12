@@ -60,6 +60,7 @@ export function executionHttp(
     token: string,
     wake: () => void,
     purgeOwner: (owner: string) => Promise<boolean>,
+    requestCancellation: Store['cancelQueuedRun'],
 ) {
     const authorization = digest('Bearer ' + token);
     const server = createServer(async (req, res) => {
@@ -140,7 +141,7 @@ export function executionHttp(
                 }
             }
             if (runId && action === 'cancel' && req.method === 'POST') {
-                const run = store.cancelQueuedRun(owner, projectId, runId);
+                const run = requestCancellation(owner, projectId, runId);
                 json(res, 200, run);
                 wake();
                 return;

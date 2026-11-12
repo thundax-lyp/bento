@@ -25,36 +25,9 @@
 
 ## 机械步骤
 
-### T3：接入停止、撤权与权威终态
-
-前置状态：HEAD 标题为「Feat(execution-service): 持久化运行取消意图」，工作树干净。Store.requestRunningCancellation 和 finishCancellation 存在。Orchestrator 类型检查及 running cancellation ledger 测试通过。
-
-文件清单（10）：修改 `apps/orchestrator/execution-service/{service,http,types,service.test,warm-worker}.ts`、`apps/orchestrator/openshell/{authority,single-host}.ts` 和本 RUNBOOK。专门核对 `apps/orchestrator/execution-service/{store,worker}.ts`。
-
-禁止修改：Temporal Workflow、外部适配器协议、恢复 Worker、Workspace 内容和运维结案。
-
-执行：
-
-1. `executionHttp` 用注入的 `requestCancellation(owner: string, project: string, id: string): ReturnType<Store['run']>` 替代直接调用 Store。由 `serveExecution` 提供该同步回调。先读 `db.run` 校验归属，再从 `db.findRun` 读内部意图。已有取消意图用 T2 方法回读当前状态；queued 调排队取消；running 从 `execution.inspect` 取当前旧代，只接受该 Run 持有的 RUNNING 代次，或 READY 且 run=null（记 0）。若已发 grant，须先校验 `host.supportsRunningCancellation === true`、当前 execute 控制记录存在且代次匹配。绑定不明、缺观察能力或其他状态按冲突处理。拒绝条件在写意图前检查。写入意图后才对本 Run 的 `AbortController` 发送取消信号，沿用 HTTP 的 wake。 `canPersist/canExecute` 拒绝账本已是 cancelling 的 grant，新请求不再进入旧代。
-2. `ExecutionHost` 新增可选 `supportsRunningCancellation?: true`，`worker` 新增可选第四参数 `onWorkerExit?: () => void`。内置 `prewarmedWorker` 声明支持并转发回调。 `warmSlot` 仅在捕获该次运行绑定的 `current.closed` 后触发回调，收到信号、收到正常结果或普通 promise settle 都不触发。保持原冷启动路径。 `service.ts` 为 execute 记录 `{generation:number, abort:AbortController, exitConfirmed:boolean}`，从同 Run 的同代宿主回调设 exitConfirmed。回调先检查全局 stop 信号和当前控制记录身份；服务开始关闭后立即返回，禁止访问已关闭账本。存在匹配取消意图时调用 T2 持久化闭合；若观察先到，写意图后立即落盘既有观察。用户取消使 worker race 退出，跳过这一分支的 warm promise 等待，允许先撤权并观察旧沙盒停止；其他超时与正常 worker 的等待不变。已取消请求的控制记录保留至证据持久化或控制器退出。
-3. `driveRun` 对已有 cancelling 以及 execute 返回后回读到 cancelling 统一调用 `driveCancellation(run: Run): Promise<void>`，不走 `settle` 或 `finish`。旧代为 0 时须仍为同绑定 READY、无持有者，跳过 stop；旧代大于 0 则调用原 `execution.takeover(sessionId, cancelGeneration)`，它负责撤权、关闭渠道和确认旧沙盒停止，成功证据为同绑定、旧代加一、READY 且无 grant。对已经达到该证据的重投沿用 `takeover` 既有早返回。原 Worker 仍未闭合时可先推进撤权与旧沙盒停止；任一证据缺失抛错误使原 Activity/本地工作循环重试，并保持 durable 槽位。重启后只用已持久化的 closed 值和同代停止证据。若已发 grant 且 closed=0，详情仍是 cancelling，重复取消返回同一记录，继续观察旧沙盒但不补证据、不释放槽位或启动新 Worker；已落盘 closed=1 则按旧代证据续办。
-4. `Authority` 新增 `hasUnknownOperations(session: string, generation: number): boolean`，查询现有 operations 表该代有无 UNKNOWN。 `SingleHostExecution` 提供同签名只读转发。证据满足后按状态规则判断，使用 `textSnapshot` 比较可信快照与原 baseline。读取失败按副作用未知处理。只调用 `finishCancellation` 一次条件写入终态。不重发操作、不创建替代 Run。Temporal 活动回调保持当前槽位到 `driveCancellation` 返回或重投，数据库 cancelling 行继续挡容量。
-5. 新增 `running cancellation stop` 本地 HTTP fixture。用 `localHost` 作无 SDK 夹具，声明观察能力，执行到 Worker barrier 说明 `Store.start` 已赢。收到 abort 并确认模拟 Worker 退出后显式调用第四参数，核对 200 cancelling、最终 GET cancelled、一次 Worker、无 diff。原 `queued cancellation HTTP` 夹具不声明观察能力，保留 running 取消 409，额外断言原状态仍为 running、原 Worker 未收到取消信号。已预留未启动成功由 T1 验证，完成回执先赢由 T2 验证。另扩现有 warm slot 用例的被取消 Worker，断言对应退出回调恰好一次，正常结束的另一槽无退出回调。
-
-验证：
-
-```bash
-pnpm --filter @bento/orchestrator typecheck
-node --experimental-strip-types --test --test-name-pattern='queued cancellation|running cancellation (ledger|stop)|aborting one warm slot' apps/orchestrator/execution-service/service.test.ts
-```
-
-PASS：五个指定用例均执行通过，受支持宿主有可信退出观察，不支持的运行保持原状。
-
-STOP：现有观察无法确认绑定与撤权、Worker 退出无法按适配器合同确认，或需要改变恢复/运维语义。保留 durable 取消意图与原槽位，报告缺失证明。
-
 ### T4：个人端 API 转发与权限校验
 
-前置状态：私有取消入口已能回读 cancelling、cancelled 和取消后的 needs_review，运行停止 fixture 已通过并提交。
+前置状态：HEAD 标题为「Feat(execution-service): 确认撤权与退出后结束取消」，工作树干净。私有取消路由已接入 Worker 退出与沙盒停止证明。Orchestrator 类型检查和 5 项账本、HTTP、预热 Worker fixture 通过。
 
 文件清单（8）：修改 `apps/workspace/api/{protocol,server,execution-service-http,mock}.ts`、`public-files.json` 和本 RUNBOOK。新增 `apps/workspace/api/cancel-run.test.ts`。专门核对 `apps/workspace/api/go/main.go` 的通用代理。
 
