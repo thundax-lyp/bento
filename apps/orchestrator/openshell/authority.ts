@@ -487,6 +487,16 @@ export class Authority {
         );
     }
 
+    hasUnknownOperations(session: string, generation: number): boolean {
+        return (
+            this.db
+                .prepare(
+                    "SELECT 1 FROM operations WHERE session=? AND generation=? AND state='UNKNOWN' LIMIT 1",
+                )
+                .get(session, generation) !== undefined
+        );
+    }
+
     operation(session: string, generation: number, id: string) {
         return this.db
             .prepare(

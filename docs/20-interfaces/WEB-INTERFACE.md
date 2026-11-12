@@ -107,29 +107,32 @@
 
 ### 任务与补丁 · 现有
 
-| 方法与路径                                        | 请求                                       | 成功响应                                                                        |
-| ------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------- |
-| `GET /api/projects`                               | 无                                         | `200 {projects: Project[]}`                                                     |
-| `POST /api/projects`                              | `{name, files: [{path,text}]}`，旧文本导入 | 真实模式 `201 Project`                                                          |
-| `GET /api/projects/{projectId}`                   | 无                                         | `200 Project`                                                                   |
-| `GET /api/projects/{projectId}/runs`              | 无                                         | `200 {runs: Run[]}`                                                             |
-| `POST /api/projects/{projectId}/runs`             | `{prompt}`，带 `Idempotency-Key`           | 真实模式首次 `202 Run`，同键同内容重试 `200 Run`                                |
-| `GET /api/projects/{projectId}/runs/{runId}`      | 无                                         | `200 Run`。详情包含 `prompt`。                                                  |
-| `GET /api/projects/{projectId}/runs/{runId}/diff` | 可选 `?download=1`                         | `200 text/plain; charset=utf-8`。下载时附带 `Content-Disposition: attachment`。 |
+| 方法与路径                                           | 请求                                       | 成功响应                                                                        |
+| ---------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------- |
+| `GET /api/projects`                                  | 无                                         | `200 {projects: Project[]}`                                                     |
+| `POST /api/projects`                                 | `{name, files: [{path,text}]}`，旧文本导入 | 真实模式 `201 Project`                                                          |
+| `GET /api/projects/{projectId}`                      | 无                                         | `200 Project`                                                                   |
+| `GET /api/projects/{projectId}/runs`                 | 无                                         | `200 {runs: Run[]}`                                                             |
+| `POST /api/projects/{projectId}/runs`                | `{prompt}`，带 `Idempotency-Key`           | 真实模式首次 `202 Run`，同键同内容重试 `200 Run`                                |
+| `POST /api/projects/{projectId}/runs/{runId}/cancel` | 无正文，沿用同源会话                       | `200 Run`。返回原 Run 当前取消状态。                                            |
+| `GET /api/projects/{projectId}/runs/{runId}`         | 无                                         | `200 Run`。详情包含 `prompt`。                                                  |
+| `GET /api/projects/{projectId}/runs/{runId}/diff`    | 可选 `?download=1`                         | `200 text/plain; charset=utf-8`。下载时附带 `Content-Disposition: attachment`。 |
 
 - `Project = {id,name,status,createdAt}`，`status` 为 `importing`、`ready` 或 `failed`。
-- `Run = {id,projectId,sessionId,status,createdAt,updatedAt,summary?}`，`status` 为 `queued`、`running`、`recovering`、`needs_review`、`succeeded` 或 `failed`。Web 任务链接绑定执行项目和 Run。原任务描述以详情返回的持久化 `prompt` 为准。
+- `Run = {id,projectId,sessionId,status,createdAt,updatedAt,summary?}`，`status` 为 `queued`、`running`、`recovering`、`needs_review`、`cancelling`、`cancelled`、`succeeded` 或 `failed`。Web 任务链接绑定执行项目和 Run。原任务描述以详情返回的持久化 `prompt` 为准。
 - 提交内容去首尾空白后为 1–8000 个字符。重试键作用域为账号下的执行项目。同键不同内容返回 `409`，同键同内容可在提交响应超时后安全重试。
+- 排队取消返回 `cancelled`，已预留但尚未启动也可取消。受支持宿主的运行取消返回 `cancelling`，后续详情回读 `cancelled` 或 `needs_review`。重复请求返回原 Run 当前取消状态，不需要新幂等键。越权、不存在或项目关系不符返回 `404 not_found`。已接收完成回执、运行宿主缺少可信退出观察或状态不可取消时返回 `409 conflict`。结果不明时回读原详情。
 - 只有 `succeeded` 且补丁已发布时可读取 diff。零字节 diff 是成功结果，未发布返回 `409`。待核对结果由可信部署侧处理。
 - 私有执行服务保留现有同构 `/v1/projects` 和 Run 路径。Web 目标使用相同任务路由提交与读取，避免为来自空间的任务建立第二套 Run 接口。
 
 ### 私有执行接口与目标扩展
 
-| 方法与路径                                  | 契约                                                                                                                                                        |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /v1/projects`                         | 新增可选 `Idempotency-Key`。启用时按 owner 和提交键绑定输入，首次 `201 Project`，同键同输入重试 `200 Project`，同键异内容 `409`。旧调用保留原行为。已实现。 |
-| `GET /v1/projects/{projectId}/runs/{runId}` | 只在详情返回已持久化的 `prompt`。任务列表保持现有形态。已实现。                                                                                             |
-| `DELETE /v1/projects/{projectId}`           | 在执行服务原子检查未结束任务并关停新写入。清理中 `202 {state:"deleting"}`，清理完 `204`。同 owner 重试可查询原删除结果。目标接口。                          |
+| 方法与路径                                          | 契约                                                                                                                                                        |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /v1/projects`                                 | 新增可选 `Idempotency-Key`。启用时按 owner 和提交键绑定输入，首次 `201 Project`，同键同输入重试 `200 Project`，同键异内容 `409`。旧调用保留原行为。已实现。 |
+| `POST /v1/projects/{projectId}/runs/{runId}/cancel` | 无正文。受信服务身份和 owner 校验。成功及重复返回 `200 Run`，状态冲突为 `409 run_not_cancellable`。                                                         |
+| `GET /v1/projects/{projectId}/runs/{runId}`         | 只在详情返回已持久化的 `prompt`。任务列表保持现有形态。已实现。                                                                                             |
+| `DELETE /v1/projects/{projectId}`                   | 在执行服务原子检查未结束任务并关停新写入。清理中 `202 {state:"deleting"}`，清理完 `204`。同 owner 重试可查询原删除结果。目标接口。                          |
 
 ## 错误语义与兼容
 

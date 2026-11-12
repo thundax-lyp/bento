@@ -10,7 +10,9 @@ function route(operation: Operation): string {
     const runs = project + '/runs';
     if (!('runId' in operation)) return runs;
     const run = runs + '/' + encodeURIComponent(operation.runId);
-    return operation.kind === 'diff' ? run + '/diff' : run;
+    if (operation.kind === 'diff') return run + '/diff';
+    if (operation.kind === 'cancelRun') return run + '/cancel';
+    return run;
 }
 
 function upstreamError(status: number, operation: Operation): RequestError {
@@ -24,6 +26,8 @@ function upstreamError(status: number, operation: Operation): RequestError {
         case 404:
             return notFound();
         case 409:
+            if (operation.kind === 'cancelRun')
+                return conflict('当前任务状态不能取消。');
             return conflict(
                 operation.kind === 'diff'
                     ? '成果尚未可用。'
@@ -75,7 +79,10 @@ export function httpBackend(
         const signal = AbortSignal.timeout(timeoutMs);
         try {
             const response = await fetch(origin + route(operation), {
-                method: body === undefined ? 'GET' : 'POST',
+                method:
+                    body !== undefined || operation.kind === 'cancelRun'
+                        ? 'POST'
+                        : 'GET',
                 headers,
                 redirect: 'error',
                 signal,

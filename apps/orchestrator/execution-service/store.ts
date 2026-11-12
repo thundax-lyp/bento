@@ -27,6 +27,8 @@ type Run = {
     receipt: number;
     reconciled: number;
     diff: string | null;
+    cancelGeneration: number | null;
+    cancelWorkerClosed: 0 | 1;
 };
 
 const projectView = ({ id, name, status, createdAt }: Project) => ({
@@ -53,7 +55,7 @@ const runView = ({
     ...(summary === null ? {} : { summary }),
 });
 const now = () => new Date().toISOString();
-const pending = "('queued','running','recovering','needs_review')";
+const pending = "('queued','running','recovering','cancelling','needs_review')";
 
 export function projectBinding(project: Project): Binding {
     return {
@@ -93,6 +95,7 @@ export class Store {
                 key TEXT NOT NULL, prompt TEXT NOT NULL, status TEXT NOT NULL,
                 createdAt TEXT NOT NULL, updatedAt TEXT NOT NULL, summary TEXT,
                 baseline TEXT, receipt INTEGER NOT NULL DEFAULT 0, reconciled INTEGER NOT NULL DEFAULT 0, diff TEXT,
+                cancelGeneration INTEGER, cancelWorkerClosed INTEGER NOT NULL DEFAULT 0,
                 UNIQUE(projectId,key)
             );
             CREATE UNIQUE INDEX IF NOT EXISTS one_pending_run_per_project
@@ -366,6 +369,107 @@ export class Store {
         return { ...runView(run), prompt: run.prompt };
     }
 
+    cancelQueuedRun(owner: string, project: string, id: string) {
+        this.db.exec('BEGIN IMMEDIATE');
+        try {
+            const current = this.ownedRun(owner, project, id);
+            if (current.status !== 'cancelled') {
+                const result = this.db
+                    .prepare(
+                        "UPDATE runs SET status='cancelled', summary=?, updatedAt=? WHERE id=? AND projectId=? AND status='queued'",
+                    )
+                    .run('Cancelled before start.', now(), id, project);
+                if (result.changes !== 1)
+                    throw conflict(
+                        'run_not_cancellable',
+                        'The Run cannot be cancelled in its current state.',
+                    );
+            }
+            const run = this.run(owner, project, id);
+            this.db.exec('COMMIT');
+            return run;
+        } catch (error) {
+            this.db.exec('ROLLBACK');
+            throw error;
+        }
+    }
+
+    requestRunningCancellation(
+        owner: string,
+        project: string,
+        id: string,
+        generation: number,
+    ) {
+        this.db.exec('BEGIN IMMEDIATE');
+        try {
+            const current = this.ownedRun(owner, project, id);
+            if (
+                current.cancelGeneration === null ||
+                !['cancelling', 'cancelled', 'needs_review'].includes(
+                    current.status,
+                )
+            ) {
+                const result = this.db
+                    .prepare(
+                        "UPDATE runs SET status='cancelling', cancelGeneration=?, cancelWorkerClosed=?, summary=?, updatedAt=? WHERE id=? AND projectId=? AND status='running' AND receipt=0",
+                    )
+                    .run(
+                        generation,
+                        generation === 0 ? 1 : 0,
+                        'Cancellation requested.',
+                        now(),
+                        id,
+                        project,
+                    );
+                if (result.changes !== 1)
+                    throw conflict(
+                        'run_not_cancellable',
+                        'The Run cannot be cancelled in its current state.',
+                    );
+            }
+            const run = this.run(owner, project, id);
+            this.db.exec('COMMIT');
+            return run;
+        } catch (error) {
+            this.db.exec('ROLLBACK');
+            throw error;
+        }
+    }
+
+    markCancellationWorkerClosed(id: string, generation: number): void {
+        this.db
+            .prepare(
+                "UPDATE runs SET cancelWorkerClosed=1 WHERE id=? AND cancelGeneration=? AND status='cancelling'",
+            )
+            .run(id, generation);
+    }
+
+    finishCancellation(
+        id: string,
+        generation: number,
+        status: 'cancelled' | 'needs_review',
+    ): boolean {
+        const summary =
+            status === 'cancelled'
+                ? 'Run stopped and cancelled.'
+                : '旧执行已停止，操作结果未确认，等待核对。';
+        return (
+            this.db
+                .prepare(
+                    "UPDATE runs SET status=?, summary=?, updatedAt=?, diff=NULL WHERE id=? AND cancelGeneration=? AND status='cancelling' AND cancelWorkerClosed=1",
+                )
+                .run(status, summary, now(), id, generation).changes === 1
+        );
+    }
+
+    failQueuedBaseline(id: string): void {
+        this.db
+            .prepare(
+                "UPDATE runs SET status='failed', summary=?, updatedAt=? WHERE id=? AND status='queued'",
+            )
+            .run('Workspace baseline could not be captured.', now(), id);
+    }
+
     diff(owner: string, project: string, id: string) {
         const row = this.ownedRun(owner, project, id);
         if (row.status !== 'succeeded' || row.diff === null)
@@ -398,7 +502,7 @@ export class Store {
                 `
             SELECT p.owner, r.status FROM runs r JOIN projects p ON p.id=r.projectId
             LEFT JOIN run_dispatches d ON d.runId=r.id
-            WHERE r.status IN ('running','recovering')
+            WHERE r.status IN ('running','recovering','cancelling')
                OR (r.status='queued' AND d.runId IS NOT NULL)
             ORDER BY r.rowid
         `,
@@ -425,7 +529,7 @@ export class Store {
             WITH occupied AS (
                 SELECT p.owner, r.status FROM runs r JOIN projects p ON p.id=r.projectId
                 LEFT JOIN run_dispatches d ON d.runId=r.id
-                WHERE r.status IN ('running','recovering')
+                WHERE r.status IN ('running','recovering','cancelling')
                    OR (r.status='queued' AND d.runId IS NOT NULL)
             )
             INSERT INTO run_dispatches(runId)
@@ -455,7 +559,7 @@ export class Store {
             .prepare(
                 `
                 SELECT r.id FROM runs r LEFT JOIN run_dispatches d ON d.runId=r.id
-                WHERE r.status IN ('running','recovering')
+                WHERE r.status IN ('running','recovering','cancelling')
                    OR (r.status='queued' AND d.runId IS NOT NULL)
                 ORDER BY r.status='queued', d.rowid, r.rowid
                 `,
@@ -466,7 +570,9 @@ export class Store {
 
     next(status: 'active' | 'queued') {
         const condition =
-            status === 'active' ? "IN ('running','recovering')" : "= 'queued'";
+            status === 'active'
+                ? "IN ('running','recovering','cancelling')"
+                : "= 'queued'";
         return this.db
             .prepare(
                 `SELECT * FROM runs WHERE status ${condition} ORDER BY rowid LIMIT 1`,
@@ -497,7 +603,7 @@ export class Store {
                     `
                 UPDATE runs SET status='running', baseline=?, updatedAt=?
                 WHERE id=? AND status='queued'
-                    AND (SELECT COUNT(*) FROM runs WHERE status IN ('running','recovering')) < ?
+                    AND (SELECT COUNT(*) FROM runs WHERE status IN ('running','recovering','cancelling')) < ?
             `,
                 )
                 .run(JSON.stringify(baseline), now(), id, slots).changes === 1

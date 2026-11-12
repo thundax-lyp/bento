@@ -31,11 +31,14 @@ export interface ExecutionHost extends SingleHostSandbox {
     /** Delete this binding's sandbox and volume, and confirm both are absent. */
     purge?(binding: Binding): Promise<void>;
     workerSlots?: 1 | 2;
+    /** The trusted launcher can independently confirm the exit of this Worker. */
+    supportsRunningCancellation?: true;
     warmWorker?(signal: AbortSignal): () => Promise<void>;
     worker(
         request: WorkerRequest,
         signal: AbortSignal,
         slot?: number,
+        onWorkerExit?: () => void,
     ): Promise<WorkerResult>;
 }
 
@@ -45,5 +48,7 @@ export type RunStatus =
     | 'running'
     | 'recovering'
     | 'needs_review'
+    | 'cancelling'
+    | 'cancelled'
     | 'succeeded'
     | 'failed';

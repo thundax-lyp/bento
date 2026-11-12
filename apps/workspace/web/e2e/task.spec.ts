@@ -155,3 +155,69 @@ test('受邀注册后用密码登录，注销后该账号无法再登录', async
     await expect(page.getByRole('alert')).toBeVisible();
     await expect(page).toHaveURL(/\/login\?closed=1/);
 });
+
+test('任务详情回读取消状态', async ({ page }) => {
+    const root = '/api/projects/cancel-project/runs/';
+    const states = { 'queued-run': 'queued', 'running-run': 'running' };
+    const requests: string[] = [];
+    await page.route('**/api/session', (route) =>
+        route.fulfill({ json: { account: 'cancel-fixture' } }),
+    );
+    await page.route('**/api/projects', (route) =>
+        route.fulfill({
+            json: {
+                projects: [
+                    { id: 'cancel-project', name: '手册', status: 'ready' },
+                ],
+            },
+        }),
+    );
+    for (const id of ['queued-run', 'running-run'] as const) {
+        const detail = () => ({
+            id,
+            projectId: 'cancel-project',
+            status: states[id],
+            updatedAt: '2026-11-12T00:00:00Z',
+        });
+        await page.route('**' + root + id, (route) =>
+            route.fulfill({ json: detail() }),
+        );
+        await page.route('**' + root + id + '/cancel', (route) => {
+            expect(route.request().method()).toBe('POST');
+            expect(route.request().postData()).toBeNull();
+            expect(new URL(route.request().url()).pathname).toBe(
+                root + id + '/cancel',
+            );
+            requests.push(id);
+            states[id] = id === 'queued-run' ? 'cancelled' : 'cancelling';
+            return route.fulfill({ json: detail() });
+        });
+    }
+
+    await page.goto('/runs/queued-run?project=cancel-project');
+    await page.getByRole('button', { name: '取消排队' }).click();
+    await expect(
+        page.getByText('手册 · 已取消', { exact: true }),
+    ).toBeVisible();
+    await page.reload();
+    await expect(
+        page.getByText('手册 · 已取消', { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: '取消排队' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: '下载 diff' })).toHaveCount(0);
+
+    await page.goto('/runs/running-run?project=cancel-project');
+    await page.getByRole('button', { name: '请求停止' }).click();
+    await expect(
+        page.getByText('手册 · 取消中', { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: '请求停止' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: '下载 diff' })).toHaveCount(0);
+    states['running-run'] = 'needs_review';
+    await expect(
+        page.getByText('手册 · 待核对', { exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole('button', { name: '请求停止' })).toHaveCount(0);
+    await expect(page.getByRole('link', { name: '下载 diff' })).toHaveCount(0);
+    expect(requests).toEqual(['queued-run', 'running-run']);
+});
