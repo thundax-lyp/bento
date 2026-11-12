@@ -11,6 +11,7 @@ import { spaceExecution } from './space-execution.ts';
 
 const quota = 10_000_000_000;
 const fileLimit = 4_000_000_000;
+const previewLimit = 256 * 1024;
 const partSize = 16 * 1024 * 1024;
 const lifetime = 24 * 60 * 60 * 1000;
 const statesWithSpace =
@@ -438,6 +439,17 @@ export function mySpace(
             return locked(uploadId, async () =>
                 view(await prepare(upload(owner, uploadId))),
             );
+        }
+        if (group === 'files' && action === 'preview' && method === 'GET') {
+            const row = upload(owner, resource);
+            if (row.state !== 'saved') throw notFound();
+            if (row.size > previewLimit)
+                throw new RequestError(
+                    413,
+                    'preview_too_large',
+                    '文件超过 256 KiB，无法预览。',
+                );
+            return { redirect: await storage.preview(key(row)) };
         }
         if (group === 'files' && action === 'download' && method === 'GET') {
             const row = upload(owner, resource);

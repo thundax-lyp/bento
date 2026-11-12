@@ -94,6 +94,7 @@
         "apps/workspace/api/protocol.ts",
         "apps/workspace/api/server.ts",
         "apps/workspace/api/space-execution.ts",
+        "apps/workspace/api/space-files.test.ts",
         "apps/workspace/api/space-storage.ts",
         "apps/workspace/api/space.ts",
         "apps/workspace/auth/auth-page.ts",

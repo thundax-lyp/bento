@@ -1,12 +1,12 @@
 # RUNBOOK · WEB-03 已保存单文件生命周期
 
-状态 `Executable`，待授权执行。2026-11-12 建立于 bento-a 的 `main` / `origin/main`，基线 `b33c8e722a26126556d01794a82756f9b11b42fc`。范围为 [WEB-03 与 WEB-A05](../10-requirements/WEB-REQUIREMENTS.md#web-03-空间额度与文件生命周期) 中的单文件预览、删除、对象清理和额度回收。仅做已保存 UTF-8 文件预览，保留下载、执行快照和历史 Run/diff。项目整体删除、文件树改版、二进制预览及上传协议排除。
+状态 `Executable`，执行中。2026-11-12 建立于 bento-a 的 `main` / `origin/main`，基线 `b33c8e722a26126556d01794a82756f9b11b42fc`。范围为 [WEB-03 与 WEB-A05](../10-requirements/WEB-REQUIREMENTS.md#web-03-空间额度与文件生命周期) 中的单文件预览、删除、对象清理和额度回收。仅做已保存 UTF-8 文件预览，保留下载、执行快照和历史 Run/diff。项目整体删除、文件树改版、二进制预览及上传协议排除。
 
 现有 `apps/workspace/api/space.ts` 的 `mySpace.route` 只提供已保存文件下载。 `apps/workspace/api/space-execution.ts` 的 `spaceExecution.start` 绑定不可变输入清单。Go 入口 `apps/workspace/api/go/main.go` 将 `/api/` 转发给 task-entry，`projects.go` 的直接提交路由在此基线未注册。task-entry 的 Run 提交最终由 `apps/orchestrator/execution-service/http.ts` 调用 `Store.addRun`。空间 API 先查询 Run 再写删除状态仍会留下竞态。Run 入队门禁归 [Orchestrator](../00-governance/ARCHITECTURE.md#应用与编排的目标职责)，对象与额度归空间 API。遵循 [Web 接口](../20-interfaces/WEB-INTERFACE.md#项目详情及目标扩展)、[单文件删除设计](WEB-DESIGN.md#单文件删除--目标) 和 [Readiness](../40-readiness/CURRENT-READINESS.md)。
 
 ## 执行前检查（T0，作者或维护者负责）
 
-本节在机械步骤之外，不计步骤和文件数。核对干净基线与获授权的执行分支、Node 22、锁定 pnpm、依赖和 Chromium headless shell。检查 4319/4320 空闲，测试对象源另用随机回环端口。以 `git status --short --branch`、`git rev-parse main origin/main` 及 `git diff --check` 核对起点。本地 fixture 不读真实配置，也不依赖主 checkout 的部署改动。RUNBOOK 当前依公开规则本地忽略，交付只起草；取得后续授权后才可将此精确路径加入执行分支，便于逐步收口。
+本节在机械步骤之外，不计步骤和文件数。核对干净基线与获授权的执行分支、Node 22、锁定 pnpm、依赖和 Chromium headless shell。检查 4319/4320 空闲，测试对象源另用随机回环端口。以 `git status --short --branch`、`git rev-parse main origin/main` 及 `git diff --check` 核对起点。本地 fixture 不读真实配置，也不依赖主 checkout 的部署改动。维护者已在独立任务分支核对执行条件。
 
 WEB-03 单文件生命周期与 WEB-07 取消 Run 各在独立分支编写和验证。并行实施时，本计划的预览 T1–T2 可先行。进入共享账本和 API 改动前，由协调方确认双方基线和合入顺序。第一项合入后，后合入者基于包含该项的最新 main，只重跑受交叠影响的 Run 入队、取消状态和单文件删除门禁竞态 fixture。
 
@@ -16,34 +16,9 @@ WEB-03 单文件生命周期与 WEB-07 取消 Run 各在独立分支编写和验
 
 ## 机械步骤
 
-### T1：签发已保存文件的只读预览地址
-
-前置状态：T0 完成，已有下载仍走 `mySpace.route → spaceStorage.download`。
-
-允许修改：`apps/workspace/api/space.ts`、`apps/workspace/api/space-storage.ts`、新增 `apps/workspace/api/space-files.test.ts`、`public-files.json` 及本文。另核对 `apps/workspace/api/server.ts`、`apps/workspace/api/protocol.ts`、`apps/workspace/api/mock.ts`，创建和删除临时 fixture `space.sqlite`。共 9 个文件。
-
-禁止修改：下载签名、上传、用户会话及 Go 入口。
-
-执行：
-
-1. 在 `spaceStorage` 增加 `preview(key: string): Promise<string>`，对同一个对象键用现有 S3 Client 签 `GetObjectCommand`，有效 300 秒，签名响应覆盖 `ResponseContentType: 'application/octet-stream'` 和 `ResponseCacheControl: 'no-store'`。只签名，不从 API 读取或转发文件正文。
-2. 在 `mySpace.route` 增加 `GET /api/space/files/{fileId}/preview`。沿用现有 UUID 校验和 `upload(owner, resource)`。先判 `state === 'saved'`，再判 `size <= 256 * 1024`。不属当前账号、不存在或非 saved 均调用 `notFound()`，超限抛 `RequestError(413, 'preview_too_large', '文件超过 256 KiB，无法预览。')`。成功返回 `{redirect: await storage.preview(key(row))}`，由现有 `taskEntryServer` 输出 302 与 Location。
-3. 在新 Node test 中以 `mkdtemp` 内的 `space.sqlite`、`mockBackend()` 和覆盖 `preview`/ `download` 的 `spaceStorage` fixture 调用真实 route。先让 `mySpace` 建表，再用独立 DatabaseSync 插入合成记录，关闭写入连接。断言 0 字节、恰好 262144 字节只签正确对象键，262145 返回 413，跨账号（含超限文件）、不存在及非 saved 的错误 status/code/message 相同且不签名，下载仍走原 signer。finally 调用 `space.close()` 后删除临时目录。将测试路径加到 `public-files.json` 的 API 文件区。
-
-验证：
-
-```bash
-pnpm --filter @bento/workspace-api typecheck
-node --experimental-strip-types --test apps/workspace/api/space-files.test.ts
-```
-
-PASS：两条退出 0，签发只发生于有权且合规的已保存对象。
-
-STOP：需要改变下载、归属或存储协议，或任一断言失败。
-
 ### T2：接入空间项目的文本预览
 
-前置状态：T1 签发和 fixture 已通过并提交。
+前置状态：HEAD 已包含 mySpace.route 的 preview 分支及 spaceStorage.preview。workspace-api typecheck 和 space-files.test.ts 的签发、边界和归属 fixture 已通过。
 
 允许修改：`apps/workspace/web/src/space-api.ts`、`apps/workspace/web/src/space.tsx`、新增 `apps/workspace/web/e2e/space-preview.spec.ts`、`public-files.json` 及本文。另核对 `apps/workspace/web/playwright.config.ts`。共 6 个文件。
 
