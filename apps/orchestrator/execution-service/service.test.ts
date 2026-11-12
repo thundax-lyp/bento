@@ -493,6 +493,235 @@ if (process.argv[2] === '--effect-worker') {
         }
     });
 
+    async function cancellationFault(
+        options: { unknown?: boolean; blockedStop?: boolean } = {},
+    ) {
+        const state = await mkdtemp(join(tmpdir(), 'bento-cancel-fault-'));
+        const base = localHost(join(state, 'volume'));
+        const entered = barrier();
+        const workerSettled = barrier();
+        const sandboxStopped = barrier();
+        const trace: WorkerRequest[] = [];
+        let stopConfirmed = !options.blockedStop;
+        let stopCalls = 0;
+        let releaseExit: (() => void) | undefined;
+        const host: ExecutionHost = {
+            ...base,
+            supportsRunningCancellation: true,
+            async worker(request, signal, _slot, onWorkerExit) {
+                trace.push(request);
+                if (request.prompt !== 'cancel target')
+                    return base.worker(request, signal);
+                if (options.unknown) {
+                    assert.equal(
+                        await reserveOperation(
+                            request,
+                            'cancelled-tool',
+                            'effect',
+                        ),
+                        true,
+                    );
+                }
+                entered.resolve();
+                await delay(60_000, undefined, { signal }).catch(() => {});
+                releaseExit = onWorkerExit;
+                workerSettled.resolve();
+                return 'review';
+            },
+            async stop(binding) {
+                stopCalls++;
+                await base.stop(binding);
+            },
+            async stopped(binding) {
+                if (!stopConfirmed) return false;
+                return base.stopped(binding);
+            },
+            async running(binding) {
+                const result = await base.running(binding);
+                if (result.running) sandboxStopped.resolve();
+                return result;
+            },
+        };
+        let service = await start(state, host);
+        return {
+            get url() {
+                return service.url;
+            },
+            trace,
+            entered,
+            workerSettled,
+            sandboxStopped,
+            confirmSandboxStop() {
+                stopConfirmed = true;
+            },
+            observeWorkerExit() {
+                assert(
+                    releaseExit,
+                    'Worker must have returned before observing exit',
+                );
+                releaseExit();
+            },
+            get stopCalls() {
+                return stopCalls;
+            },
+            close: () => service.close(),
+            async reopen() {
+                service = await start(state, host);
+            },
+            async dispose() {
+                await service.close();
+                await rm(state, { recursive: true, force: true });
+            },
+        };
+    }
+
+    test('cancellation fault keeps the slot', { timeout: 15_000 }, async () => {
+        const fixture = await cancellationFault({ blockedStop: true });
+        try {
+            const a = client(fixture.url);
+            const b = client(fixture.url, 'account-b');
+            const pa = await project(a),
+                pb = await project(b);
+            const run = await submit(a, pa, 'cancel target', 'first');
+            await fixture.entered.promise;
+            const next = await submit(b, pb, 'noop', 'next');
+            const accepted = await a(run + '/cancel', 'POST');
+            assert.equal(accepted.status, 200);
+            assert.equal(accepted.json().status, 'cancelling');
+            await fixture.workerSettled.promise;
+            assert.equal((await a(run)).json().status, 'cancelling');
+            assert.equal((await b(next)).json().status, 'queued');
+            assert.equal(
+                (await a(pa + '/runs', 'POST', { prompt: 'noop' }, 'other'))
+                    .status,
+                409,
+            );
+            const old = fixture.trace[0];
+            assert(old);
+            assert.equal((await rpc(old, 'flush')).status, 403);
+            assert.equal((await operation(old)).status, 403);
+
+            fixture.confirmSandboxStop();
+            await fixture.sandboxStopped.promise;
+            assert.equal((await a(run)).json().status, 'cancelling');
+            assert.equal(
+                (await a(run + '/cancel', 'POST')).text,
+                accepted.text,
+            );
+            assert.equal((await b(next)).json().status, 'queued');
+            assert.equal(fixture.trace.length, 1);
+            assert.equal(fixture.stopCalls, 1);
+
+            fixture.observeWorkerExit();
+            await until(
+                () => a(run),
+                (r) => r.json().status === 'cancelled',
+                'cancellation terminates',
+            );
+            await until(
+                () => b(next),
+                (r) => r.json().status === 'succeeded',
+                'next Run receives slot',
+            );
+            assert.deepEqual(
+                fixture.trace.map((request) => request.prompt),
+                ['cancel target', 'noop'],
+            );
+        } finally {
+            await fixture.dispose();
+        }
+    });
+
+    test(
+        'cancellation fault preserves unknown effects',
+        { timeout: 15_000 },
+        async () => {
+            const fixture = await cancellationFault({ unknown: true });
+            try {
+                const api = client(fixture.url);
+                const target = await project(api);
+                const run = await submit(api, target, 'cancel target', 'first');
+                await fixture.entered.promise;
+                assert.equal(
+                    (await api(run + '/cancel', 'POST')).json().status,
+                    'cancelling',
+                );
+                await fixture.workerSettled.promise;
+                fixture.observeWorkerExit();
+                const result = await until(
+                    () => api(run),
+                    (r) => r.json().status === 'needs_review',
+                    'unknown effect needs review',
+                );
+                assert.equal(
+                    (await api(run + '/cancel', 'POST')).text,
+                    result.text,
+                );
+                assert.equal((await api(run + '/diff')).status, 409);
+                assert.equal(
+                    (
+                        await api(
+                            target + '/runs',
+                            'POST',
+                            { prompt: 'noop' },
+                            'next',
+                        )
+                    ).status,
+                    409,
+                );
+                assert.deepEqual(
+                    fixture.trace.map((request) => request.mode),
+                    ['execute'],
+                );
+            } finally {
+                await fixture.dispose();
+            }
+        },
+    );
+
+    test(
+        'cancellation fault ignores exit after shutdown',
+        { timeout: 15_000 },
+        async () => {
+            const fixture = await cancellationFault();
+            try {
+                const api = client(fixture.url);
+                const target = await project(api);
+                const run = await submit(api, target, 'cancel target', 'first');
+                await fixture.entered.promise;
+                const accepted = await api(run + '/cancel', 'POST');
+                assert.equal(accepted.json().status, 'cancelling');
+                await fixture.workerSettled.promise;
+                await fixture.sandboxStopped.promise;
+                await fixture.close();
+                assert.doesNotThrow(() => fixture.observeWorkerExit());
+
+                await fixture.reopen();
+                const restarted = client(fixture.url);
+                assert.equal((await restarted(run)).text, accepted.text);
+                assert.equal(
+                    (await restarted(run + '/cancel', 'POST')).text,
+                    accepted.text,
+                );
+                assert.equal(
+                    (
+                        await restarted(
+                            target + '/runs',
+                            'POST',
+                            { prompt: 'noop' },
+                            'next',
+                        )
+                    ).status,
+                    409,
+                );
+                assert.equal(fixture.trace.length, 1);
+                assert.equal(fixture.stopCalls, 1);
+            } finally {
+                await fixture.dispose();
+            }
+        },
+    );
+
     test('tenant queue limits and selected reservations survive restart and count recovery', async () => {
         const state = await mkdtemp(join(tmpdir(), 'bento-fair-queue-'));
         const file = join(state, 'business.sqlite');

@@ -25,34 +25,9 @@
 
 ## 机械步骤
 
-### T6：锁定停止不明、旧代与副作用竞态
-
-前置状态：HEAD 标题为「Feat(task-entry): 在详情请求取消并回读状态」，工作树干净。RunDetails 已接线，Web 类型检查及 Chromium 的任务详情回读取消状态用例通过。
-
-文件清单（5）：修改 `apps/orchestrator/execution-service/service.test.ts` 和本 RUNBOOK。专门核对 `apps/orchestrator/execution-service/{service,store,local}.ts`。
-
-禁止修改：生产实现。发现问题返回对应步骤修复后重跑受影响门禁。
-
-执行：
-
-1. 用 `localHost` 加 `cancellation fault keeps the slot`。声明观察能力，Worker 收到 abort 后先 settle 普通 promise，将第四参数回调留在独立退出 barrier。让 `stopped` 先返回 false，另账号 Run 排队。确认取消中、同项目新提交 409、旧 grant 的 persistence/operation 403。把 stopped 改成 true 并等可信旧沙盒停止被观察，退出 barrier 仍未释放；断言还是 cancelling，另一 Run 未被领取，重复取消返回原 cancelling DTO。再释放 Worker 退出观察，才断言 cancelled、另一 Run 被领取，且原沙盒停止命令一次。
-2. 加 `cancellation fault preserves unknown effects`：Worker 先用现有 `reserveOperation` 写入 UNKNOWN。确认 Worker 和沙盒停止后原 Run 为 needs_review，无 diff；同项目新写任务返回 409，没有恢复 Worker 或第二次派发。重复取消返回同一详情。
-3. 加 `cancellation fault ignores exit after shutdown`：用同类退出 barrier 持有观察，完成沙盒停止后关闭服务。关闭完成后触发旧回调，断言不抛错、不写账本；同一临时目录重开，原 Run 仍 cancelling 且不放行同项目新 Run，不启动任何 Worker。三项 fixture 均设测试超时，finally 释放 barrier、关闭服务并清理临时目录。
-
-验证：
-
-```bash
-node --experimental-strip-types --test --test-name-pattern='cancellation fault' apps/orchestrator/execution-service/service.test.ts
-pnpm --filter @bento/orchestrator check
-```
-
-PASS：三项故障 fixture 与 Orchestrator 回归通过。覆盖排队、启动与完成竞争、沙盒已停但 Worker 未退出、旧代拒绝、副作用不明和关闭后迟到退出观察。本地 fixture 不证明真实启动器停止或 Temporal 集成。
-
-STOP：任一竞态或回归断言失败，不改判据或扩大到新部署协议。
-
 ### T7：同步稳定契约和 Readiness
 
-前置状态：前六个步骤均已分别提交，实际测试结果齐备，工作树干净。
+前置状态：HEAD 标题为「Test(execution-service): 覆盖停止与取消故障竞态」，工作树干净。三项 cancellation fault 测试与 pnpm --filter @bento/orchestrator check 已通过。此前 API 与 Chromium 验证见前序提交。
 
 文件清单（5）：修改 `docs/20-interfaces/WEB-INTERFACE.md`、`docs/30-designs/WEB-DESIGN.md`、`docs/40-readiness/CURRENT-READINESS.md` 的 WEB-07 行，删除本 RUNBOOK。专门核对 `docs/10-requirements/WEB-REQUIREMENTS.md`。
 
