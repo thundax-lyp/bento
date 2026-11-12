@@ -15,6 +15,7 @@ import {
 } from 'react-router';
 import {
     ApiError,
+    cancelRun,
     closeAccount,
     register,
     createProject,
@@ -680,7 +681,40 @@ export function RunDetails() {
         project: string;
         run: string;
     }>();
-    const run = useQuery(runQuery(account, project, runId));
+    const client = useQueryClient();
+    const details = runQuery(account, project, runId);
+    const run = useQuery(details);
+    const cancel = useMutation({
+        mutationFn: (target: {
+            account: string;
+            project: string;
+            runId: string;
+        }) => cancelRun(target.project, target.runId),
+        async onSuccess(result, target) {
+            const queryKey = runQuery(
+                target.account,
+                target.project,
+                target.runId,
+            ).queryKey;
+            await client.cancelQueries({ queryKey, exact: true });
+            client.setQueryData(queryKey, result);
+            await client.invalidateQueries({
+                queryKey: runsQuery(target.account, target.project).queryKey,
+                exact: true,
+            });
+        },
+        async onError(_error, target) {
+            await client.invalidateQueries({
+                queryKey: runQuery(target.account, target.project, target.runId)
+                    .queryKey,
+                exact: true,
+            });
+        },
+    });
+    const cancelHere =
+        cancel.variables?.account === account &&
+        cancel.variables.project === project &&
+        cancel.variables.runId === runId;
     const projects = useQuery(projectsQuery(account));
     const diff = useQuery({
         ...diffQuery(account, project, runId),
@@ -699,6 +733,17 @@ export function RunDetails() {
                             .join(' · ')}
                     </p>
                 </div>
+                {(status === 'queued' || status === 'running') && (
+                    <Button
+                        type="button"
+                        disabled={cancelHere && cancel.isPending}
+                        onClick={() =>
+                            cancel.mutate({ account, project, runId })
+                        }
+                    >
+                        {status === 'queued' ? '取消排队' : '请求停止'}
+                    </Button>
+                )}
                 {diff.data !== undefined && (
                     <Button asChild>
                         <a href={downloadUrl(project, runId)}>下载 diff</a>
@@ -706,6 +751,13 @@ export function RunDetails() {
                 )}
             </div>
             {run.error && <Notice message={errorMessage(run.error)} />}
+            {cancelHere &&
+                cancel.error &&
+                status !== 'cancelling' &&
+                status !== 'cancelled' &&
+                status !== 'needs_review' && (
+                    <Notice message={errorMessage(cancel.error)} />
+                )}
             <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
                 <section className="space-y-3 rounded-xl border border-zinc-200 p-4">
                     <h2 className="font-semibold">任务记录</h2>

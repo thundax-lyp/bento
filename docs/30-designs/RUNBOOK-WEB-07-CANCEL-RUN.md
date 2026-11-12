@@ -25,34 +25,9 @@
 
 ## 机械步骤
 
-### T5：任务详情展示取消与服务器状态
-
-前置状态：HEAD 标题为「Feat(task-entry): 转发取消并回读 Run 状态」，工作树干净。个人端 POST cancel 与原详情 GET 已接线。Workspace API 类型检查及 cancel-run.test.ts 通过。
-
-文件清单（5）：修改 `apps/workspace/web/src/{api.ts,pages.tsx}`、`apps/workspace/web/e2e/task.spec.ts` 和本 RUNBOOK。专门核对 `apps/workspace/web/playwright.config.ts`。
-
-禁止修改：其它操作、下载门禁、轮询周期、重试与继续对话入口。
-
-执行：
-
-1. Web `Run.status` 增 cancelling/cancelled，`runLabels` 分别为「取消中」「已取消」。 `isActive` 增 cancelling。新增 `cancelRun(project: string, run: string): Promise<Run>`，使用 `json<Run>` 发无正文 POST，保留 15 秒超时。
-2. `RunDetails` 仅在 queued 显示「取消排队」，running 显示「请求停止」，mutation pending 禁用。无乐观状态。200 先取消当前精确详情键的在途请求，再写服务器 DTO、刷新同项目列表；失败重新读取详情并显示现有错误，回读已进入取消相关状态时隐藏该错误。刷新沿用原链接与详情 GET。cancelling、cancelled、needs_review 均无取消按钮或下载。
-3. 在现有 `task.spec.ts` 加 `任务详情回读取消状态`，用 route fixture 为两个固定 Run 提供 session/project/GET/POST。排队取消响应 cancelled，刷新后仍为 cancelled。运行取消响应 cancelling，GET 保持 cancelling 直到测试先断言「取消中」，随后才切换为 needs_review。断言轮询读回，按钮和下载都不出现。两次动作各发一次无正文 POST，fixture 校验方法和目标 Run。
-
-验证：
-
-```bash
-pnpm --filter @bento/web typecheck
-pnpm --filter @bento/web test:e2e task.spec.ts -g '任务详情回读取消状态'
-```
-
-PASS：用例执行通过，成功、刷新与轮询只显示服务端确认的状态。
-
-STOP：重复 POST、提前显示终态、进入取消相关状态后仍可操作，或 fixture 失败。
-
 ### T6：锁定停止不明、旧代与副作用竞态
 
-前置状态：T1～T5 产物各自提交，账本和任务详情的 focused fixture 已通过。
+前置状态：HEAD 标题为「Feat(task-entry): 在详情请求取消并回读状态」，工作树干净。RunDetails 已接线，Web 类型检查及 Chromium 的任务详情回读取消状态用例通过。
 
 文件清单（5）：修改 `apps/orchestrator/execution-service/service.test.ts` 和本 RUNBOOK。专门核对 `apps/orchestrator/execution-service/{service,store,local}.ts`。
 

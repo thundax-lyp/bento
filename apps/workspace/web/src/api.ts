@@ -14,6 +14,8 @@ export type Run = {
         | 'running'
         | 'recovering'
         | 'needs_review'
+        | 'cancelling'
+        | 'cancelled'
         | 'succeeded'
         | 'failed';
     updatedAt: string;
@@ -73,12 +75,15 @@ export const isActive = (status: Run['status'] | undefined) =>
     status === 'queued' ||
     status === 'running' ||
     status === 'recovering' ||
+    status === 'cancelling' ||
     status === 'needs_review';
 export const runLabels: Record<Run['status'], string> = {
     queued: '排队中',
     running: '运行中',
     recovering: '恢复中',
     needs_review: '待核对',
+    cancelling: '取消中',
+    cancelled: '已取消',
     succeeded: '已完成',
     failed: '失败',
 };
@@ -99,6 +104,12 @@ export const createProject = (
 ) => post<Project>('/api/projects', { name, files });
 export const createRun = (project: string, prompt: string, key: string) =>
     post<Run>(runsApi(project), { prompt }, key);
+
+export const cancelRun = (project: string, run: string): Promise<Run> =>
+    json<Run>(runApi(project, run) + '/cancel', {
+        method: 'POST',
+        signal: AbortSignal.timeout(15_000),
+    });
 
 export const sessionQuery = queryOptions({
     queryKey: ['session'],
