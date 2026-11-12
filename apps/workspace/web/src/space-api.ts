@@ -76,6 +76,62 @@ export const cancelUpload = (id: string) =>
 export const downloadFileUrl = (id: string) =>
     root + '/files/' + encodeURIComponent(id) + '/download';
 
+export type PreviewResult =
+    | { kind: 'text'; text: string }
+    | { kind: 'too_large' | 'not_utf8' | 'unavailable' };
+
+export async function previewFile(
+    id: string,
+    signal: AbortSignal,
+): Promise<PreviewResult> {
+    const limit = 256 * 1024;
+    try {
+        const response = await fetch(
+            root + '/files/' + encodeURIComponent(id) + '/preview',
+            {
+                credentials: 'same-origin',
+                cache: 'no-store',
+                referrerPolicy: 'no-referrer',
+                signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+            },
+        );
+        if (response.status !== 200) {
+            await response.body?.cancel().catch(() => {});
+            return {
+                kind: response.status === 413 ? 'too_large' : 'unavailable',
+            };
+        }
+        const reader = response.body?.getReader();
+        if (!reader) return { kind: 'text', text: '' };
+        const bytes = new Uint8Array(limit);
+        let length = 0;
+        try {
+            while (true) {
+                const chunk = await reader.read();
+                if (chunk.done) break;
+                if (chunk.value.length > limit - length)
+                    return { kind: 'too_large' };
+                bytes.set(chunk.value, length);
+                length += chunk.value.length;
+            }
+            try {
+                const text = new TextDecoder('utf-8', {
+                    fatal: true,
+                    ignoreBOM: true,
+                }).decode(bytes.subarray(0, length));
+                return { kind: 'text', text };
+            } catch {
+                return { kind: 'not_utf8' };
+            }
+        } finally {
+            await reader.cancel().catch(() => {});
+            reader.releaseLock();
+        }
+    } catch {
+        return { kind: 'unavailable' };
+    }
+}
+
 export async function transferFile(
     project: string,
     id: string,

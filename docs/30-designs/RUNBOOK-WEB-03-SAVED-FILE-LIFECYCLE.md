@@ -16,34 +16,9 @@ WEB-03 单文件生命周期与 WEB-07 取消 Run 各在独立分支编写和验
 
 ## 机械步骤
 
-### T2：接入空间项目的文本预览
-
-前置状态：HEAD 已包含 mySpace.route 的 preview 分支及 spaceStorage.preview。workspace-api typecheck 和 space-files.test.ts 的签发、边界和归属 fixture 已通过。
-
-允许修改：`apps/workspace/web/src/space-api.ts`、`apps/workspace/web/src/space.tsx`、新增 `apps/workspace/web/e2e/space-preview.spec.ts`、`public-files.json` 及本文。另核对 `apps/workspace/web/playwright.config.ts`。共 6 个文件。
-
-禁止修改：上传入口、下载 URL、执行文件选择、真实环境。
-
-执行：
-
-1. 在 `space-api.ts` 新增 `previewFile(id: string, signal: AbortSignal): Promise<PreviewResult>`。结果为 `{kind:'text';text:string} | {kind:'too_large'|'not_utf8'|'unavailable'}`。原生 fetch GET 同域 preview 路径，跟随重定向，`credentials:'same-origin'`、`cache:'no-store'`、`referrerPolicy:'no-referrer'`，合并取消信号与 15 秒超时。413 映射 too_large，其余非 200、网络或流失败映射 unavailable，不读取错误正文。读取 200 的流到最多 262144 字节，任何 chunk 超出剩余空间时返回 too_large 并取消 reader，不依赖 Content-Length。读取完用 `TextDecoder('utf-8', {fatal:true, ignoreBOM:true})` 解码，解码失败映射 not_utf8。0 字节返回空文本。结束、超限或失败时释放 reader，取消错误不覆盖原结果。
-2. 在 `CloudProject` 已保存行添加「预览文本」，保留同一行的原下载。只挂载一个以文件 ID 为 key 的 `FilePreview({id,path,onClose})`，初始「正在读取预览…」，关闭、换文件或离开页面时 abort，取消后忽略迟到结果。用带文件名的「文本预览」区和 `<pre>` 的 React 文本节点显示原文，空文本显示「空文件」。too_large 显示「文件超过 256 KiB，无法预览」，not_utf8 显示「文件不是有效的 UTF-8 文本」，其余显示「预览暂不可用」。失败时原下载仍在。签名地址不进入 UI、错误文案或日志。
-3. 新 Chromium 用例模拟账号、项目和文件列表，preview 路由返回 302 指向本测试 `node:http` 随机端口服务，服务固定向测试 Web origin 允许 CORS GET。断言 `<script>fixture</script>` 和原换行在 pre 中为字面文本且无 script 节点；服务端 413、重定向后 262145 实收字节和无效 UTF-8 各显示对应提示且原下载 href 保留。退出时关闭 fixture 服务。登记新 E2E 路径到 `public-files.json`。
-
-验证：
-
-```bash
-pnpm --filter @bento/web typecheck
-pnpm --filter @bento/web test:e2e space-preview.spec.ts
-```
-
-PASS：两条退出 0，预览成功及三个拒收场景均通过。
-
-STOP：需要放开真实 CORS、经 Bento 中转文件或改变原下载，或断言失败。
-
 ### T3：在 Run 账本加单文件删除门禁
 
-前置状态：T2 已提交，`executionHttp` 仍从 `Store.addRun` 入队。
+前置状态：HEAD 已包含 preview 路由、CloudProject 文本预览和两套 fixture。workspace-api 与 Web typecheck、space-files.test.ts、Chromium space-preview.spec.ts 已通过。执行服务仍由 executionHttp 调 Store.addRun。
 
 允许修改：`apps/orchestrator/execution-service/store.ts`、`apps/orchestrator/execution-service/http.ts`、`apps/orchestrator/execution-service/service.test.ts` 及本文。另核对 `apps/orchestrator/execution-service/input.ts`、`apps/workspace/api/go/main.go`，创建和删除临时 fixture `execution.sqlite`。共 7 个文件。
 

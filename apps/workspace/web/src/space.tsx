@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ChangeEvent, DragEvent, FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router';
 import {
@@ -7,11 +7,12 @@ import {
     createSpaceProject,
     downloadFileUrl,
     prepareWorkspace,
+    previewFile,
     spaceProjectQuery,
     spaceQuery,
     transferFile,
-} from './space-api';
-import type { Space } from './space-api';
+} from './space-api.ts';
+import type { PreviewResult, Space } from './space-api.ts';
 import { Button, Notice } from './ui';
 
 function message(error: unknown) {
@@ -219,6 +220,55 @@ function planUpload(choices: UploadChoice[], config: Space, project: string) {
     return { available, checklist, selected };
 }
 
+function FilePreview({
+    id,
+    path,
+    onClose,
+}: {
+    id: string;
+    path: string;
+    onClose: () => void;
+}) {
+    const [result, setResult] = useState<PreviewResult>();
+    useEffect(() => {
+        const controller = new AbortController();
+        void previewFile(id, controller.signal).then((preview) => {
+            if (!controller.signal.aborted) setResult(preview);
+        });
+        return () => controller.abort();
+    }, [id]);
+    return (
+        <section
+            aria-label="文本预览"
+            className="space-y-2 rounded border border-zinc-200 p-3"
+        >
+            <div className="flex items-center justify-between gap-3">
+                <h3 className="break-all font-medium">{path}</h3>
+                <Button type="button" onClick={onClose}>
+                    关闭预览
+                </Button>
+            </div>
+            {result?.kind === 'text' ? (
+                result.text === '' ? (
+                    <p>空文件</p>
+                ) : (
+                    <pre className="max-h-96 overflow-auto">{result.text}</pre>
+                )
+            ) : (
+                <p role="status">
+                    {result
+                        ? {
+                              too_large: '文件超过 256 KiB，无法预览',
+                              not_utf8: '文件不是有效的 UTF-8 文本',
+                              unavailable: '预览暂不可用',
+                          }[result.kind]
+                        : '正在读取预览…'}
+                </p>
+            )}
+        </section>
+    );
+}
+
 function CloudProject({ account, id }: { account: string; id: string }) {
     const client = useQueryClient();
     const space = useQuery(spaceQuery(account));
@@ -227,6 +277,7 @@ function CloudProject({ account, id }: { account: string; id: string }) {
     const [fileChoices, setFileChoices] = useState<UploadChoice[]>([]);
     const [folderChoices, setFolderChoices] = useState<UploadChoice[]>([]);
     const [files, setFiles] = useState<string[]>([]);
+    const [previewId, setPreviewId] = useState<string>();
     async function refresh() {
         await Promise.all([
             client.invalidateQueries({
@@ -339,6 +390,9 @@ function CloudProject({ account, id }: { account: string; id: string }) {
     const { execution, name } = project.data;
     const config = space.data;
     const uploads = config.uploads.filter((item) => item.project === id);
+    const preview = uploads.find(
+        (file) => file.id === previewId && file.state === 'saved',
+    );
     const selectable =
         execution.state === 'uninitialized' ||
         (execution.state === 'failed' && !execution.projectId);
@@ -501,12 +555,20 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                                 <span>{file.path}</span>
                             )}
                             {file.state === 'saved' ? (
-                                <a
-                                    className="text-sm underline"
-                                    href={downloadFileUrl(file.id)}
-                                >
-                                    下载文件
-                                </a>
+                                <div className="flex items-center gap-2">
+                                    <Button
+                                        type="button"
+                                        onClick={() => setPreviewId(file.id)}
+                                    >
+                                        预览文本
+                                    </Button>
+                                    <a
+                                        className="text-sm underline"
+                                        href={downloadFileUrl(file.id)}
+                                    >
+                                        下载文件
+                                    </a>
+                                </div>
                             ) : (
                                 <span className="text-sm text-zinc-600">
                                     {
@@ -538,6 +600,14 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                         </li>
                     ))}
                 </ul>
+                {preview && (
+                    <FilePreview
+                        key={preview.id}
+                        id={preview.id}
+                        path={preview.path}
+                        onClose={() => setPreviewId(undefined)}
+                    />
+                )}
                 {selectable && (
                     <Button
                         type="button"
