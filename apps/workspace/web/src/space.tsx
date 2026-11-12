@@ -416,6 +416,9 @@ function CloudProject({ account, id }: { account: string; id: string }) {
     const { execution, name } = project.data;
     const config = space.data;
     const uploads = config.uploads.filter((item) => item.project === id);
+    const executionFiles = uploads
+        .filter((file) => file.state === 'saved' && files.includes(file.id))
+        .map((file) => file.id);
     const preview = uploads.find(
         (file) => file.id === previewId && file.state === 'saved',
     );
@@ -686,8 +689,12 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                 {selectable && (
                     <Button
                         type="button"
-                        disabled={!files.length || init.isPending}
-                        onClick={() => init.mutate(files)}
+                        disabled={
+                            !executionFiles.length ||
+                            init.isPending ||
+                            remove.isPending
+                        }
+                        onClick={() => init.mutate(executionFiles)}
                     >
                         准备执行文件
                     </Button>

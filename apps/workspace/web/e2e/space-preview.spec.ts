@@ -129,6 +129,8 @@ test('已保存文件只读预览并保留下载', async ({ page, baseURL }) => 
 
 test('单文件删除确认后等待服务器回收额度', async ({ page, baseURL }) => {
     const file = savedFile('delete-fixture', 7);
+    const remaining = savedFile('remaining-fixture', 0);
+    const preparations: unknown[] = [];
     let state: 'saved' | 'deleting' | 'deleted' = 'saved';
     const writes: {
         method: string;
@@ -142,7 +144,7 @@ test('单文件删除确认后等待服务器回收额度', async ({ page, baseU
         route.fulfill({
             json: {
                 ...project,
-                files: state === 'saved' ? [file] : [],
+                files: state === 'saved' ? [file, remaining] : [remaining],
                 execution: { state: 'uninitialized' },
             },
         }),
@@ -151,7 +153,10 @@ test('单文件删除确认后等待服务器回收额度', async ({ page, baseU
         route.fulfill({
             json: {
                 projects: [project],
-                uploads: state === 'deleted' ? [] : [{ ...file, state }],
+                uploads:
+                    state === 'deleted'
+                        ? [remaining]
+                        : [{ ...file, state }, remaining],
                 quota: 100,
                 fileLimit: 4000000000,
                 partSize: 16777216,
@@ -180,6 +185,10 @@ test('单文件删除确认后等待服务器回收额度', async ({ page, baseU
         state = 'deleting';
         return route.fulfill({ status: 202, json: { state } });
     });
+    await page.route('**' + projectApi + '/execution', (route) => {
+        preparations.push(route.request().postDataJSON());
+        return route.fulfill({ status: 202, json: { state: 'validating' } });
+    });
     await page.goto(spaceUrl);
     await page.getByLabel('文件', { exact: true }).setInputFiles({
         name: 'quota-check.txt',
@@ -192,6 +201,10 @@ test('单文件删除确认后等待服务器回收额度', async ({ page, baseU
     const confirm = page.getByRole('group', { name: '确认删除文件' });
     const apply = confirm.getByRole('button', { name: '确认删除' });
     const checklist = page.getByRole('region', { name: '上传前清单' });
+    const input = row.getByRole('checkbox', { name: file.path });
+    const prepare = page.getByRole('button', { name: '准备执行文件' });
+    await input.check();
+    await expect(prepare).toBeEnabled();
     await expect(checklist).toContainText('可用额度 93 字节');
 
     await open.click();
@@ -206,15 +219,22 @@ test('单文件删除确认后等待服务器回收额度', async ({ page, baseU
         '文件正在被未结束的任务使用。',
     );
     await expect(download).toBeVisible();
+    await expect(input).toBeChecked();
     await open.click();
     await apply.click();
     await expect(row).toContainText('正在删除');
+    await expect(prepare).toBeDisabled();
     await expect(download).toHaveCount(0);
     await expect(checklist).toContainText('可用额度 93 字节');
 
     state = 'deleted';
     await expect(row).toHaveCount(0);
     await expect(checklist).toContainText('可用额度 100 字节');
+    await page.getByRole('checkbox', { name: remaining.path }).check();
+    await prepare.click();
+    await expect
+        .poll(() => preparations)
+        .toEqual([{ fileIds: [remaining.id] }]);
     expect(writes).toEqual(
         Array.from({ length: 2 }, () => ({
             method: 'DELETE',
