@@ -273,6 +273,137 @@ if (process.argv[2] === '--effect-worker') {
         assert.equal(completedTurn([unknown, completed]), false);
         assert.equal(completedTurn([]), false);
     });
+    test('queued cancellation store', async () => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-cancel-store-'));
+        const file = join(state, 'business.sqlite');
+        let store = new Store(file);
+        const newRun = () => {
+            const { id: project } = store.addProject('A', 'Project', []);
+            store.importResult(project, 'ready');
+            return {
+                project,
+                run: store.addRun('A', project, 'key', 'prompt').run.id,
+            };
+        };
+        try {
+            const first = newRun();
+            const cancel = () =>
+                store.cancelQueuedRun('A', first.project, first.run);
+            const cancelled = cancel();
+            assert.equal(cancelled.status, 'cancelled');
+            assert.equal(store.reserveDispatch(first.run, 1), false);
+            assert.equal(store.start(first.run, [], 1), false);
+            assert.deepEqual(store.dispatchSnapshot(1).queued, []);
+            assert.deepEqual(store.schedulableRuns(), []);
+            store.close();
+            store = new Store(file);
+            assert.deepEqual(cancel(), cancelled);
+            const second = newRun();
+            assert.equal(store.reserveDispatch(second.run, 1), true);
+            assert.equal(
+                store.cancelQueuedRun('A', second.project, second.run).status,
+                'cancelled',
+            );
+            assert.equal(store.dispatchReserved(second.run), true);
+            assert.deepEqual(store.dispatchSnapshot(1).occupied, []);
+            assert.deepEqual(store.schedulableRuns(), []);
+            assert.equal(store.start(second.run, [], 1), false);
+            const third = newRun();
+            assert.equal(store.start(third.run, [], 1), true);
+            assert.throws(
+                () => store.cancelQueuedRun('A', third.project, third.run),
+                { status: 409 },
+            );
+            assert.equal(store.findRun(third.run).status, 'running');
+        } finally {
+            store.close();
+            await rm(state, { recursive: true, force: true });
+        }
+    });
+
+    test('queued cancellation HTTP', { timeout: 15_000 }, async () => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-cancel-http-'));
+        const base = localHost(join(state, 'volume'));
+        const snapshotStarted = barrier(),
+            releaseSnapshot = barrier();
+        const workerStarted = barrier(),
+            releaseWorker = barrier();
+        const prompts: (string | undefined)[] = [];
+        let target = '';
+        let blocked = false;
+        const service = await start(state, {
+            ...base,
+            async snapshot(binding) {
+                if (binding.project === target && !blocked) {
+                    blocked = true;
+                    snapshotStarted.resolve();
+                    await releaseSnapshot.promise;
+                    throw new Error('late snapshot error');
+                }
+                return base.snapshot(binding);
+            },
+            async worker(request, signal) {
+                prompts.push(request.prompt);
+                workerStarted.resolve();
+                await releaseWorker.promise;
+                return base.worker(request, signal);
+            },
+        });
+        try {
+            const api = client(service.url);
+            const a = await project(api);
+            const b = await project(api);
+            target = a.slice(1);
+            const run = await submit(api, a, 'cancel-me', 'first');
+            await snapshotStarted.promise;
+            assert.equal((await api(run)).json().status, 'queued');
+            assert.equal(
+                (
+                    await client(service.url, 'account-b')(
+                        run + '/cancel',
+                        'POST',
+                    )
+                ).status,
+                404,
+            );
+            assert.equal(
+                (
+                    await api(
+                        b + '/runs/' + run.split('/').at(-1) + '/cancel',
+                        'POST',
+                    )
+                ).status,
+                404,
+            );
+            const response = await api(run + '/cancel', 'POST');
+            assert.equal(response.status, 200);
+            assert.equal(response.json().status, 'cancelled');
+            assert.equal(
+                (await api(run + '/cancel', 'POST')).text,
+                response.text,
+            );
+            assert.equal((await api(run)).text, response.text);
+            assert.equal((await api(run + '/diff')).status, 409);
+            releaseSnapshot.resolve();
+            const next = await submit(api, a, 'noop', 'second');
+            await workerStarted.promise;
+            assert.deepEqual(prompts, ['noop']);
+            assert.equal((await api(next + '/cancel', 'POST')).status, 409);
+            releaseWorker.resolve();
+            await until(
+                () => api(next),
+                (r) => r.json().status === 'succeeded',
+                'next Run succeeds',
+            );
+            assert.equal((await api(run)).json().status, 'cancelled');
+        } finally {
+            releaseSnapshot.resolve();
+            releaseWorker.resolve();
+            await service.close();
+            await rm(state, { recursive: true, force: true });
+        }
+    });
+
     test('tenant queue limits and selected reservations survive restart and count recovery', async () => {
         const state = await mkdtemp(join(tmpdir(), 'bento-fair-queue-'));
         const file = join(state, 'business.sqlite');

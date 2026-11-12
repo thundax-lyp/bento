@@ -366,6 +366,39 @@ export class Store {
         return { ...runView(run), prompt: run.prompt };
     }
 
+    cancelQueuedRun(owner: string, project: string, id: string) {
+        this.db.exec('BEGIN IMMEDIATE');
+        try {
+            const current = this.ownedRun(owner, project, id);
+            if (current.status !== 'cancelled') {
+                const result = this.db
+                    .prepare(
+                        "UPDATE runs SET status='cancelled', summary=?, updatedAt=? WHERE id=? AND projectId=? AND status='queued'",
+                    )
+                    .run('Cancelled before start.', now(), id, project);
+                if (result.changes !== 1)
+                    throw conflict(
+                        'run_not_cancellable',
+                        'The Run cannot be cancelled in its current state.',
+                    );
+            }
+            const run = this.run(owner, project, id);
+            this.db.exec('COMMIT');
+            return run;
+        } catch (error) {
+            this.db.exec('ROLLBACK');
+            throw error;
+        }
+    }
+
+    failQueuedBaseline(id: string): void {
+        this.db
+            .prepare(
+                "UPDATE runs SET status='failed', summary=?, updatedAt=? WHERE id=? AND status='queued'",
+            )
+            .run('Workspace baseline could not be captured.', now(), id);
+    }
+
     diff(owner: string, project: string, id: string) {
         const row = this.ownedRun(owner, project, id);
         if (row.status !== 'succeeded' || row.diff === null)

@@ -1,6 +1,6 @@
 # RUNBOOK · WEB-07 取消排队与运行中的 Run
 
-- 状态：`Executable`，待实施授权。建立于 2026-11-12。执行起点为干净的 `main` / `origin/main` `b33c8e7`，由维护者在获授权的执行分支开始。本轮只交付计划。
+- 状态：实施中。建立于 2026-11-12。执行起点为干净的 `main` / `origin/main` `b33c8e7`，由维护者在获授权的执行分支开始。本轮只交付计划。
 - 目标：在现有任务详情取消排队任务或请求停止运行中的任务。保留原 Run。运行中的取消由账本记录，确认停止和撤权后才释放槽位，无法确认副作用时进入待核对。
 - 依据：[WEB-07](../10-requirements/WEB-REQUIREMENTS.md#web-07-连续对话与任务控制)、[WEB-A12](../10-requirements/WEB-REQUIREMENTS.md#验收标准)、[Web 接口](../20-interfaces/WEB-INTERFACE.md#任务与补丁--现有)、[Web 设计](WEB-DESIGN.md#执行环境与任务交互)、[平台架构](../00-governance/ARCHITECTURE.md#当前实现接线)。[Readiness](../40-readiness/CURRENT-READINESS.md) 的 WEB-07 目前把取消列为待实现。
 - 范围包含排队取消、运行中停止及取消结果回读。恢复 Worker、自动重放、安全重试、继续对话、运维结案、项目删除和真实 Docker/Temporal/OpenShell 验收在本轮之外。
@@ -25,34 +25,9 @@
 
 ## 机械步骤
 
-### T1：在权威账本原子取消
-
-前置状态：作者或维护者前置检查通过。此步先交付排队专用私有入口，running 分支由 T3 接入。
-
-允许修改与文件清单（7）：`apps/orchestrator/execution-service/types.ts`、`apps/orchestrator/execution-service/store.ts`、`apps/orchestrator/execution-service/http.ts`、`apps/orchestrator/execution-service/service.ts`、`apps/orchestrator/execution-service/service.test.ts`、本 RUNBOOK。专门核对 `apps/orchestrator/execution-service/local.ts` 的 `localHost` fixture。
-
-禁止修改：预留策略、Worker 授权、运行中的状态转换、数据库结构。
-
-执行：
-
-1. 扩展 `RunStatus`。新增 `Store.cancelQueuedRun(owner: string, project: string, id: string): ReturnType<Store['run']>`。在 `BEGIN IMMEDIATE` 内复用 `ownedRun` 校验归属。已取消直接读回。其余执行一次条件 `UPDATE runs`，谓词仅为匹配 id、projectId 和 queued。已有预留保留。只写上节三列；零行抛 `conflict('run_not_cancellable', 'The Run cannot be cancelled in its current state.')`。在同一事务读回详情再提交，异常回滚。
-2. 新增 `Store.failQueuedBaseline(id: string): void`，以 `WHERE id=? AND status='queued'` 写入 `failed`、现有快照失败摘要、`now()`，不触碰取消结果。 `driveRun` 快照失败分支改用它；`Store.start` 返回 false 后若回读已取消直接返回，其余保留原错误。Temporal advance 回调在分配槽位和检查 importing 之前读取 Run，cancelled 直接成功返回，不重发 Workflow 或调用 Worker。 `executionHttp` 的 Run action 分支增加仅 POST 可达的 `cancel`，返回上述详情并在成功后调用现有 `wake()`。原 GET、diff 路由不变。
-3. 在现有 `service.test.ts` 的 fixture 分支加两个名字分别为 `queued cancellation store` 和 `queued cancellation HTTP` 的用例。Store 用例用临时 SQLite、不同项目的同账号 Run。取消先赢后断言 `reserveDispatch` 和 `start` 均为 false、Run 不在候选与可调度列表，重开 Store 后结果和重复取消的详情一致。另一 Run 先 `reserveDispatch` 再取消，断言成功、历史预留仍在、从在用与可调度集合移除，迟到 `start` 为 false。第三个 Run 先 `start`，再调用排队专用方法得到 409，原状态仍 running。HTTP 用例用现有 `start`、`client`、`localHost`、`barrier`、`until`。给目标项目的第一次执行前快照加 barrier，开始读时保持 queued。用另一账号及同账号另一项目的路径分别取消，断言 404。正确账号取消两次返回同一详情，GET 仍是 cancelled、diff 409。释放 barrier 并令这次快照抛错。用同项目新键提交第二 Run，Worker fixture 记录 `request.prompt` 并在第二 Run 的 Worker 入口停住，确认只有第二 Run 领取且它的取消返回 409。释放后等它成功，再回读第一 Run 仍为 cancelled。使用测试级 `{ timeout: 15_000 }` 和现有 `until` 限制等待，finally 释放 barrier、关闭服务并清理临时目录。
-
-验证：
-
-```bash
-pnpm --filter @bento/orchestrator typecheck
-node --experimental-strip-types --test --test-name-pattern='queued cancellation' apps/orchestrator/execution-service/service.test.ts
-```
-
-PASS：两条命令退出 0，两个用例都实际执行。取消先赢时无 Worker 领取，重复稳定；已预留未启动也能取消，启动先赢时排队取消拒绝，运行请求由 T3 接入；迟到的快照失败不会覆盖终态。
-
-STOP：任一断言失败或需要改变调度、恢复语义。保留本步，按契约报告最小复现。
-
 ### T2：持久化运行中的取消意图
 
-前置状态：排队取消私有入口及其两个 fixture 已通过并提交。
+前置状态：HEAD 标题为「Feat(execution-service): 原子取消排队 Run」，工作树干净。私有 cancel 路由与 Store.cancelQueuedRun 存在。Orchestrator 类型检查和 2 项 queued cancellation 测试通过。
 
 文件清单（4）：修改 `apps/orchestrator/execution-service/{types,store,service.test}.ts` 和本 RUNBOOK。
 

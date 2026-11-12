@@ -108,11 +108,11 @@ export function executionHttp(
             }
 
             const route =
-                /^\/v1\/projects\/([^/]+)(?:\/(runs)(?:\/([^/]+)(\/(diff))?)?)?$/.exec(
+                /^\/v1\/projects\/([^/]+)(?:\/(runs)(?:\/([^/]+)(\/(diff|cancel))?)?)?$/.exec(
                     pathname ?? '',
                 );
             if (!route) throw missing();
-            const [, projectId, runs, runId, , diff] = route;
+            const [, projectId, runs, runId, , action] = route;
             if (!projectId) throw missing();
             if (!runs && req.method === 'GET')
                 return json(res, 200, store.project(owner, projectId));
@@ -139,8 +139,14 @@ export function executionHttp(
                     return;
                 }
             }
-            if (runId && req.method === 'GET') {
-                if (diff)
+            if (runId && action === 'cancel' && req.method === 'POST') {
+                const run = store.cancelQueuedRun(owner, projectId, runId);
+                json(res, 200, run);
+                wake();
+                return;
+            }
+            if (runId && req.method === 'GET' && action !== 'cancel') {
+                if (action === 'diff')
                     return send(
                         res,
                         200,

@@ -404,16 +404,14 @@ export async function serveExecution(options: Options) {
             try {
                 before = textSnapshot(await host.snapshot(binding));
             } catch {
-                db.status(
-                    queued.id,
-                    'failed',
-                    'Workspace baseline could not be captured.',
-                );
+                db.failQueuedBaseline(queued.id);
                 return;
             }
             if (stop.signal.aborted) return;
-            if (!db.start(queued.id, before, slots))
+            if (!db.start(queued.id, before, slots)) {
+                if (db.findRun(queued.id).status === 'cancelled') return;
                 throw new Error('Execution host has pending recovery work');
+            }
             try {
                 if (
                     (await worker(queued, binding, 'execute', slot)) ===
@@ -435,6 +433,8 @@ export async function serveExecution(options: Options) {
                 slots,
                 async (runId) => {
                     stop.signal.throwIfAborted();
+                    const run = db.findRun(runId);
+                    if (run.status === 'cancelled') return;
                     if (importing || [...assigned.values()].includes(runId))
                         throw new Error('Execution host is occupied');
                     const slot = assigned.has(0) ? 1 : 0;
@@ -443,7 +443,6 @@ export async function serveExecution(options: Options) {
                     assigned.set(slot, runId);
                     try {
                         // Keep the same slot through execution and recovery.
-                        const run = db.findRun(runId);
                         if (
                             run.status === 'queued' &&
                             !db.dispatchReserved(runId)
