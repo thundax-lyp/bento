@@ -126,3 +126,100 @@ test('已保存文件只读预览并保留下载', async ({ page, baseURL }) => 
         });
     }
 });
+
+test('单文件删除确认后等待服务器回收额度', async ({ page, baseURL }) => {
+    const file = savedFile('delete-fixture', 7);
+    let state: 'saved' | 'deleting' | 'deleted' = 'saved';
+    const writes: {
+        method: string;
+        path: string;
+        origin: string | undefined;
+    }[] = [];
+    await page.route('**/api/session', (route) =>
+        route.fulfill({ json: { account: 'delete-demo' } }),
+    );
+    await page.route('**' + projectApi, (route) =>
+        route.fulfill({
+            json: {
+                ...project,
+                files: state === 'saved' ? [file] : [],
+                execution: { state: 'uninitialized' },
+            },
+        }),
+    );
+    await page.route('**/api/space', (route) =>
+        route.fulfill({
+            json: {
+                projects: [project],
+                uploads: state === 'deleted' ? [] : [{ ...file, state }],
+                quota: 100,
+                fileLimit: 4000000000,
+                partSize: 16777216,
+                saved: state === 'deleted' ? 0 : file.size,
+                reserved: 0,
+            },
+        }),
+    );
+    await page.route('**' + fileApi + file.id, (route) => {
+        const request = route.request();
+        writes.push({
+            method: request.method(),
+            path: new URL(request.url()).pathname,
+            origin: request.headers().origin,
+        });
+        if (writes.length === 1)
+            return route.fulfill({
+                status: 409,
+                json: {
+                    error: {
+                        code: 'project_busy',
+                        message: '文件正在被未结束的任务使用。',
+                    },
+                },
+            });
+        state = 'deleting';
+        return route.fulfill({ status: 202, json: { state } });
+    });
+    await page.goto(spaceUrl);
+    await page.getByLabel('文件', { exact: true }).setInputFiles({
+        name: 'quota-check.txt',
+        mimeType: 'text/plain',
+        buffer: Buffer.alloc(0),
+    });
+    const row = page.getByRole('listitem').filter({ hasText: file.path });
+    const open = row.getByRole('button', { name: '删除文件' });
+    const download = row.getByRole('link', { name: '下载文件' });
+    const confirm = page.getByRole('group', { name: '确认删除文件' });
+    const apply = confirm.getByRole('button', { name: '确认删除' });
+    const checklist = page.getByRole('region', { name: '上传前清单' });
+    await expect(checklist).toContainText('可用额度 93 字节');
+
+    await open.click();
+    await expect(confirm).toContainText(file.path);
+    await expect(download).toBeVisible();
+    await confirm.getByRole('button', { name: '保留文件' }).click();
+    expect(writes).toEqual([]);
+
+    await open.click();
+    await apply.click();
+    await expect(page.getByRole('alert')).toHaveText(
+        '文件正在被未结束的任务使用。',
+    );
+    await expect(download).toBeVisible();
+    await open.click();
+    await apply.click();
+    await expect(row).toContainText('正在删除');
+    await expect(download).toHaveCount(0);
+    await expect(checklist).toContainText('可用额度 93 字节');
+
+    state = 'deleted';
+    await expect(row).toHaveCount(0);
+    await expect(checklist).toContainText('可用额度 100 字节');
+    expect(writes).toEqual(
+        Array.from({ length: 2 }, () => ({
+            method: 'DELETE',
+            path: fileApi + file.id,
+            origin: new URL(baseURL!).origin,
+        })),
+    );
+});

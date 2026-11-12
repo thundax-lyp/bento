@@ -16,34 +16,9 @@ WEB-03 单文件生命周期与 WEB-07 取消 Run 各在独立分支编写和验
 
 ## 机械步骤
 
-### T6：单文件删除确认与反馈
-
-前置状态：HEAD 已包含空间 DELETE 端点、删除阶段持久化、sweep 恢复和浏览器只读 deleting 状态。workspace-api 与 Web typecheck、space-files.test.ts 两个 fixture 已通过。
-
-允许修改：`apps/workspace/web/src/space-api.ts`、`apps/workspace/web/src/space.tsx`、`apps/workspace/web/e2e/space-preview.spec.ts` 及本文。另核对 `apps/workspace/web/playwright.config.ts`。共 5 个文件。
-
-禁止修改：项目级删除、任务历史、原下载、上传及取消。
-
-执行：
-
-1. 新增 `deleteSpaceFile(id:string): Promise<'deleting'|'deleted'>`，复用 `request` 同源 DELETE，15 秒超时，202 映射 deleting，204 映射 deleted。其他响应走现有失败提示。 `spaceQuery` 仅在当前数据含 deleting 时每 2 秒回读。
-2. 在 `CloudProject` 的 saved 行加「删除文件」，先显示原路径和影响「将删除这个原文件，清理完成后释放额度。已有任务与补丁仍可查看」。确认前保留下载，取消确认零请求。确认只发一次同 ID DELETE，关闭同文件预览并刷新空间和项目，202 依服务端状态显示清理中，204 移除该行，额度只由 GET 更新。409 显示服务器原因，503/网络超时提示「暂未确认删除结果，请刷新后重试」，不自动发起 DELETE；再次确认沿用同 fileId。正在删除行仅展示状态。
-3. 在现有 Chromium fixture 追加单文件删除用例。验证取消确认零写入、409 保留下载、随后确认得到 202 时下载消失且额度未变、后台状态推进后同一行消失并释放正确字节。已有预览用例仍通过。
-
-验证：
-
-```bash
-pnpm --filter @bento/web typecheck
-pnpm --filter @bento/web test:e2e space-preview.spec.ts
-```
-
-PASS：两条退出 0，现有预览和删除交互 fixture 全部通过。
-
-STOP：出现提前扣减、取消也发请求、跳过确认或误删历史的行为。
-
 ### T7：同步接口、设计和验证证据
 
-前置状态：T1–T6 的源码和 fixture 已提交，所有列明的聚焦命令通过。用已提交步骤的验证输出确认，不重复读取代码或运行测试。
+前置状态：HEAD 已含预览和单文件删除的账本、API、界面及 fixture，各产物按步提交。Orchestrator、workspace-api 与 Web typecheck，以及 T1–T6 的 Node 和 Chromium 聚焦用例均已通过。
 
 允许修改：`docs/20-interfaces/WEB-INTERFACE.md`、`docs/30-designs/WEB-DESIGN.md`、`docs/40-readiness/CURRENT-READINESS.md`、`apps/workspace/api/README.md`，最后删除本文。共 5 个文件。
 

@@ -1,5 +1,5 @@
 import { queryOptions } from '@tanstack/react-query';
-import { ApiError, json, post } from './api';
+import { ApiError, json, post, request } from './api.ts';
 
 export type Upload = {
     id: string;
@@ -54,6 +54,10 @@ export const spaceQuery = (account: string) =>
                 throw error;
             }
         },
+        refetchInterval: ({ state }) =>
+            state.data?.uploads.some((item) => item.state === 'deleting')
+                ? 2000
+                : false,
     });
 export const spaceProjectQuery = (account: string, id: string) =>
     queryOptions({
@@ -80,6 +84,18 @@ export const getUpload = (id: string) =>
     );
 export const downloadFileUrl = (id: string) =>
     root + '/files/' + encodeURIComponent(id) + '/download';
+
+export async function deleteSpaceFile(
+    id: string,
+): Promise<'deleting' | 'deleted'> {
+    const response = await request(root + '/files/' + encodeURIComponent(id), {
+        method: 'DELETE',
+        signal: AbortSignal.timeout(15_000),
+    });
+    if (response.status === 202) return 'deleting';
+    if (response.status === 204) return 'deleted';
+    throw new Error('Unexpected deletion response');
+}
 
 export type PreviewResult =
     | { kind: 'text'; text: string }

@@ -5,6 +5,7 @@ import { Link, useNavigate, useOutletContext, useParams } from 'react-router';
 import {
     cancelUpload,
     createSpaceProject,
+    deleteSpaceFile,
     downloadFileUrl,
     getUpload,
     prepareWorkspace,
@@ -280,6 +281,10 @@ function CloudProject({ account, id }: { account: string; id: string }) {
     const [folderChoices, setFolderChoices] = useState<UploadChoice[]>([]);
     const [files, setFiles] = useState<string[]>([]);
     const [previewId, setPreviewId] = useState<string>();
+    const [deleteTarget, setDeleteTarget] = useState<{
+        id: string;
+        path: string;
+    }>();
     async function refresh() {
         await Promise.all([
             client.invalidateQueries({
@@ -377,6 +382,18 @@ function CloudProject({ account, id }: { account: string; id: string }) {
         mutationFn: cancelUpload,
         onSettled: refresh,
     });
+    const remove = useMutation({
+        mutationFn: deleteSpaceFile,
+        onSuccess(_result, fileId) {
+            setPreviewId((current) =>
+                current === fileId ? undefined : current,
+            );
+        },
+        onSettled() {
+            setDeleteTarget(undefined);
+            return refresh();
+        },
+    });
     const init = useMutation({
         mutationFn(fileIds: string[]) {
             const key = JSON.stringify([
@@ -402,6 +419,11 @@ function CloudProject({ account, id }: { account: string; id: string }) {
     const preview = uploads.find(
         (file) => file.id === previewId && file.state === 'saved',
     );
+    const removalError =
+        remove.error &&
+        ('status' in remove.error && remove.error.status !== 503
+            ? message(remove.error)
+            : '暂未确认删除结果，请刷新后重试。');
     const selectable =
         execution.state === 'uninitialized' ||
         (execution.state === 'failed' && !execution.projectId);
@@ -577,6 +599,19 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                                     >
                                         下载文件
                                     </a>
+                                    <Button
+                                        type="button"
+                                        disabled={remove.isPending}
+                                        onClick={() => {
+                                            remove.reset();
+                                            setDeleteTarget({
+                                                id: file.id,
+                                                path: file.path,
+                                            });
+                                        }}
+                                    >
+                                        删除文件
+                                    </Button>
                                 </div>
                             ) : (
                                 <span className="text-sm text-zinc-600">
@@ -610,6 +645,36 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                         </li>
                     ))}
                 </ul>
+                {deleteTarget && (
+                    <div
+                        role="group"
+                        aria-label="确认删除文件"
+                        className="space-y-2 rounded border border-zinc-200 p-3"
+                    >
+                        <p className="break-all">{deleteTarget.path}</p>
+                        <p>
+                            将删除这个原文件，清理完成后释放额度。已有任务与补丁仍可查看。
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                            <Button
+                                type="button"
+                                disabled={remove.isPending}
+                                onClick={() => setDeleteTarget(undefined)}
+                            >
+                                保留文件
+                            </Button>
+                            <Button
+                                type="button"
+                                primary
+                                disabled={remove.isPending}
+                                onClick={() => remove.mutate(deleteTarget.id)}
+                            >
+                                确认删除
+                            </Button>
+                        </div>
+                    </div>
+                )}
+                {removalError && <Notice message={removalError} />}
                 {preview && (
                     <FilePreview
                         key={preview.id}
