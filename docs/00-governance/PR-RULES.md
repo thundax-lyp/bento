@@ -22,13 +22,14 @@
 
 ## Branch Rules
 
-- 分支名使用简短、稳定的英文语义，遵循当前工作环境要求的前缀。
+- 新建本地或远端分支须有明确授权。分支名使用简短、稳定的英文语义，遵循当前工作环境要求的前缀。
+- 已授权提交的本轮改动可直接快进推送到已核实的现有远端开发分支。
 - 分支围绕同一阶段目标，不混入无关工作；其中 commit 遵循 Commit Rules。
 
 ## PR Title And Description
 
 - 标题使用 `Type(scope): <阶段性交付结果>`。类型大小写遵循 [Commit Rules](./COMMIT-RULES.md#commit-message)，scope 从 [Scope Registry](./COMMIT-RULES.md#scope-registry) 选择。
-- 描述说明变更前后的行为、影响范围和审阅所需信息；仓库提供模板时使用模板。
+- 使用 [PR 正文模板](../../.github/pull_request_template.md)说明变更前后的行为、影响范围和审阅所需信息。
 - 验证说明必须填写实际命令、结果与边界；不适用时写 `N/A` 和原因。未完成检查不可勾选为通过。
 - 不写凭据、本地绝对路径、个人机器信息、临时草稿或 Agent 内部执行过程。简单变更可在各适用栏位用一句话说明，不重复展开同一结论。
 
@@ -41,7 +42,7 @@
 ## GitHub Tooling And Authorization
 
 - GitHub Connector 与本机 GitHub CLI（`gh`）使用的凭据和授权范围可能不同；Connector 返回 `integration forbidden` 或不支持目标操作时，可以切换到本机已认证的 `gh`，不应仅据此判定 GitHub 操作失败。
-- 切换调用通道不得扩大原始用户授权范围。尤其是 resolve、reply、reaction、删除评论、push、关闭或合并等写操作，必须仍然逐项对应用户请求和本规则。
+- 切换调用通道不得扩大原始用户授权范围。尤其是 resolve、reply、reaction、删除评论、关闭或合并等写操作，必须仍然逐项对应用户请求和本规则。
 - 使用 `gh` 前必须核对仓库、PR、线程或评论 ID，并确认 `gh auth status` 具备目标仓库访问权限。
 - 每次 GitHub 写操作后必须回读对应资源确认最终状态；CLI 命令成功返回不能替代状态确认。
 - 可重复的 Skill 应在其自身说明中引用本节，并记录实际使用的调用通道、权限失败原因（如有）、回读结果和未完成项。

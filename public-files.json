@@ -11,6 +11,7 @@
         ".agents/skills/bento-pr-review/scripts/collect-review-context.mjs",
         ".dockerignore",
         ".editorconfig",
+        ".github/pull_request_template.md",
         ".github/workflows/checks.yml",
         ".gitignore",
         ".prettierignore",
