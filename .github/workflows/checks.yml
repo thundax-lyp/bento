@@ -63,6 +63,14 @@ jobs:
                   await import('./apps/workspace/api/space-storage.ts');
                   await import('./apps/workspace/api/space-execution.ts');"
 
+            - name: Generate a patch in the Orchestrator runtime image
+              run: >-
+                  docker run --rm --entrypoint node bento-orchestrator --input-type=module -e
+                  "import assert from 'node:assert/strict';
+                  import { unifiedDiff } from './apps/orchestrator/execution-service/diff.ts';
+                  const patch = await unifiedDiff([{path:'file.txt',text:'before\n'}], [{path:'file.txt',text:'after\n'}]);
+                  assert.match(patch, /\+after/);"
+
     browser:
         name: Web Chromium E2E
         runs-on: ubuntu-24.04
