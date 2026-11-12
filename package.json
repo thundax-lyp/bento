@@ -8,14 +8,14 @@
         "node": ">=22"
     },
     "scripts": {
-        "typecheck": "pnpm --filter @bento/workspace-api --filter @bento/orchestrator --filter @bento/worker run typecheck",
+        "check": "pnpm check:workspace && pnpm check:orchestrator && pnpm check:worker && pnpm lint && pnpm format:check",
+        "check:workspace": "pnpm --filter @bento/workspace-api check && pnpm --filter @bento/web check",
+        "check:orchestrator": "pnpm --filter @bento/orchestrator check",
+        "check:worker": "pnpm --filter @bento/worker typecheck",
         "lint": "eslint .",
         "lint:fix": "eslint . --fix",
         "format": "prettier --write .",
-        "format:check": "prettier --check .",
-        "check": "pnpm check:go && pnpm typecheck && pnpm lint && pnpm format:check && pnpm check:execution && pnpm --filter @bento/web check",
-        "check:execution": "pnpm --filter @bento/orchestrator test",
-        "check:go": "(cd apps/orchestrator && go test ./... && go vet ./...) && (cd apps/workspace/api/go && go test ./... && go vet ./...)"
+        "format:check": "prettier --check ."
     },
     "devDependencies": {
         "@eslint/js": "^10.0.1",

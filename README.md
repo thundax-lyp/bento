@@ -39,4 +39,6 @@ pnpm check
 pnpm format
 ```
 
+可按工程运行 `pnpm check:workspace`（个人端认证、API 和 Web）、`pnpm check:orchestrator`（Run 编排与执行宿主）或 `pnpm check:worker`（独立 Worker）。
+
 使用 ESLint 与 Prettier，统一 4 空格缩进。
