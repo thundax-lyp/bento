@@ -34,7 +34,7 @@ docker compose -f deploy/compose.yaml up -d --build
 docker compose -f deploy/compose.yaml ps
 ```
 
-Compose 在数据库、Keycloak 和 Orchestrator 健康后启动 Web。打开 Bento 首页，使用组织邀请完成登录，检查同一账号重复登录复用稳定 `owner_id`。提交任务并通过原链接读取结果。启用文件空间时，从浏览器验证 S3 分块上传和下载。
+Compose 在数据库、Keycloak 和 Orchestrator 健康后启动 Web。使用默认回环 issuer 时，Web 会等待 NGINX 代理的 OIDC discovery 可用，再启动 API。打开 Bento 首页，使用组织邀请完成登录，检查同一账号重复登录复用稳定 `owner_id`。提交任务并通过原链接读取结果。启用文件空间时，从浏览器验证 S3 分块上传和下载。
 
 启动失败时运行 `docker compose -f deploy/compose.yaml logs --tail=100`。核对 Realm 导入、OIDC 客户端配置、容器对 issuer 的连通性，以及适配器的启动日志。用同一 Compose 项目名执行 `stop` 和 `up -d` 恢复。保留命名卷以延续账号、身份、空间及执行状态。
 
