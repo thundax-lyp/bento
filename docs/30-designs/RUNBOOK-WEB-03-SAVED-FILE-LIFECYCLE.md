@@ -8,7 +8,7 @@
 
 本节在机械步骤之外，不计步骤和文件数。核对干净基线与获授权的执行分支、Node 22、锁定 pnpm、依赖和 Chromium headless shell。检查 4319/4320 空闲，测试对象源另用随机回环端口。以 `git status --short --branch`、`git rev-parse main origin/main` 及 `git diff --check` 核对起点。本地 fixture 不读真实配置，也不依赖主 checkout 的部署改动。维护者已在独立任务分支核对执行条件。
 
-WEB-03 单文件生命周期与 WEB-07 取消 Run 各在独立分支编写和验证。并行实施时，本计划的预览 T1–T2 可先行。进入共享账本和 API 改动前，由协调方确认双方基线和合入顺序。第一项合入后，后合入者基于包含该项的最新 main，只重跑受交叠影响的 Run 入队、取消状态和单文件删除门禁竞态 fixture。
+WEB-03 单文件生命周期与 WEB-07 取消 Run 各在独立分支编写和验证。并行实施时，本计划的预览 T1–T2 可先行。已核对两个分支共同基线 b33c8e7，用户确认 WEB-03 先合入、WEB-07 后合入。WEB-07 在包含 WEB-03 的最新 main 上聚焦复验交叠的 Run 入队、取消状态和单文件删除门禁。
 
 ## 执行与提交
 
@@ -16,35 +16,9 @@ WEB-03 单文件生命周期与 WEB-07 取消 Run 各在独立分支编写和验
 
 ## 机械步骤
 
-### T3：在 Run 账本加单文件删除门禁
-
-前置状态：HEAD 已包含 preview 路由、CloudProject 文本预览和两套 fixture。workspace-api 与 Web typecheck、space-files.test.ts、Chromium space-preview.spec.ts 已通过。执行服务仍由 executionHttp 调 Store.addRun。
-
-允许修改：`apps/orchestrator/execution-service/store.ts`、`apps/orchestrator/execution-service/http.ts`、`apps/orchestrator/execution-service/service.test.ts` 及本文。另核对 `apps/orchestrator/execution-service/input.ts`、`apps/workspace/api/go/main.go`，创建和删除临时 fixture `execution.sqlite`。共 7 个文件。
-
-禁止修改：公开 Run 接口、Go 转发、调度、Workspace 数据和历史结果。
-
-执行：
-
-1. 在 Store 建 `file_delete_holds(projectId TEXT REFERENCES projects(id) ON DELETE CASCADE, operationId TEXT, state TEXT CHECK(state IN ('held','denied','released')), PRIMARY KEY(projectId,operationId)) STRICT`，三字段均 NOT NULL。owner 由 `ownedProject` 从现有项目记录核验。operationId 由空间 API 为一次删除尝试生成 UUID，原尝试始终复用。
-2. 新增 `Store.acquireFileDeleteHold(owner,projectId,operationId)` 和 `Store.releaseFileDeleteHold(owner,projectId,operationId)`，字符串入参，结果 `{state:'held'|'denied'|'released'}`。使用同步 `BEGIN IMMEDIATE`，失败回滚。acquire 先核验项目归属并返回同操作已有状态。首次检查账号可写、项目不在 importing，且没有 `pending` 集合中的 Run。未满足项目/Run 条件写入 denied，否则写入 held。release 按原键写 released，即使操作记录缺失也留下 released，阻止迟到 acquire 复活。多个不同文件可各持有一条 held。账号关闭沿用原写入门禁，项目注销级联清表。
-3. 将 `Store.addRun` 的现有检查和写入放到同一个 `BEGIN IMMEDIATE` 事务。保留同键同内容回读，回读不产生新 Run。新入队前遇项目任一 held，抛 `conflict('project_busy', 'A project file is being deleted.')`。复用现有 pending 状态集，所有返回提交事务、异常回滚。通过 `executionHttp` 原 bearer/owner 门禁暴露 `POST|DELETE /v1/projects/{projectId}/file-deletion-holds/{operationId}`，无请求体，UUID 格式按版本 4，成功均 200 JSON 状态。其他方法沿用 missing。
-4. 在现有 `service.test.ts` 增加 `file deletion hold fences Run admission`。用 `mkdtemp` 内的 `execution.sqlite` 创建 Store，`executionHttp` 监听随机回环端口，使用现有 fixture bearer。断言错误 owner 返回 404，Run 先入队时 hold denied 并在 Run 结束后同操作仍 denied；新操作 held 时拒新 Run，原 Run/diff 仍可读，重开 Store 仍拒，release 后允许新 Run，迟到同操作 acquire 只返回 released。关闭 HTTP 与 DB fixture。
-
-验证：
-
-```bash
-pnpm --filter @bento/orchestrator typecheck
-node --experimental-strip-types --test --test-name-pattern='file deletion hold fences Run admission' apps/orchestrator/execution-service/service.test.ts
-```
-
-PASS：两条退出 0，两个入队顺序、跨账号、重启、释放和迟到请求断言成立。
-
-STOP：门禁只能用非原子的查询替代，或需要改变 Run 历史或公共接口。
-
 ### T4：接通空间 API 与私有门禁
 
-前置状态：T3 的私有接口和事务 fixture 已通过并提交。
+前置状态：HEAD 已包含 Store 的持久门禁及 executionHttp 私有路由。Orchestrator typecheck 和 file deletion hold fences Run admission 已通过。
 
 允许修改：`apps/workspace/api/protocol.ts`、`apps/workspace/api/execution-service-http.ts`、`apps/workspace/api/mock.ts`、新增 `apps/workspace/api/file-delete-hold.test.ts`、`public-files.json` 及本文。共 6 个文件。
 

@@ -53,6 +53,8 @@ const runView = ({
     ...(summary === null ? {} : { summary }),
 });
 const now = () => new Date().toISOString();
+type FileDeleteHold = { state: 'held' | 'denied' | 'released' };
+
 const pending = "('queued','running','recovering','needs_review')";
 
 export function projectBinding(project: Project): Binding {
@@ -88,6 +90,12 @@ export class Store {
                 owner TEXT NOT NULL, key TEXT NOT NULL, digest TEXT NOT NULL,
                 projectId TEXT NOT NULL REFERENCES projects(id), PRIMARY KEY(owner,key)
             );
+            CREATE TABLE IF NOT EXISTS file_delete_holds (
+                projectId TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                operationId TEXT NOT NULL,
+                state TEXT NOT NULL CHECK(state IN ('held','denied','released')),
+                PRIMARY KEY(projectId,operationId)
+            ) STRICT;
             CREATE TABLE IF NOT EXISTS runs (
                 id TEXT PRIMARY KEY, projectId TEXT NOT NULL REFERENCES projects(id), sessionId TEXT NOT NULL,
                 key TEXT NOT NULL, prompt TEXT NOT NULL, status TEXT NOT NULL,
@@ -277,7 +285,77 @@ export class Store {
         ).map(projectView);
     }
 
+    private write<T>(action: () => T): T {
+        this.db.exec('BEGIN IMMEDIATE');
+        try {
+            const result = action();
+            this.db.exec('COMMIT');
+            return result;
+        } catch (error) {
+            this.db.exec('ROLLBACK');
+            throw error;
+        }
+    }
+
+    acquireFileDeleteHold(
+        owner: string,
+        projectId: string,
+        operationId: string,
+    ): FileDeleteHold {
+        return this.write(() => {
+            const project = this.ownedProject(owner, projectId);
+            const prior = this.db
+                .prepare(
+                    'SELECT state FROM file_delete_holds WHERE projectId=? AND operationId=?',
+                )
+                .get(projectId, operationId) as FileDeleteHold | undefined;
+            if (prior) return prior;
+            this.requireOpenOwner(owner);
+            const busy = this.db
+                .prepare(
+                    `SELECT 1 FROM runs WHERE projectId=? AND status IN ${pending}`,
+                )
+                .get(projectId);
+            const state =
+                project.status === 'importing' || busy ? 'denied' : 'held';
+            this.db
+                .prepare(
+                    'INSERT INTO file_delete_holds (projectId,operationId,state) VALUES (?,?,?)',
+                )
+                .run(projectId, operationId, state);
+            return { state };
+        });
+    }
+
+    releaseFileDeleteHold(
+        owner: string,
+        projectId: string,
+        operationId: string,
+    ): FileDeleteHold {
+        return this.write(() => {
+            this.ownedProject(owner, projectId);
+            this.db
+                .prepare(
+                    `
+                INSERT INTO file_delete_holds (projectId,operationId,state) VALUES (?,?,'released')
+                ON CONFLICT(projectId,operationId) DO UPDATE SET state='released'
+            `,
+                )
+                .run(projectId, operationId);
+            return { state: 'released' };
+        });
+    }
+
     addRun(owner: string, projectId: string, key: string, prompt: string) {
+        return this.write(() => this.enqueueRun(owner, projectId, key, prompt));
+    }
+
+    private enqueueRun(
+        owner: string,
+        projectId: string,
+        key: string,
+        prompt: string,
+    ) {
         this.requireOpenOwner(owner);
         const project = this.ownedProject(owner, projectId);
         const previous = this.db
@@ -291,6 +369,14 @@ export class Store {
                 );
             return { replay: true, run: runView(previous) };
         }
+        if (
+            this.db
+                .prepare(
+                    "SELECT 1 FROM file_delete_holds WHERE projectId=? AND state='held'",
+                )
+                .get(projectId)
+        )
+            throw conflict('project_busy', 'A project file is being deleted.');
         if (project.status !== 'ready')
             throw conflict('project_not_ready', 'Project is not ready.');
         if (

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { openSync, closeSync, fsyncSync, writeSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -13,6 +14,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { PersistenceFence } from '../openshell/persistence-fence.ts';
 import { SingleHostExecution } from '../openshell/single-host.ts';
+import { executionHttp } from './http.ts';
 import { localHost } from './local.ts';
 import { completedTurn } from '../../worker/dsh-worker.ts';
 import { Store } from './store.ts';
@@ -273,6 +275,129 @@ if (process.argv[2] === '--effect-worker') {
         assert.equal(completedTurn([unknown, completed]), false);
         assert.equal(completedTurn([]), false);
     });
+    test('file deletion hold fences Run admission', async () => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-file-hold-'));
+        const database = join(state, 'execution.sqlite');
+        let store = new Store(database);
+        let server: ReturnType<typeof executionHttp> | undefined;
+        async function listen() {
+            server = executionHttp(
+                store,
+                testToken,
+                () => {},
+                async () => false,
+            );
+            const listening = once(server, 'listening');
+            server.listen(0, '127.0.0.1');
+            await listening;
+            const address = server.address();
+            assert(address && typeof address !== 'string');
+            return 'http://127.0.0.1:' + address.port;
+        }
+        async function closeServer() {
+            if (!server) return;
+            await new Promise<void>((resolve, reject) => {
+                server!.close((error) => (error ? reject(error) : resolve()));
+                server!.closeAllConnections();
+            });
+            server = undefined;
+        }
+        try {
+            const owner = 'account-a';
+            const projectId = store.addProject(owner, 'Fixture', []).id;
+            store.importResult(projectId, 'ready');
+            const path = '/' + projectId;
+            const holds = path + '/file-deletion-holds/';
+            const first = store.addRun(owner, projectId, 'first', 'First').run
+                .id;
+            const denied = holds + randomUUID();
+            const held = holds + randomUUID();
+            const url = await listen();
+            const api = client(url);
+            assert.equal(
+                (await client(url, 'account-b')(held, 'POST')).status,
+                404,
+            );
+            assert.deepEqual((await api(denied, 'POST')).json(), {
+                state: 'denied',
+            });
+            store.status(first, 'succeeded', 'Done', 'fixture diff');
+            assert.deepEqual((await api(denied, 'POST')).json(), {
+                state: 'denied',
+            });
+            assert.deepEqual((await api(held, 'POST')).json(), {
+                state: 'held',
+            });
+            assert.equal(
+                (
+                    await api(
+                        path + '/runs',
+                        'POST',
+                        { prompt: 'Second' },
+                        'second',
+                    )
+                ).status,
+                409,
+            );
+            assert.equal(
+                (
+                    await api(
+                        path + '/runs',
+                        'POST',
+                        { prompt: 'First' },
+                        'first',
+                    )
+                ).json().id,
+                first,
+            );
+            assert.equal(
+                (await api(path + '/runs/' + first)).json().status,
+                'succeeded',
+            );
+            assert.equal(
+                (await api(path + '/runs/' + first + '/diff')).text,
+                'fixture diff',
+            );
+
+            await closeServer();
+            store.close();
+            store = new Store(database);
+            const reopened = client(await listen());
+            assert.equal(
+                (
+                    await reopened(
+                        path + '/runs',
+                        'POST',
+                        { prompt: 'Second' },
+                        'second',
+                    )
+                ).status,
+                409,
+            );
+            assert.deepEqual((await reopened(held, 'DELETE')).json(), {
+                state: 'released',
+            });
+            assert.deepEqual((await reopened(held, 'POST')).json(), {
+                state: 'released',
+            });
+            assert.equal(
+                (
+                    await reopened(
+                        path + '/runs',
+                        'POST',
+                        { prompt: 'Second' },
+                        'second',
+                    )
+                ).status,
+                202,
+            );
+        } finally {
+            await closeServer();
+            store.close();
+            await rm(state, { recursive: true, force: true });
+        }
+    });
+
     test('tenant queue limits and selected reservations survive restart and count recovery', async () => {
         const state = await mkdtemp(join(tmpdir(), 'bento-fair-queue-'));
         const file = join(state, 'business.sqlite');
