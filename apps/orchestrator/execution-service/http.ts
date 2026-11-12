@@ -108,6 +108,36 @@ export function executionHttp(
                 }
             }
 
+            const hold =
+                /^\/v1\/projects\/([^/]+)\/file-deletion-holds\/([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/.exec(
+                    pathname ?? '',
+                );
+            if (hold) {
+                const [, projectId, operationId] = hold;
+                if (!projectId || !operationId) throw missing();
+                if (req.method === 'POST')
+                    return json(
+                        res,
+                        200,
+                        store.acquireFileDeleteHold(
+                            owner,
+                            projectId,
+                            operationId,
+                        ),
+                    );
+                if (req.method === 'DELETE')
+                    return json(
+                        res,
+                        200,
+                        store.releaseFileDeleteHold(
+                            owner,
+                            projectId,
+                            operationId,
+                        ),
+                    );
+                throw missing();
+            }
+
             const route =
                 /^\/v1\/projects\/([^/]+)(?:\/(runs)(?:\/([^/]+)(\/(diff|cancel))?)?)?$/.exec(
                     pathname ?? '',

@@ -23,19 +23,6 @@ type Init = {
 };
 const maxBytes = 1024 * 1024;
 
-function view(row: Init | undefined) {
-    if (!row) return { state: 'uninitialized' as const };
-    const inputs = (JSON.parse(row.inputs) as Input[]).map(
-        ({ fileId, path, size }) => ({ fileId, path, size, available: true }),
-    );
-    return {
-        state: row.state,
-        inputs,
-        ...(row.projectId ? { projectId: row.projectId } : {}),
-        ...(row.issues ? { issues: JSON.parse(row.issues) as Issue[] } : {}),
-    };
-}
-
 export function spaceExecution(
     db: DatabaseSync,
     backend: Backend,
@@ -82,6 +69,54 @@ export function spaceExecution(
                 'SELECT * FROM space_execution WHERE spaceId = ? ORDER BY rowid DESC LIMIT 1',
             )
             .get(spaceId) as Init | undefined;
+    }
+
+    const savedInput = db.prepare(
+        "SELECT 1 FROM space_uploads WHERE owner=? AND project=? AND id=? AND state='saved'",
+    );
+    function view(row: Init | undefined) {
+        if (!row) return { state: 'uninitialized' as const };
+        const inputs = (JSON.parse(row.inputs) as Input[]).map(
+            ({ fileId, path, size }) => ({
+                fileId,
+                path,
+                size,
+                available:
+                    savedInput.get(row.owner, row.spaceId, fileId) !==
+                    undefined,
+            }),
+        );
+        return {
+            state: row.state,
+            inputs,
+            ...(row.projectId ? { projectId: row.projectId } : {}),
+            ...(row.issues
+                ? { issues: JSON.parse(row.issues) as Issue[] }
+                : {}),
+        };
+    }
+
+    function deletionProject(
+        owner: string,
+        spaceId: string,
+        fileId: string,
+    ): string | null {
+        const row = current(spaceId);
+        if (!row) return null;
+        if (row.owner !== owner) throw notFound();
+        if (
+            !(JSON.parse(row.inputs) as Input[]).some(
+                (input) => input.fileId === fileId,
+            )
+        )
+            return null;
+        if (row.state === 'validating' || row.state === 'importing')
+            throw new RequestError(
+                409,
+                'project_importing',
+                '文件正在用于初始化工作区。',
+            );
+        return row.projectId;
     }
 
     function detail(owner: string, spaceId: string) {
@@ -272,6 +307,7 @@ export function spaceExecution(
     return {
         detail,
         start,
+        deletionProject,
         drain(owner: string) {
             draining.add(owner);
             return activeOwner !== owner;

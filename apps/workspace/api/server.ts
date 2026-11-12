@@ -233,7 +233,9 @@ export async function taskEntryServer({
                 throw notFound();
 
             if (
-                request.method === 'POST' &&
+                (request.method === 'POST' ||
+                    (request.method === 'DELETE' &&
+                        /^\/api\/space\/files\/[^/]+$/.test(path))) &&
                 request.headers.origin !== origin
             ) {
                 throw new RequestError(
@@ -304,6 +306,12 @@ export async function taskEntryServer({
                     () => readJson(request, 32 * 1024),
                     request.headersDistinct['idempotency-key'],
                 );
+                if ('deleteStatus' in result && result.deleteStatus === 204) {
+                    response.writeHead(204).end();
+                    return;
+                }
+                if ('deleteStatus' in result && result.deleteStatus === 202)
+                    return json(response, 202, { state: 'deleting' });
                 if ('executionStatus' in result)
                     return json(
                         response,

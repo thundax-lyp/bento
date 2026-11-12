@@ -33,9 +33,16 @@ export type ProjectInput = {
     files: { path: string; text: string }[];
 };
 
+export type FileDeleteHold = { state: 'held' | 'denied' | 'released' };
+
 export type Operation =
     | { kind: 'listProjects' }
     | { kind: 'purgeOwner' }
+    | {
+          kind: 'acquireFileDeleteHold' | 'releaseFileDeleteHold';
+          projectId: string;
+          operationId: string;
+      }
     | { kind: 'createProject'; input: ProjectInput; key?: string }
     | { kind: 'project' | 'listRuns'; projectId: string }
     | { kind: 'createRun'; projectId: string; prompt: string; key: string }
@@ -49,7 +56,8 @@ export type Result =
               | Run
               | { projects: Project[] }
               | { runs: Run[] }
-              | { complete: boolean };
+              | { complete: boolean }
+              | FileDeleteHold;
       }
     | { status: 200; diff: string };
 
@@ -234,6 +242,13 @@ function run(value: unknown, projectId: string, runId?: string): Run {
 
 export function publicJson(operation: Operation, value: unknown) {
     switch (operation.kind) {
+        case 'acquireFileDeleteHold':
+        case 'releaseFileDeleteHold': {
+            const { state } = object(value);
+            if (state !== 'held' && state !== 'denied' && state !== 'released')
+                throw new Error('Invalid file deletion hold result');
+            return { state } as const;
+        }
         case 'purgeOwner': {
             const { complete } = object(value);
             if (typeof complete !== 'boolean')

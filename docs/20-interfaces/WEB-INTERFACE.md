@@ -80,18 +80,19 @@
 
 ### 项目详情及目标扩展
 
-| 方法与路径                                   | 请求 | 成功响应                                                                                          |
-| -------------------------------------------- | ---- | ------------------------------------------------------------------------------------------------- |
-| `GET /api/space/projects/{spaceId}`          | 无   | `200 {id,name,execution,files}`。文件元素为 `{id,path,size}`，仅列已保存且可访问的文件。已实现。  |
-| `GET /api/space/files/{fileId}/preview`      | 无   | `302 Location`，跳转私有对象的短期读地址，浏览器以严格 UTF-8 解码并仅作纯文本渲染。最多 256 KiB。 |
-| `GET /api/space/projects/{spaceId}/deletion` | 无   | `200 {fileCount,uploadCount,runCount,diffCount,blockers}`。用于确认提示。                         |
-| `DELETE /api/space/files/{fileId}`           | 无   | `202 {state:"deleting"}` 或 `204` 已完成。                                                        |
-| `DELETE /api/space/projects/{spaceId}`       | 无   | `202 {state:"deleting"}` 或 `204` 已完成。                                                        |
+| 方法与路径                                   | 请求 | 成功响应                                                                                                  |
+| -------------------------------------------- | ---- | --------------------------------------------------------------------------------------------------------- |
+| `GET /api/space/projects/{spaceId}`          | 无   | `200 {id,name,execution,files}`。文件元素为 `{id,path,size}`，仅列已保存且可访问的文件。已实现。          |
+| `GET /api/space/files/{fileId}/preview`      | 无   | `302 Location`，跳转私有对象的短期读地址，浏览器以严格 UTF-8 解码并仅作纯文本渲染。最多 256 KiB。已实现。 |
+| `GET /api/space/projects/{spaceId}/deletion` | 无   | `200 {fileCount,uploadCount,runCount,diffCount,blockers}`。用于确认提示。                                 |
+| `DELETE /api/space/files/{fileId}`           | 无   | `202 {state:"deleting"}` 或无正文 `204`。已实现。                                                         |
+| `DELETE /api/space/projects/{spaceId}`       | 无   | `202 {state:"deleting"}` 或 `204` 已完成。                                                                |
 
 - `blockers` 为稳定错误码数组，包含 `project_busy`、`upload_pending` 或 `project_importing`，没有阻塞时为空。其中 `uploadCount` 为尚未清理的上传数，`diffCount` 统计已发布补丁，包括零字节补丁。预检查仅为提示。真正删除时重新检查。
 - 删除进入 `deleting` 后停止给待删资源签发新的访问地址。重复同一删除可查询原进度，已完成对原账号返回 `204`。项目删除包含其上传与文件、绑定的执行项目、历史任务和补丁。单个空间文件的删除保留历史任务和补丁。
-- 为兼容现有首页投影，进行中的文件删除可在原记录上追加 `deleting` 状态。记录在清理完成后从列表移除。额度按实际清理完成扣除。
-- 文本预览超限返回 `413 preview_too_large`。对象字节不能以 UTF-8 解码时，页面显示不可预览并保留附件下载。
+- 单文件删除仅接受同源、已授权请求。初始化引用返回 `409 project_importing`，有未结束 Run 使用来源时返回 `409 project_busy`。门禁结果未确认返回 `503 file_delete_unconfirmed`，可用原文件 ID 重试。越权、资源不存在和不可删除的上传状态同为 `404 not_found`。
+- 空间列表以 `deleting` 显示清理进度，清理期间计入已保存用量。确认对象不可读并释放关联门禁后，记录从空间列表移除，额度只回收一次。原账号用同文件 ID 重试返回 `204`。
+- 只有原账号的 `saved` 文件可预览，越权、未保存或不存在统一返回 `404 not_found`。预览地址有效 300 秒。元数据超限返回 `413 preview_too_large`，浏览器也检查实际读取字节。超限或无法严格解码为 UTF-8 时显示原因并保留原附件下载。
 
 ## 执行输入与任务 · WEB-04 / WEB-06
 
@@ -127,12 +128,13 @@
 
 ### 私有执行接口与目标扩展
 
-| 方法与路径                                          | 契约                                                                                                                                                        |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /v1/projects`                                 | 新增可选 `Idempotency-Key`。启用时按 owner 和提交键绑定输入，首次 `201 Project`，同键同输入重试 `200 Project`，同键异内容 `409`。旧调用保留原行为。已实现。 |
-| `POST /v1/projects/{projectId}/runs/{runId}/cancel` | 无正文。受信服务身份和 owner 校验。成功及重复返回 `200 Run`，状态冲突为 `409 run_not_cancellable`。                                                         |
-| `GET /v1/projects/{projectId}/runs/{runId}`         | 只在详情返回已持久化的 `prompt`。任务列表保持现有形态。已实现。                                                                                             |
-| `DELETE /v1/projects/{projectId}`                   | 在执行服务原子检查未结束任务并关停新写入。清理中 `202 {state:"deleting"}`，清理完 `204`。同 owner 重试可查询原删除结果。目标接口。                          |
+| 方法与路径                                                                 | 契约                                                                                                                                                          |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /v1/projects`                                                        | 新增可选 `Idempotency-Key`。启用时按 owner 和提交键绑定输入，首次 `201 Project`，同键同输入重试 `200 Project`，同键异内容 `409`。旧调用保留原行为。已实现。   |
+| `POST /v1/projects/{projectId}/runs/{runId}/cancel`                        | 无正文。受信服务身份和 owner 校验。成功及重复返回 `200 Run`，状态冲突为 `409 run_not_cancellable`。                                                           |
+| `GET /v1/projects/{projectId}/runs/{runId}`                                | 只在详情返回已持久化的 `prompt`。任务列表保持现有形态。已实现。                                                                                               |
+| `POST / DELETE /v1/projects/{projectId}/file-deletion-holds/{operationId}` | 仅服务身份与项目 owner 可用，无请求体。原键返回 `200 {state}`，state 为 `held`、`denied` 或 `released`。取得门禁与 Run 入队互斥。释放后同键不可重取。已实现。 |
+| `DELETE /v1/projects/{projectId}`                                          | 在执行服务原子检查未结束任务并关停新写入。清理中 `202 {state:"deleting"}`，清理完 `204`。同 owner 重试可查询原删除结果。目标接口。                            |
 
 ## 错误语义与兼容
 

@@ -199,6 +199,18 @@ export function spaceStorage(endpoint: string, bucket: string, region: string) {
                     throw new Error('Multipart cleanup pending');
             }
         },
+        preview(key: string) {
+            return getSignedUrl(
+                client,
+                new GetObjectCommand({
+                    Bucket: bucket,
+                    Key: key,
+                    ResponseContentType: 'application/octet-stream',
+                    ResponseCacheControl: 'no-store',
+                }),
+                { expiresIn: 300 },
+            );
+        },
         download(key: string, name: string) {
             const encoded = encodeURIComponent(name).replace(
                 /['()*]/g,

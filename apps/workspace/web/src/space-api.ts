@@ -1,5 +1,5 @@
 import { queryOptions } from '@tanstack/react-query';
-import { ApiError, json, post } from './api';
+import { ApiError, json, post, request } from './api.ts';
 
 export type Upload = {
     id: string;
@@ -12,6 +12,7 @@ export type Upload = {
         | 'completing'
         | 'cleaning'
         | 'saved'
+        | 'deleting'
         | 'cancelled'
         | 'expired'
         | 'failed';
@@ -53,6 +54,10 @@ export const spaceQuery = (account: string) =>
                 throw error;
             }
         },
+        refetchInterval: ({ state }) =>
+            state.data?.uploads.some((item) => item.state === 'deleting')
+                ? 2000
+                : false,
     });
 export const spaceProjectQuery = (account: string, id: string) =>
     queryOptions({
@@ -73,8 +78,80 @@ export const prepareWorkspace = (id: string, fileIds: string[], key: string) =>
     post<Execution>(projectPath(id) + '/execution', { fileIds }, key);
 export const cancelUpload = (id: string) =>
     post<Upload>(uploadPath(id) + '/cancel', {});
+export const getUpload = (id: string) =>
+    json<Omit<Upload, 'state'> & { state: Upload['state'] | 'deleted' }>(
+        uploadPath(id),
+    );
 export const downloadFileUrl = (id: string) =>
     root + '/files/' + encodeURIComponent(id) + '/download';
+
+export async function deleteSpaceFile(
+    id: string,
+): Promise<'deleting' | 'deleted'> {
+    const response = await request(root + '/files/' + encodeURIComponent(id), {
+        method: 'DELETE',
+        signal: AbortSignal.timeout(15_000),
+    });
+    if (response.status === 202) return 'deleting';
+    if (response.status === 204) return 'deleted';
+    throw new Error('Unexpected deletion response');
+}
+
+export type PreviewResult =
+    | { kind: 'text'; text: string }
+    | { kind: 'too_large' | 'not_utf8' | 'unavailable' };
+
+export async function previewFile(
+    id: string,
+    signal: AbortSignal,
+): Promise<PreviewResult> {
+    const limit = 256 * 1024;
+    try {
+        const response = await fetch(
+            root + '/files/' + encodeURIComponent(id) + '/preview',
+            {
+                credentials: 'same-origin',
+                cache: 'no-store',
+                referrerPolicy: 'no-referrer',
+                signal: AbortSignal.any([signal, AbortSignal.timeout(15_000)]),
+            },
+        );
+        if (response.status !== 200) {
+            await response.body?.cancel().catch(() => {});
+            return {
+                kind: response.status === 413 ? 'too_large' : 'unavailable',
+            };
+        }
+        const reader = response.body?.getReader();
+        if (!reader) return { kind: 'text', text: '' };
+        const bytes = new Uint8Array(limit);
+        let length = 0;
+        try {
+            while (true) {
+                const chunk = await reader.read();
+                if (chunk.done) break;
+                if (chunk.value.length > limit - length)
+                    return { kind: 'too_large' };
+                bytes.set(chunk.value, length);
+                length += chunk.value.length;
+            }
+            try {
+                const text = new TextDecoder('utf-8', {
+                    fatal: true,
+                    ignoreBOM: true,
+                }).decode(bytes.subarray(0, length));
+                return { kind: 'text', text };
+            } catch {
+                return { kind: 'not_utf8' };
+            }
+        } finally {
+            await reader.cancel().catch(() => {});
+            reader.releaseLock();
+        }
+    } catch {
+        return { kind: 'unavailable' };
+    }
+}
 
 export async function transferFile(
     project: string,
