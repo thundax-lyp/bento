@@ -123,6 +123,11 @@ export function CloudProjectRoute() {
 type UploadChoice =
     { path: string; file: File } | { path: string; file: null; reason: string };
 type UploadItem = { path: string; file: File; uploadId?: string };
+type UploadRow = {
+    path: string;
+    status: string;
+    parts?: { confirmedParts: number; totalParts: number };
+};
 
 function droppedChoices(items: DataTransferItemList): UploadChoice[] {
     return Array.from(items)
@@ -367,7 +372,7 @@ function CloudProject({ account, id }: { account: string; id: string }) {
         deletionKey,
         checkDeletion,
     ]);
-    const [progress, setProgress] = useState('');
+    const [uploadRows, setUploadRows] = useState<UploadRow[]>([]);
     const [fileChoices, setFileChoices] = useState<UploadChoice[]>([]);
     const [folderChoices, setFolderChoices] = useState<UploadChoice[]>([]);
     const [files, setFiles] = useState<string[]>([]);
@@ -386,6 +391,19 @@ function CloudProject({ account, id }: { account: string; id: string }) {
             }),
         ]);
     }
+    function updateUploadRow(
+        path: string,
+        status: string,
+        parts?: UploadRow['parts'],
+    ): void {
+        setUploadRows((rows) =>
+            rows.map((row) =>
+                row.path === path
+                    ? { ...row, status, ...(parts ? { parts } : {}) }
+                    : row,
+            ),
+        );
+    }
     const upload = useMutation({
         async mutationFn({
             selected,
@@ -394,13 +412,13 @@ function CloudProject({ account, id }: { account: string; id: string }) {
             selected: UploadItem[];
             config: Space;
         }) {
-            const results: { path: string; status: string }[] = [];
             let signedOut = false;
             for (const { path, file, uploadId } of selected) {
                 if (signedOut) {
-                    results.push({ path, status: '请重新登录后重选文件。' });
+                    updateUploadRow(path, '未开始，请重新登录后重选文件。');
                     continue;
                 }
+                updateUploadRow(path, '正在准备上传…');
                 const key = JSON.stringify([
                     'bento:upload',
                     account,
@@ -415,7 +433,14 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                         !config.uploads.some((item) => item.id === cached)
                     ) {
                         const status = await getUpload(cached).catch(
-                            () => undefined,
+                            (error: unknown) => {
+                                if (
+                                    error instanceof ApiError &&
+                                    error.status === 401
+                                )
+                                    throw error;
+                                return undefined;
+                            },
                         );
                         if (status?.state === 'deleted') cached = null;
                     }
@@ -438,10 +463,23 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                         path,
                         config.partSize,
                         (status) => {
-                            setProgress(path + ' · ' + status);
+                            switch (status.phase) {
+                                case 'checking':
+                                    updateUploadRow(path, '正在校验文件…');
+                                    break;
+                                case 'transferring':
+                                    updateUploadRow(path, '上传中', {
+                                        confirmedParts: status.confirmedParts,
+                                        totalParts: status.totalParts,
+                                    });
+                                    break;
+                                case 'completing':
+                                    updateUploadRow(path, '正在确认上传结果…');
+                                    break;
+                            }
                         },
                     );
-                    results.push({ path, status: '已保存' });
+                    updateUploadRow(path, '已保存');
                     try {
                         if (sessionStorage.getItem(key) === currentId)
                             sessionStorage.removeItem(key);
@@ -450,18 +488,15 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                     }
                 } catch (error) {
                     signedOut =
-                        error instanceof Error &&
-                        'status' in error &&
-                        error.status === 401;
-                    results.push({
+                        error instanceof ApiError && error.status === 401;
+                    updateUploadRow(
                         path,
-                        status: signedOut
+                        signedOut
                             ? '登录已过期，请重新登录。'
-                            : message(error),
-                    });
+                            : '本次上传未确认：' + message(error),
+                    );
                 }
             }
-            return results;
         },
         onSuccess() {
             setFileChoices([]);
@@ -563,7 +598,9 @@ function CloudProject({ account, id }: { account: string; id: string }) {
     function send(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         if (upload.isPending || !selected.length) return;
-        setProgress('');
+        setUploadRows(
+            selected.map(({ path }) => ({ path, status: '等待上传' })),
+        );
         upload.mutate({ selected, config });
     }
     function drop(event: DragEvent<HTMLFormElement>) {
@@ -724,14 +761,17 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                         放弃本次选择
                     </Button>
                 )}
-                <p role="status" className="text-sm text-zinc-600">
-                    {upload.isPending ? progress : ''}
-                </p>
-                {upload.data && (
-                    <ul aria-label="上传结果" className="text-sm">
-                        {upload.data.map(({ path, status }) => (
+                {uploadRows.length > 0 && (
+                    <ul
+                        aria-label="上传结果"
+                        aria-live="polite"
+                        className="text-sm"
+                    >
+                        {uploadRows.map(({ path, status, parts }) => (
                             <li key={path} className="break-all">
                                 {path} · {status}
+                                {parts &&
+                                    ` · 已确认 ${parts.confirmedParts} / ${parts.totalParts} 块`}
                             </li>
                         ))}
                     </ul>

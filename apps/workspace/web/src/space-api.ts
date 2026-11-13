@@ -187,16 +187,21 @@ export async function previewFile(
     }
 }
 
+export type TransferProgress =
+    | { phase: 'checking' }
+    | { phase: 'transferring'; confirmedParts: number; totalParts: number }
+    | { phase: 'completing' };
+
 export async function transferFile(
     project: string,
     id: string,
     file: File,
     filename: string,
     partSize: number,
-    notify: (message: string) => void,
-) {
+    notify: (progress: TransferProgress) => void,
+): Promise<void> {
     const checksums: string[] = [];
-    notify('正在校验文件…');
+    notify({ phase: 'checking' });
     for (let offset = 0; offset < file.size; offset += partSize) {
         const bytes = await file.slice(offset, offset + partSize).arrayBuffer();
         const digest = await crypto.subtle.digest('SHA-256', bytes);
@@ -212,11 +217,16 @@ export async function transferFile(
     const path = uploadPath(id);
     const status = await json<Upload & { parts: number[] }>(path);
     if (status.state === 'saved') return;
-    if (status.state === 'completing') {
-        await post<Upload>(path + '/complete', {});
-        return;
-    }
+    if (status.state === 'completing') return complete();
     const uploaded = new Set(status.parts);
+    function notifyParts() {
+        notify({
+            phase: 'transferring',
+            confirmedParts: uploaded.size,
+            totalParts: checksums.length,
+        });
+    }
+    if (checksums.length) notifyParts();
     for (let number = 1; number <= checksums.length; number++) {
         if (uploaded.has(number)) continue;
         const signed = await post<{ url: string; checksum: string }>(
@@ -233,8 +243,14 @@ export async function transferFile(
         if (!response.ok)
             throw new Error('分块上传失败。重新选择同一个文件可继续。');
         uploaded.add(number);
-        notify('已上传 ' + uploaded.size + ' / ' + checksums.length + ' 块');
+        notifyParts();
     }
-    notify('正在确认上传结果…');
-    await post<Upload>(path + '/complete', {});
+    return complete();
+
+    async function complete(): Promise<void> {
+        notify({ phase: 'completing' });
+        const result = await post<Upload>(path + '/complete', {});
+        if (result.state !== 'saved')
+            throw new Error('暂未确认上传结果，请重选原文件核对。');
+    }
 }
