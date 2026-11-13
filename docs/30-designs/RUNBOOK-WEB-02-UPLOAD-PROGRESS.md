@@ -61,27 +61,9 @@ PASS 为基线已核对，工作区无未授权改动，执行分支在获审基
 
 各步骤涉及文件数含本 RUNBOOK。T0 专门核对 8 个文件，T1 修改 4 个，T2 修改 2 个，T3 修改或新增 3 个，T4 修改或删除 3 个。T3 专门核对既有 `playwright.config.ts` 与 `upload-intake.spec.ts`，含这两项共涉及 5 个文件。
 
-### T3 Chromium 分批与恢复验收
-
-前置状态为上一提交的逐文件列表和原上传入口通过 pnpm --filter @bento/web check（11 项单测），MASTER 分配 4319/4320 窗口。允许新增 `apps/workspace/web/e2e/upload-progress.spec.ts` 并修改根目录 `public-files.json` 与本 RUNBOOK。禁止修改既有测试、端口、生产文件及真实环境。采用既有 Playwright 配置和同源 route fixture。各测试拥有独立上下文，禁止固定睡眠。用测试文件内的 `function gate(): { wait: Promise<void>; release: () => void }` 构造门闩，先以空函数初始化 `release`，再用 `new Promise<void>` 的同步 executor 将其赋为 resolve。分别挂起指定 PUT 或完成回执，在断言后释放，`finally` 也释放全部门闩。
-
-1. 定义测试「批次逐项显示已确认分块和续传结果」。使用 `partSize: 2`、额度和文件上限各 100 字节、空执行状态、同一项目、有效模拟会话。依次选择 `first.txt`（2 字节）、`resume.txt`（4 字节）、`last.txt`（2 字节）。初始空间有同路径同大小的 `resume.txt` 原 `uploading` 记录。确认前断言无写请求。挂起首项 PUT，断言首项 0/1，后两项等待。放行 PUT 并挂起首项完成，断言首项确认中且保留 1/1。放行首项完成。第二项注册必须复用原 ID，状态查询返回 `parts: [1]`，挂起第 2 块 PUT。断言首项已保存、第二项 1/2、第三项等待，且第二项唯一签名编号为 2。第 2 块 PUT 返回 500，断言第二项保留 1/2 且本次未确认，并且从未请求其完成。第三项走成功请求，断言三行按清单顺序保留，首尾已保存。模拟刷新后的空间列表返回首尾 `saved` 和第二项原 `uploading`。仅重选第二项，断言清单为「待校验续传」，确认后仅注册原 ID、查询、签第 2 块、PUT、完成，行列表替换为第二项且最终显示已保存。
-2. 定义测试「上传鉴权失效后保留当前批次逐项结论」。选择 `first.txt`、`expired.txt`、`skipped.txt`，均为 2 字节，开始时空间为空。首项成功。第二项在 API 分块签名返回 401，后续空间及 session GET 维持 fixture 可读，以观测重新登录提示直到页面仍可访问。断言第一项已保存，第二项保留 0/1 并提示登录过期，第三项明确未开始。断言仅注册前两项，第二项无 PUT 及完成请求，第三项无写请求。PUT 使用同源 fixture URL，签名和状态响应只使用测试数据。
-3. 定义测试「缓存上传探测鉴权失效后停止批次」。以空 `config.uploads` 和可读的空间、项目、会话 GET 开始。通过 `page.addInitScript` 在 sessionStorage 以 `JSON.stringify(['bento:upload', account, project.id, 'cached.txt', 2])` 为键写入固定上传 ID `cached-upload`。按顺序选择两个 2 字节文件 `cached.txt`、`skipped.txt` 并确认。仅 `GET /api/space/uploads/cached-upload` 返回 401。断言缓存探测 GET 恰好一次，当前行显示「登录已过期，请重新登录。」，后续行显示「未开始，请重新登录后重选文件。」。断言批次无注册、签名、PUT 或完成请求。
-4. 所有行断言限定在 `getByRole('list', { name: '上传结果' })`。对等待、确认中、失败、鉴权和完成均断言同一列表内的对应路径与状态。首个测试的完成回执释放前断言首项对应行无「已保存」。
-5. 在 `public-files.json` 将 `"apps/workspace/web/e2e/upload-progress.spec.ts"` 紧接既有 `upload-intake.spec.ts` 条目加入同一数组，保留其余条目。
-
-```bash
-pnpm --filter @bento/web test:e2e upload-progress.spec.ts --workers=1
-rg -n -F '"apps/workspace/web/e2e/upload-progress.spec.ts"' public-files.json
-git diff --check
-```
-
-PASS 为三个新 Chromium 用例执行且通过，无重试或跳过，发布清单查询恰好匹配一行。STOP 为 mock 与现有协议冲突、需要改生产代码或断言失败。只清理本测试上下文和 Playwright 启动的本次进程。无真实对象需回滚。
-
 ### T4 完整验证与收口
 
-前置状态为三个新 Chromium 用例通过，端口窗口仍有效。允许修改 `docs/30-designs/WEB-DESIGN.md` 的「上传与续传」、`docs/40-readiness/CURRENT-READINESS.md` 的 WEB-02 行及删除本 RUNBOOK。禁止修改正式需求、HTTP 契约、其他 Readiness 行和生产代码。
+前置状态为上一提交的 upload-progress.spec.ts 在 Chromium 通过 3 项且发布清单单行匹配，端口窗口仍有效。允许修改 `docs/30-designs/WEB-DESIGN.md` 的「上传与续传」、`docs/40-readiness/CURRENT-READINESS.md` 的 WEB-02 行及删除本 RUNBOOK。禁止修改正式需求、HTTP 契约、其他 Readiness 行和生产代码。
 
 1. 在设计的「上传与续传」补充本地批次行的生命周期、计数来源、确认阶段及重选原文件。保持原设计其他上传行为。
 2. 在 WEB-02 行保留已有清单与恢复覆盖及未覆盖项，追加实际日期、执行基线、T3 PASS 提交、测试命令及通过数量。明确真实对象存储、真实会话失效后重新登录、目录拖放和活跃取消未覆盖。保留 WEB-02「部分实现」。

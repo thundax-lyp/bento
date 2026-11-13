@@ -61,6 +61,7 @@
         "apps/workspace/web/e2e/task.spec.ts",
         "apps/workspace/web/e2e/space-preview.spec.ts",
         "apps/workspace/web/e2e/upload-intake.spec.ts",
+        "apps/workspace/web/e2e/upload-progress.spec.ts",
         "apps/workspace/web/eslint.config.mjs",
         "apps/workspace/web/index.html",
         "apps/workspace/web/package.json",
