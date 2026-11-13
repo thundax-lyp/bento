@@ -24,7 +24,7 @@
 ## 并行顺序与停止规则
 
 - bento-a 的 WEB-03 项目整体删除先合入，本任务后合入。共享接入面为 `apps/workspace/api/server.ts:taskEntryServer` 的路由/Origin/会话入口，本任务在 `oidc.ts:keycloakAuth` 替换页面读取，并在 `main.ts` 的启动错误出口增加构建产物缺失诊断。保留 `server.ts`、`main.ts` 的路由、配置和服务初始化顺序。聚合检查共享 `package.json:scripts.check:workspace`、`apps/workspace/api/package.json:scripts.check`、`.github/workflows/checks.yml` 和 Playwright；保留 WEB-03 增加的检查及测试。Readiness 本任务只改独立应用入口行和 WEB-01 行，合并时保留 WEB-03 行和新证据。共享发布登记 `public-files.json` 按条目合并。起草时 bento-a 与本基线相同，其新增用例文件名尚无证据。
-- WEB-03 合入后，使用普通 merge 纳入最新 `origin/main`。重新跑 T5 全量命令并等待镜像 smoke 通过。T5 已删除时固定运行 `pnpm install --frozen-lockfile`、`pnpm check`、`pnpm --filter @bento/web test:e2e`，推送后回读同一 PR 当前 HEAD 的三个检查及镜像 smoke 日志。在 `git diff e2df225840dc9c7c065891788cc0587e9279b26e..origin/main --name-only` 中列出 WEB-03 新增或修改的 `apps/workspace/api/*.test.ts` 和 `apps/workspace/web/e2e/*.spec.ts`，分别核对 Node TAP、Chromium 报告确有执行。复验项目删除的同源与 owner 拒绝、Run/导入门禁、重试、清理完成后的额度回收与浏览器确认，具体断言以已合入测试为准。报告缺失覆盖给 MASTER，由 MASTER 固定复验命令后再合入。
+- WEB-03 合入后，使用普通 merge 纳入最新 `origin/main`。同步后的 Chromium 需重新获得 MASTER 窗口，运行公共端口探测后固定运行 `pnpm install --frozen-lockfile`、`pnpm check`、`pnpm --filter @bento/web test:e2e`，推送后回读同一 PR 当前 HEAD 的三个检查及镜像 smoke 日志。在 `git diff e2df225840dc9c7c065891788cc0587e9279b26e..origin/main --name-only` 中列出 WEB-03 新增或修改的 `apps/workspace/api/*.test.ts` 和 `apps/workspace/web/e2e/*.spec.ts`，分别核对 Node TAP、Chromium 报告确有执行。复验项目删除的同源与 owner 拒绝、Run/导入门禁、重试、清理完成后的额度回收与浏览器确认，具体断言以已合入测试为准。报告缺失覆盖给 MASTER，由 MASTER 固定复验命令后再合入。
 - Docker 本地仅运行本任务前缀资源，无宿主端口、真实数据或外部卷。Playwright 原配置占用宿主回环 4319/4320，且可能复用监听器。每次运行 Chromium 前须持有 MASTER 分配给本 checkout 的有效窗口。先执行下列端口探测，再在同一窗口运行 Chromium，预计超出窗口即报 MASTER 排期。仅有空闲探测不能代替窗口授权。勿停止他人进程。Docker 碰到宿主独占资源时同样 STOP。
 - 每步 PASS 后按 Worker Skill 删已完成步骤、调整前置状态、单独提交并回读 SHA 与文件清单。所有未列文件均禁止编辑。验证出错保留工作树，清理本任务的临时进程、容器和网络。禁止改数据、扩大范围、放宽断言或借用他人环境。报告最后 PASS 的 SHA、触发条件、文件及符号、命令、脱敏输出与所需决定。
 
@@ -85,24 +85,51 @@ GitHub Actions 环境核验：`gh run view 43193646474 -R thundax-lyp/bento --js
 
 前置状态：Checks 的镜像 job 已接入 `deploy/workspace/auth-smoke.sh`，静态检查通过，MASTER 的开工指令授权按本步创建同一个交付用 Draft PR。WEB-03 可以仍在途，此时本步的验证只能证明当前分支，合并前须按并行顺序复跑。
 
-允许修改（1 文件）：RUNBOOK。
+允许修改（2 文件，含 RUNBOOK）：`deploy/workspace/auth-smoke.mjs` 和本 RUNBOOK。
 
-禁止修改：浏览器业务用例、既有检查名称、镜像和账号实现。
+禁止修改：浏览器业务用例、既有检查名称、镜像、生产启动脚本、账号实现、等待时间、断言和测试环境。
 
-执行：取得 MASTER 分配的 Chromium 窗口，按公共端口探测命令检查后跑本地命令。推送 T4 的已提交 HEAD，按 PR 模板创建或恢复唯一 Draft PR，base 为 main、head 为 codex/workspace-auth-build，标题为 `Build(task-entry): 独立构建个人端认证前端`。远端验证通过后，在 RUNBOOK 的 T6 前置状态记录已通过的 SHA 与 Actions run 链接，删除 T5 并提交。每次推送后将检查对应到新 HEAD。
+现场证据：PR #28，HEAD `f61202be25627f58cae2573613073b9bd69953c8`，Actions run `43352246039`、镜像 job `131645840617`。三个镜像的构建及 API import 成功。新增 smoke 在 `waitReady` 的首轮正常启动阶段报 `Image entrypoint exited before readiness`。Orchestrator patch 步骤随后被跳过。Repository checks 与 Web Chromium E2E 均成功。失败日志没有被启动器捕获的子进程输出，无法确定是 NGINX、Go 账号仓储、TypeScript 入口还是信号退出。复现命令是该 runner 的 `bash deploy/workspace/auth-smoke.sh`。
+
+执行：
+
+1. 在 `deploy/workspace/auth-smoke.mjs` 新增 `function startupDiagnostics({ code, signal, stdout, stderr })`。返回由数字退出码（null 显示 `none`）、信号（null 显示 `none`）及固定标签拼成的字符串。按以下顺序匹配合并后的输出，每项只输出标签，不输出原始日志、配置、路径、请求数据、token 或凭据。
+
+    | 匹配 | 输出标签 |
+    | --- | --- |
+    | `nginx: the configuration file` 且含 `syntax is ok` | `nginx-config-parsed` |
+    | `nginx: configuration file` 且含 `test is successful` | `nginx-config-test-ok` |
+    | NGINX 行含 `[emerg]` 或 `test failed` | `nginx-fatal` |
+    | NGINX 行含 `Permission denied` | `nginx-permission-denied` |
+    | NGINX 行含 `Address already in use` | `nginx-bind-in-use` |
+    | `incomplete MySQL account configuration` | `go-mysql-config-incomplete` |
+    | `invalid MySQL account configuration` | `go-mysql-config-invalid` |
+    | `could not initialize MySQL accounts` | `go-mysql-initialize-failed` |
+    | 行同时含 `listen tcp`、`bind:` 和 `address already in use` | `go-bind-in-use` |
+    | `Workspace auth build artifacts are unavailable` | `auth-artifacts-unavailable` |
+    | `Invalid Bento task entry configuration or listener unavailable.` | `task-entry-startup-failed` |
+    | `Bento task entry (mock) listening on` | `task-entry-listening` |
+    | `ERR_MODULE_NOT_FOUND` | `node-module-not-found` |
+    | `Bento local OIDC discovery did not become ready.` | `oidc-discovery-not-ready` |
+
+2. `waitReady` 发现进程已退出时，调用现有 `waitExit()` 等待 stdio 关闭并保留 `Image entrypoint exited before readiness`，在错误消息后拼接 `startupDiagnostics` 的结果。若诊断没有匹配任何固定标签则输出 `no-startup-marker`。保留正常启动、缺产物非零退出及专属诊断的所有既有断言。此次修订只获取诊断。出现失败后按公共恢复规则处理，由作者和独立复审根据新的诊断确认下一项修复。
+3. 运行下列本地静态与聚合验证。若上一轮 Chromium 已通过且与本次的差异只含 RUNBOOK 和镜像 smoke 诊断，记录本地 7 项 Chromium 证据来自 `f61202be25627f58cae2573613073b9bd69953c8`，当前 HEAD 的远端 Chromium 仍须通过。本地镜像诊断修改单独提交，保留 T5 步骤用于失败恢复。推送到同一个 Draft PR #28，核对分支、目标和新 HEAD。镜像 smoke 通过后，在 T6 前置状态记录已通过的 SHA 和 Actions run 链接，删除 T5 并提交。
 
 验证：
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm check
-pnpm --filter @bento/web test:e2e
+bash -n deploy/workspace/auth-smoke.sh
+node --check deploy/workspace/auth-smoke.mjs
+pnpm exec eslint deploy/workspace/auth-smoke.mjs
+pnpm exec prettier --check deploy/workspace/auth-smoke.mjs
 git diff --check
 gh pr checks --watch --fail-fast
 gh pr view --json headRefOid,isDraft,statusCheckRollup
 ```
 
-PASS：本地 API 全部 TAP、Go test/vet、Web 类型检查/测试/构建、lint、format 和 Chromium 通过。当前 Draft PR HEAD 的 `Deployment image builds` 成功，逐步回读 Actions 日志确认三个镜像、现有两个 runtime smoke 与新增真实入口 smoke 均执行并通过，同时 `Repository checks` 和 `Web Chromium E2E` 通过。发现并发导致 SHA 更换时重新核对。完成后记录证据链接与提交。
+PASS：本地 API 全部 TAP、Go test/vet、Web 类型检查/测试/构建、lint、format 通过。复用的本地 Chromium 证据为 7 项通过。当前 Draft PR HEAD 的 `Deployment image builds` 成功，逐步回读 Actions 日志确认三个镜像、现有两个 runtime smoke 与新增真实入口 smoke 均执行并通过，同时 `Repository checks` 和 `Web Chromium E2E` 通过。发现并发导致 SHA 更换时重新核对。完成后记录证据链接与提交。
 
 STOP：按并行顺序与停止规则中的 CI 失败恢复处理。
 

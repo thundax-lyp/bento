@@ -57,11 +57,61 @@ function request(path, options) {
     });
 }
 
+function startupDiagnostics({ code, signal, stdout, stderr }) {
+    const lines = (stdout + '\n' + stderr).split('\n');
+    const markers = [
+        [/nginx: the configuration file.*syntax is ok/, 'nginx-config-parsed'],
+        [
+            /nginx: configuration file.*test is successful/,
+            'nginx-config-test-ok',
+        ],
+        [/(?:nginx:.*(?:\[emerg\]|test failed)|\[emerg\])/, 'nginx-fatal'],
+        [/(?:nginx:|\[emerg\]).*Permission denied/, 'nginx-permission-denied'],
+        [/(?:nginx:|\[emerg\]).*Address already in use/, 'nginx-bind-in-use'],
+        [
+            /incomplete MySQL account configuration/,
+            'go-mysql-config-incomplete',
+        ],
+        [/invalid MySQL account configuration/, 'go-mysql-config-invalid'],
+        [/could not initialize MySQL accounts/, 'go-mysql-initialize-failed'],
+        [/listen tcp.*bind:.*address already in use/, 'go-bind-in-use'],
+        [
+            /Workspace auth build artifacts are unavailable/,
+            'auth-artifacts-unavailable',
+        ],
+        [
+            /Invalid Bento task entry configuration or listener unavailable\./,
+            'task-entry-startup-failed',
+        ],
+        [/Bento task entry \(mock\) listening on/, 'task-entry-listening'],
+        [/ERR_MODULE_NOT_FOUND/, 'node-module-not-found'],
+        [
+            /Bento local OIDC discovery did not become ready\./,
+            'oidc-discovery-not-ready',
+        ],
+    ];
+    const matched = markers
+        .filter(([pattern]) => lines.some((line) => pattern.test(line)))
+        .map(([, marker]) => marker);
+    return (
+        'exit=' +
+        (code ?? 'none') +
+        ', signal=' +
+        (signal ?? 'none') +
+        ', markers=' +
+        (matched.join(',') || 'no-startup-marker')
+    );
+}
+
 async function waitReady() {
     const deadline = Date.now() + 30_000;
     while (Date.now() < deadline) {
         if (entry.child.exitCode !== null || entry.child.signalCode !== null) {
-            throw new Error('Image entrypoint exited before readiness');
+            const result = await waitExit();
+            throw new Error(
+                'Image entrypoint exited before readiness: ' +
+                    startupDiagnostics(result),
+            );
         }
         try {
             const statuses = await Promise.all(
