@@ -387,11 +387,9 @@ test('上传目录后按层级查看并下载原文件', async ({ page }) => {
         await expect(
             nested.getByRole('checkbox', { name: 'fixture/root.txt' }),
         ).toHaveCount(0);
-        const rootRow = root
-            .locator(':scope > li')
-            .filter({
-                has: page.getByRole('checkbox', { name: 'fixture/root.txt' }),
-            });
+        const rootRow = root.locator(':scope > li').filter({
+            has: page.getByRole('checkbox', { name: 'fixture/root.txt' }),
+        });
         await expect(rootRow).toContainText('5 字节');
 
         await nestedRow.getByRole('button', { name: '预览文本' }).click();
