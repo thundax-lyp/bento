@@ -438,7 +438,13 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                         path,
                         config.partSize,
                         (status) => {
-                            setProgress(path + ' · ' + status);
+                            const label =
+                                status.phase === 'checking'
+                                    ? '正在校验文件…'
+                                    : status.phase === 'transferring'
+                                      ? `已确认 ${status.confirmedParts} / ${status.totalParts} 块`
+                                      : '正在确认上传结果…';
+                            setProgress(path + ' · ' + label);
                         },
                     );
                     results.push({ path, status: '已保存' });

@@ -61,25 +61,9 @@ PASS 为基线已核对，工作区无未授权改动，执行分支在获审基
 
 各步骤涉及文件数含本 RUNBOOK。T0 专门核对 8 个文件，T1 修改 4 个，T2 修改 2 个，T3 修改或新增 3 个，T4 修改或删除 3 个。T3 专门核对既有 `playwright.config.ts` 与 `upload-intake.spec.ts`，含这两项共涉及 5 个文件。
 
-### T1 传输阶段与确认分块
-
-前置状态为 T0 PASS。允许修改 `apps/workspace/web/src/space-api.ts`、`apps/workspace/web/src/space-api.test.ts`、`apps/workspace/web/src/space.tsx` 和本 RUNBOOK。禁止修改 HTTP 请求序列、分块并行度、文件选择或批次生命周期。
-
-1. 使用上述类型修改 `transferFile`。哈希前发 `checking`。注册及状态查询的 `saved` 直接返回。GET 为 `completing` 时忽略该查询的分块数组，只调用并返回 `complete()`。其他路径沿用 `new Set(status.parts)` 与原分块循环。当摘要清单非空时，创建 Set 后、进入分块循环之前发一次 `transferring`。只在 PUT 的 `response.ok` 后更新 Set 并再次通知。循环结束只调用并返回 `complete()`。两条路径共用函数内 `async function complete(): Promise<void>`，仅此函数发送一次 `completing`，随后执行原 POST，返回状态不是 `saved` 时抛出 `new Error('暂未确认上传结果，请重选原文件核对。')`。
-2. 暂时在 `CloudProject` 现有回调内把三种事件转成原单行字符串。使用「正在校验文件…」「已确认 X / Y 块」「正在确认上传结果…」及现有路径前缀。T2 直接接管这处回调。
-3. 在 `space-api.test.ts` 现有两块续传测试断言事件依次为 `checking`、`transferring 1/2`、`transferring 2/2`、`completing`，签名 mock 入口断言已经收到 `1/2`，保留原请求断言。新增参数化用例分别断言注册直接 `saved`、查询直接 `saved`、查询 `completing`、空文件、非 `saved` 完成响应及 PUT 失败。两个直接保存分支仅有 `checking`，请求分别为注册及注册加查询。确认中与空文件只发 `checking`、`completing` 且不签名。非 `saved` 完成响应拒绝。PUT 失败只发 `checking`、初始 `0/1`，不发完成请求。
-
-```bash
-pnpm --filter @bento/web typecheck
-pnpm --filter @bento/web test src/space-api.test.ts
-git diff --check
-```
-
-PASS 为所有命令退出 0，目标文件的断言全过且无跳过。STOP 为接口无法按现有回执区分成功，或命令/断言失败。保留本步改动，无服务端状态需回滚。
-
 ### T2 批次行与逐项结论
 
-前置状态为结构化传输事件已通过单测。允许修改 `apps/workspace/web/src/space.tsx` 和本 RUNBOOK。禁止修改服务端文件列表、现有选择规则、账户鉴权及恢复入口。
+前置状态为上一提交的结构化传输事件已通过 Web 类型检查和 space-api.test.ts 8 项测试。允许修改 `apps/workspace/web/src/space.tsx` 和本 RUNBOOK。禁止修改服务端文件列表、现有选择规则、账户鉴权及恢复入口。
 
 1. 使用上述 `UploadRow` 与 `uploadRows` 替换 `progress`。在 `send` 的原 guard 后、调用 mutation 前初始化行。定义组件内 `updateUploadRow(path: string, status: string, parts?: UploadRow['parts']): void`，用函数式 setter 按路径 map。传入分块时覆盖计数，缺省时保留此前计数。
 2. 移除 mutation 的临时 results 和返回值。当前项进入 ID 查找前写「正在准备上传…」。在传输回调把 `checking` 映射到「正在校验文件…」，`transferring` 映射到「上传中」及对应计数，`completing` 映射到「正在确认上传结果…」。传输成功后立即写「已保存」，再做现有缓存清理。
