@@ -1460,3 +1460,57 @@ test('WEB-A04 complete wins over cancel', { timeout: 20000 }, async (t) => {
         }
     });
 });
+
+test('WEB-A04 cancel wins over complete', { timeout: 20000 }, async (t) => {
+    const clock = recoveryClock(t);
+    await withUploadRecoveryFixture(t, async (f) => {
+        await uploadRecoveryParts(f);
+        const initial = await cancelRecovery(f);
+        assert.equal(initial.status, 200);
+        assert.equal(initial.json.state, 'cleaning');
+        await f.view('cleaning', []);
+        assert.equal(f.row().cleanup, 'cancelled');
+        await f.projection(0, recoveryBytes);
+        await assertRecoveryGate(f, true);
+        assert.equal(recoveryCallCount(f, 'abort'), 1);
+        clock.expireSignature(f);
+        const barrier = recoveryBarrier();
+        const abort = f.storage.abort;
+        f.storage.abort = async (...args) => {
+            await barrier.pause();
+            await abort(...args);
+        };
+        const pending = cancelRecovery(f);
+        void pending.catch(() => {});
+        try {
+            await barrier.waitForEntry();
+            assertUploadError(await f.complete(), 409, 'space_conflict');
+            await f.projection(0, recoveryBytes);
+            assert.equal(recoveryCallCount(f, 'complete'), 0);
+            assert.equal(f.stored.active, true);
+            barrier.release();
+            const cancelled = await pending;
+            assert.equal(cancelled.status, 200);
+            assert.equal(cancelled.json.state, 'cancelled');
+            await f.view('cancelled', []);
+            assert.deepEqual(f.stored, {
+                active: false,
+                size: null,
+                writes: 0,
+            });
+            assert.equal(recoveryCallCount(f, 'abort'), 2);
+            await f.projection(0, 0);
+            await assertRecoveryGate(f, false);
+            const start = f.calls.length;
+            assertUploadError(await f.complete(), 409, 'space_conflict');
+            const repeated = await cancelRecovery(f);
+            assert.equal(repeated.status, 200);
+            assert.equal(repeated.json.state, 'cancelled');
+            await f.projection(0, 0);
+            assert.equal(f.calls.length, start);
+        } finally {
+            barrier.release();
+            await Promise.allSettled([pending]);
+        }
+    });
+});

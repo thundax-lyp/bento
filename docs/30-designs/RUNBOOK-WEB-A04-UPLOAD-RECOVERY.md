@@ -65,24 +65,6 @@ node --test apps/workspace/api/space-files.test.ts
 
 PASS：工作树干净、分支正确，HEAD 文件列表只有 RUNBOOK，父提交与最新审核基线、本地跟踪与远端 SHA 一致。Node 22、仓库指定 pnpm，现有 4 项用例全通过。STOP：任何不匹配或未得到 MASTER 开工指令，记录命令输出和基线，留在 T0。T0 无提交。
 
-### T6 · 取消先取得清理权
-
-前置状态：T5 PASS。允许修改 2 个文件，本 RUNBOOK、`apps/workspace/api/space-files.test.ts`。禁止修改锁、清理流程和项目门禁。
-
-执行：
-
-1. 新增 `WEB-A04 cancel wins over complete`。传齐后在窗口内 cancel，断言 `200 cleaning`、SQLite `cleaning/cancelled`、全额预占、隐藏和门禁，未调用清理 abort。跨过窗口后发起第二次 cancel，令这次请求的 abort 在实际清除前卡 barrier。等待 entered，再发 complete，须在 release 前返回 `409 space_conflict`，仍隐藏、预占，且没有合并。
-2. release 并等待第二次 cancel 返回 `200 cancelled`，验证清理结束为 `cancelled`、仅一次清理 abort、零对象写入及门禁消失。再次 complete 返回 `409 space_conflict`，再次 cancel 返回 `200 cancelled`，重复检查零额度及无存储副作用。
-
-验证：
-
-```bash
-node --test --test-name-pattern='WEB-A04 cancel wins over complete' apps/workspace/api/space-files.test.ts
-git diff --check
-```
-
-PASS：实际执行 1 项且全部通过。STOP：释放早于存储确认、竞争触发合并、超时或其他偏差按执行契约报告。提交 `Test(task-entry): 验证取消先取得上传清理权`。
-
 ### T7 · 完整验证与收口
 
 前置状态：T1–T6 均有 PASS 记录和对应提交。允许修改本 RUNBOOK（删除）和 `docs/40-readiness/CURRENT-READINESS.md`，专门核对 `apps/workspace/api/{space-files.test.ts,file-delete-hold.test.ts}`、`public-files.json`、`package.json`，合计 6 个文件。禁止更新稳定需求、接口、部署或 CI；若证实契约修复需更新稳定文档，按执行契约 STOP 并复审对应步骤。
