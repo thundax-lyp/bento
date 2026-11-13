@@ -1936,7 +1936,9 @@ test(
             assert.equal(detail.status, 200);
             assert.deepEqual(
                 detail.json.files,
-                [a, b, c].map(({ id, path, size }) => ({ id, path, size })),
+                [a, b, c]
+                    .sort((left, right) => left.id.localeCompare(right.id))
+                    .map(({ id, path, size }) => ({ id, path, size })),
             );
             const savedCalls = [...objectA.calls];
             assert.deepEqual(
@@ -2092,8 +2094,8 @@ async function waitForQuotaState(
 
 async function quotaView(f: QuotaFixture, input: QuotaInput, expected: string) {
     const response = await f.request(f.uploadUrl(input));
-    assert.deepEqual(response.json.parts, []);
-    const { parts: _parts, ...json } = response.json;
+    const { parts, ...json } = response.json;
+    assert.deepEqual(parts, []);
     return f.assertUpload({ ...response, json }, input, expected);
 }
 
