@@ -243,3 +243,219 @@ test('单文件删除确认后等待服务器回收额度', async ({ page, baseU
         })),
     );
 });
+
+test('项目删除显示影响、阻塞并等待完成', async ({ page }) => {
+    const file = savedFile('project-delete-fixture', 2_000_000_000);
+    let state: 'saved' | 'deleting' | 'deleted' = 'saved';
+    let blocked = true;
+    let deletes = 0;
+    await page.route('**/api/session', (route) =>
+        route.fulfill({ json: { account: 'project-delete-demo' } }),
+    );
+    await page.route('**/api/projects', (route) =>
+        route.fulfill({ json: { projects: [] } }),
+    );
+    await page.route('**/api/space', (route) =>
+        route.fulfill({
+            json: {
+                projects:
+                    state === 'deleted'
+                        ? []
+                        : [
+                              {
+                                  ...project,
+                                  ...(state === 'deleting' ? { state } : {}),
+                              },
+                          ],
+                uploads: state === 'deleted' ? [] : [{ ...file, state }],
+                quota: 10_000_000_000,
+                fileLimit: 4_000_000_000,
+                partSize: 16_777_216,
+                saved: state === 'deleted' ? 0 : file.size,
+                reserved: 0,
+            },
+        }),
+    );
+    await page.route('**' + projectApi + '/deletion', (route) =>
+        route.fulfill({
+            json: {
+                fileCount: 1,
+                uploadCount: blocked ? 1 : 0,
+                runCount: 2,
+                diffCount: 1,
+                blockers: blocked ? ['upload_pending'] : [],
+            },
+        }),
+    );
+    await page.route('**' + projectApi, (route) => {
+        if (route.request().method() === 'DELETE') {
+            deletes++;
+            if (state === 'deleted') return route.fulfill({ status: 204 });
+            state = 'deleting';
+            return route.fulfill({ status: 202, json: { state } });
+        }
+        if (state === 'deleted')
+            return route.fulfill({
+                status: 404,
+                json: { error: { message: '找不到该资源。' } },
+            });
+        return route.fulfill({
+            json: {
+                ...project,
+                ...(state === 'deleting' ? { state } : {}),
+                files: state === 'saved' ? [file] : [],
+                execution: { state: 'uninitialized' },
+            },
+        });
+    });
+    await page.goto(spaceUrl);
+    const open = page.getByRole('button', { name: '删除项目', exact: true });
+    const confirm = page.getByRole('region', { name: '确认删除项目' });
+    const apply = confirm.getByRole('button', { name: '确认删除' });
+    await open.click();
+    await expect(confirm).toContainText('未清理上传 1');
+    await expect(confirm).toContainText('任务 2');
+    await expect(confirm).toContainText('已发布补丁 1');
+    await expect(apply).toBeDisabled();
+    await expect(page.getByRole('link', { name: '下载文件' })).toBeVisible();
+    expect(deletes).toBe(0);
+    await confirm.getByRole('button', { name: '取消', exact: true }).click();
+    blocked = false;
+    await open.click();
+    await expect(apply).toBeEnabled();
+    await apply.click();
+    await expect(page.getByText('正在删除项目', { exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: '下载文件' })).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByText('正在删除项目', { exact: true })).toBeVisible();
+    await page.getByRole('link', { name: '返回 Workspace' }).click();
+    await expect(
+        page.getByText('已用 2.00 / 10 GB', { exact: false }),
+    ).toBeVisible();
+    await page.getByRole('link', { name: project.name }).click();
+    await expect(page.getByText('正在删除项目', { exact: true })).toBeVisible();
+    expect(deletes).toBe(1);
+    state = 'deleted';
+    await expect(page).toHaveURL(/\/workspaces$/);
+    await expect(
+        page.getByText('已用 0.00 / 10 GB', { exact: false }),
+    ).toBeVisible();
+    await expect(page.getByRole('link', { name: project.name })).toHaveCount(0);
+    expect(deletes).toBe(2);
+    await page.goto(spaceUrl);
+    await expect(page.getByRole('alert')).toHaveText('找不到该资源。');
+    expect(deletes).toBe(2);
+});
+
+test('项目删除响应丢失后用原编号确认完成', async ({ browser, baseURL }) => {
+    for (const failure of ['503', 'network']) {
+        const page = await browser.newPage(baseURL ? { baseURL } : {});
+        let completed = false;
+        const calls: string[] = [];
+        const missing = {
+            status: 404,
+            json: { error: { message: '找不到该资源。' } },
+        };
+        try {
+            await page.route('**/api/session', (route) =>
+                route.fulfill({ json: { account: 'project-lost-receipt' } }),
+            );
+            await page.route('**/api/projects', (route) =>
+                route.fulfill({ json: { projects: [] } }),
+            );
+            await page.route('**/api/space', (route) =>
+                route.fulfill({
+                    json: {
+                        projects: completed ? [] : [project],
+                        uploads: [],
+                        quota: 10_000_000_000,
+                        fileLimit: 4_000_000_000,
+                        partSize: 16_777_216,
+                        saved: completed ? 0 : 2_000_000_000,
+                        reserved: 0,
+                    },
+                }),
+            );
+            await page.route('**' + projectApi + '/deletion', (route) => {
+                if (completed) {
+                    calls.push('impact 404');
+                    return route.fulfill(missing);
+                }
+                return route.fulfill({
+                    json: {
+                        fileCount: 1,
+                        uploadCount: 0,
+                        runCount: 0,
+                        diffCount: 0,
+                        blockers: [],
+                    },
+                });
+            });
+            await page.route('**' + projectApi, (route) => {
+                if (route.request().method() === 'DELETE') {
+                    calls.push(
+                        'DELETE ' + new URL(route.request().url()).pathname,
+                    );
+                    if (completed) return route.fulfill({ status: 204 });
+                    completed = true;
+                    return failure === 'network'
+                        ? route.abort()
+                        : route.fulfill({
+                              status: 503,
+                              json: {
+                                  error: {
+                                      message:
+                                          '暂无法确认项目删除进度，请重试。',
+                                  },
+                              },
+                          });
+                }
+                if (completed) {
+                    calls.push('detail 404');
+                    return route.fulfill(missing);
+                }
+                return route.fulfill({
+                    json: {
+                        ...project,
+                        files: [],
+                        execution: { state: 'uninitialized' },
+                    },
+                });
+            });
+            let unrelatedDeletes = 0;
+            await page.route('**/api/space/projects/unrelated', (route) => {
+                if (route.request().method() === 'DELETE') unrelatedDeletes++;
+                return route.fulfill(missing);
+            });
+            await page.goto(spaceUrl);
+            await page
+                .getByRole('button', { name: '删除项目', exact: true })
+                .click();
+            await page
+                .getByRole('button', { name: '确认删除', exact: true })
+                .click();
+            await expect(page).toHaveURL(/\/workspaces$/);
+            await expect(
+                page.getByText('已用 0.00 / 10 GB', { exact: false }),
+            ).toBeVisible();
+            await expect(
+                page.getByRole('link', { name: project.name }),
+            ).toHaveCount(0);
+            const deletion = 'DELETE ' + projectApi;
+            expect(calls.filter((entry) => entry === deletion)).toEqual([
+                deletion,
+                deletion,
+            ]);
+            expect(
+                calls
+                    .slice(1, calls.lastIndexOf(deletion))
+                    .some((entry) => entry.endsWith('404')),
+            ).toBe(true);
+            await page.goto('/space/unrelated');
+            await expect(page.getByRole('alert')).toHaveText('找不到该资源。');
+            expect(unrelatedDeletes).toBe(0);
+        } finally {
+            await page.close();
+        }
+    }
+});

@@ -73,7 +73,7 @@ docker compose -f deploy/compose.yaml --profile worker-image build bento-worker
 
 使用 `start.ts` 的部署可设置 `BENTO_REVIEW_MODULE`，指向仅由可信部署端控制的模块。模块默认导出同步安装函数 `(reviewRun) => cleanup`。安装函数接入部署端的复核工具，并在停服时通过 `cleanup` 停止接收新请求、等待在途复核结束。复核提交须包含 `runId`、`failedGeneration`、`readyGeneration`、`stableOperationId` 和 `expectedSnapshotSha256`。模块与执行服务同进程运行，部署端应限制模块文件及复核入口的访问权限。
 
-账号注销清理需要可信宿主实现幂等的工作区删除。命令宿主处理 `{action:"purge",binding}`，只删除该绑定独占的沙盒与卷，独立确认两者不存在后返回 `{sandbox,volume,absent:true}`。自定义宿主实现 `ExecutionHost.purge(binding)`。删除失败应报错，Bento 会保留清理请求以便重试。Docker 驱动的宿主可用 [dockerOpenShellPurge](../apps/orchestrator/execution-service/docker-openshell-purge.ts)，并提供与部署时一致的卷标签。
+项目删除和账号注销清理需要可信宿主实现幂等的工作区删除。命令宿主处理 `{action:"purge",binding}`，只删除该绑定独占的沙盒与卷，独立确认两者不存在后返回 `{sandbox,volume,absent:true}`。自定义宿主实现 `ExecutionHost.purge(binding)`。删除失败应报错，Bento 会保留清理请求以便重试。Docker 驱动的宿主可用 [dockerOpenShellPurge](../apps/orchestrator/execution-service/docker-openshell-purge.ts)，并提供与部署时一致的卷标签。
 
 ## Temporal 配置
 
