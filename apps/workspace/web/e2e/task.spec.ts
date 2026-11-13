@@ -221,3 +221,126 @@ test('任务详情回读取消状态', async ({ page }) => {
     await expect(page.getByRole('link', { name: '下载 diff' })).toHaveCount(0);
     expect(requests).toEqual(['queued-run', 'running-run']);
 });
+
+test('任务列表找回原项目和 Run', async ({ page }) => {
+    const paths: string[] = [];
+    const writes: string[] = [];
+    const createdAt = '2026-11-12T00:00:00Z';
+    const first = { id: 'first', name: '第一项目', status: 'ready', createdAt };
+    const second = {
+        id: 'second',
+        name: '第二项目',
+        status: 'ready',
+        createdAt,
+    };
+    const run = { projectId: second.id, sessionId: 'session', createdAt };
+    const later = '2026-11-13T00:00:00Z';
+    const records = [
+        {
+            ...run,
+            id: 'task-z',
+            status: 'failed',
+            summary: 'Readme review',
+            updatedAt: later,
+        },
+        {
+            ...run,
+            id: 'task-old',
+            status: 'failed',
+            summary: 'Readme setup',
+            updatedAt: createdAt,
+        },
+        { ...run, id: 'task-a', status: 'succeeded', updatedAt: later },
+    ];
+    page.on('request', (request) => {
+        if (request.method() === 'POST') writes.push(request.url());
+    });
+    await page.route('**/api/session', (route) =>
+        route.fulfill({ json: { account: 'task-list' } }),
+    );
+    await page.route('**/api/projects', (route) =>
+        route.fulfill({ json: { projects: [first, second] } }),
+    );
+    await page.route('**/api/projects/*/runs**', (route) => {
+        const path = new URL(route.request().url()).pathname;
+        paths.push(path);
+        if (path.endsWith('/task-z'))
+            return route.fulfill({ json: records[0] });
+        return route.fulfill({
+            json: { runs: path.includes('/second/') ? records : [] },
+        });
+    });
+    await page.goto('/');
+    await page.getByRole('link', { name: '任务', exact: true }).click();
+    await expect(page.getByText('这个项目还没有任务。')).toBeVisible();
+    await page.getByLabel('执行项目').selectOption(second.id);
+    const list = page.getByRole('list', { name: '任务列表' });
+    await expect(list.getByRole('link')).toHaveText([
+        /task-a/,
+        /Readme review/,
+        /Readme setup/,
+    ]);
+    await expect(
+        list.getByRole('link', { name: /Readme setup/ }).locator('time'),
+    ).toHaveAttribute('datetime', createdAt);
+    await page.getByLabel('任务状态').selectOption('failed');
+    await page.getByLabel('搜索任务').fill('  rEAdMe ReVIew  ');
+    await expect(list.getByRole('link')).toHaveText([/Readme review/]);
+    await page.getByLabel('搜索任务').fill('不存在');
+    await expect(page.getByText('没有符合条件的任务。')).toBeVisible();
+    await page.getByLabel('搜索任务').fill(' TASK-Z ');
+    await expect(list.getByRole('link')).toHaveCount(1);
+    expect(paths).toEqual([
+        '/api/projects/first/runs',
+        '/api/projects/second/runs',
+    ]);
+    await list.getByRole('link').click();
+    await expect(page).toHaveURL(/\/runs\/task-z\?project=second$/);
+    await expect(page.getByRole('heading', { name: '任务详情' })).toBeVisible();
+    expect(paths.at(-1)).toBe('/api/projects/second/runs/task-z');
+    expect(writes).toEqual([]);
+});
+
+test('任务列表找回可重读且空项目不发起 Run 请求', async ({ page }) => {
+    let projects = false;
+    let available = false;
+    let reads = 0;
+    await page.route('**/api/session', (route) =>
+        route.fulfill({ json: { account: 'empty-list' } }),
+    );
+    await page.route('**/api/projects', (route) =>
+        route.fulfill({
+            json: {
+                projects: projects
+                    ? [
+                          {
+                              id: 'retry',
+                              name: '项目',
+                              status: 'ready',
+                              createdAt: '2026-11-12T00:00:00Z',
+                          },
+                      ]
+                    : [],
+            },
+        }),
+    );
+    await page.route('**/api/projects/*/runs', (route) => {
+        reads++;
+        return available
+            ? route.fulfill({ json: { runs: [] } })
+            : route.fulfill({ status: 503 });
+    });
+    await page.goto('/runs');
+    await expect(page.getByText('还没有执行项目。')).toBeVisible();
+    await expect(page.getByLabel('执行项目')).toBeDisabled();
+    expect(reads).toBe(0);
+    projects = true;
+    await page.reload();
+    const retry = page.getByRole('button', { name: '重新读取任务' });
+    await expect(retry).toBeVisible();
+    available = true;
+    await retry.click();
+    await expect(page.getByText('这个项目还没有任务。')).toBeVisible();
+    await expect(retry).toHaveCount(0);
+    await expect(page).toHaveURL(/\/runs$/);
+});

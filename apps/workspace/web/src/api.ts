@@ -4,11 +4,14 @@ export type Session = { account: string };
 export type Project = {
     id: string;
     name: string;
+    createdAt: string;
     status: 'importing' | 'ready' | 'failed';
 };
 export type Run = {
     id: string;
     projectId: string;
+    sessionId: string;
+    createdAt: string;
     status:
         | 'queued'
         | 'running'

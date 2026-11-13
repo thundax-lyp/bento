@@ -59,30 +59,9 @@ PASS：作者已核对上述 SHA，基线 Web check 通过（11 个单测），C
 
 STOP：基线、checkout、审核版本、固定端口、命令结果或共享边界不符，报告具体差异和失败输出。
 
-### T1：独立任务入口和原 Run 链接
-
-前置状态：T0 通过。允许修改：`apps/workspace/web/src/pages.tsx`、`apps/workspace/web/src/main.tsx`、`apps/workspace/web/src/api.ts`、`apps/workspace/web/e2e/task.spec.ts`、本文件。禁止修改：提交草稿、最近任务、工作区初始化和任务详情行为。
-
-执行：
-
-1. `api.ts` 按上文补齐 `Project` 和 `Run` 类型。复用 `projectsQuery`、`runsQuery` 和 `runLabels`。任务页只请求一个项目的 Run 列表，使用 `enabled: Boolean(project)`，不请求空项目路径。保留现有活跃列表轮询。
-2. 在受保护 children 注册 `/runs`，组件 `TaskList` 从 `useOutletContext<string>()` 取账号。以 `key={account}` 渲染内部 `TaskListContent({account}: {account:string})`，避免账号变更沿用筛选。Workbench 导航在「对话」后添加 `end` 的「任务」。
-3. 页面标题「任务」。使用三个有标签的表单控件「执行项目」「任务状态」「搜索任务」。项目来自 `projectsQuery`，保留所有状态项目；默认服务端首个项目。选中项离开列表时回退到首项，空列表禁用项目控件。项目筛选不修改提交草稿。状态值为 `'' | Run['status']`，默认空且显示「全部状态」，其他用 `runLabels`。关键词取 trim 后转小写，在当前列表记录的完整 id 和 summary 匹配，空词匹配所有；列表契约没有 prompt，不读取每条详情填充搜索。按 ISO `updatedAt` 降序，时间相同按 id 升序，避免就地修改 query 数据。
-4. 每条以 `runUrl(project,run.id)` 链接，展示 summary 或完整 Run id，状态和 `<time dateTime={run.updatedAt}>` 的 `Intl.DateTimeFormat('zh-CN',{dateStyle:'medium',timeStyle:'short'})` 格式。项目列表未完成、没有项目、没有任务、筛选无结果分别显示「正在读取项目…」「还没有执行项目。」「这个项目还没有任务。」「没有符合条件的任务。」；Run 列表未完成显示「正在读取任务…」。项目/Run 请求失败用 `Notice` 与「重新读取项目」/「重新读取任务」按钮调用对应 refetch，项目失败隐藏列表。Run 回读失败隐藏旧列表并保留筛选，成功后恢复。读取中禁用对应重试按钮。
-5. 增加标题含「任务列表找回」的 Chromium 用例，用现有契约 route fixture 两个项目和不同 Run，验证先按项目切换，状态、大小写和前后空白关键词、无结果、排序和更新时间，再进入正确详情 URL。记录请求确认只读当前选中项目列表，没有逐条请求详情或 POST。另验证列表首次 503 后在原页重读成功，以及没有项目时没有 runs 请求。
-
-验证：
-
-```bash
-pnpm --filter @bento/web typecheck
-pnpm --filter @bento/web test:e2e task.spec.ts -g '任务列表找回'
-```
-
-PASS：上述列表和请求断言全部通过，详情仍由现有入口读取。STOP：列表 API、排序所用时间格式或 owner 边界与契约不符，记录对应响应和失败用例，停止，不增加 API。
-
 ### T2：在原详情恢复状态读取
 
-前置状态：T1 通过。允许修改：`apps/workspace/web/src/main.tsx`、`apps/workspace/web/src/api.ts`、`apps/workspace/web/src/pages.tsx`、`apps/workspace/web/src/ui.tsx`、`apps/workspace/web/e2e/task.spec.ts`、本文件。禁止修改：认证回调、取消接口、文件解析及补丁格式。
+前置状态：`/runs` 独立任务入口已提交且「任务列表找回」用例通过。允许修改：`apps/workspace/web/src/main.tsx`、`apps/workspace/web/src/api.ts`、`apps/workspace/web/src/pages.tsx`、`apps/workspace/web/src/ui.tsx`、`apps/workspace/web/e2e/task.spec.ts`、本文件。禁止修改：认证回调、取消接口、文件解析及补丁格式。
 
 执行：
 

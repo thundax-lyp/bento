@@ -20,6 +20,7 @@ import {
     Login,
     Register,
     RunDetails,
+    TaskList,
     Workspace,
     Workbench,
 } from './pages';
@@ -115,6 +116,7 @@ const router = createBrowserRouter([
             { path: '/workspaces', Component: Workspace },
             { path: '/workspaces/:workspaceId', Component: Workspace },
             { path: '/space/:spaceId', Component: CloudProjectRoute },
+            { path: '/runs', Component: TaskList },
             { path: '/account', Component: AccountSettings },
             {
                 path: '/runs/:runId',
