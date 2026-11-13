@@ -30,6 +30,8 @@
         "deploy/keycloak/theme/login/resources/css/bento.css",
         "deploy/workspace/nginx.conf",
         "deploy/workspace/start.sh",
+        "deploy/workspace/auth-smoke.sh",
+        "deploy/workspace/auth-smoke.mjs",
         "eslint.config.mjs",
         "package.json",
         "pnpm-lock.yaml",

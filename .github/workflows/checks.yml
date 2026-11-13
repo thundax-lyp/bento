@@ -63,6 +63,9 @@ jobs:
                   await import('./apps/workspace/api/space-storage.ts');
                   await import('./apps/workspace/api/space-execution.ts');"
 
+            - name: Verify Workspace auth through the image entrypoint
+              run: bash deploy/workspace/auth-smoke.sh
+
             - name: Generate a patch in the Orchestrator runtime image
               run: >-
                   docker run --rm --entrypoint node bento-orchestrator --input-type=module -e

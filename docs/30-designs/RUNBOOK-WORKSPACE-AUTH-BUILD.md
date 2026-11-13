@@ -14,17 +14,17 @@
 
 | 正式依据 | 生产符号与数据 | 对应验收 |
 | --- | --- | --- |
-| 应用边界验收 1、独立构建设计 | `apps/workspace/auth/build.mjs` 生成 UTF-8 `login.html`、`account.html`、`style.css`，由 `keycloakAuth` 初始化一次读取，OIDC 启用且任一文件缺失时启动失败 | T1 构建，源码入口加载，T4 镜像运行，T6 Readiness |
-| [Web 认证接口](../20-interfaces/WEB-INTERFACE.md)、[Web 设计](./WEB-DESIGN.md) WEB-01 | `apps/workspace/api/oidc.ts:keycloakAuth` 对 `GET /auth` 使用 `auth.account`，仅 401 走访客页，`GET /auth/style.css` 直接返回 CSS。保留原状态、响应头及路由。登录链接 `GET /api/oidc/start`，账号页返回 `/`、POST logout、POST close，确认表单字段 `confirmed=yes` | 本地 OIDC 测试、T4 比较产物与 HTTP 字节，检查 CSP、Referrer-Policy、Cache-Control、nosniff、Content-Type 和表单 |
-| 同上，OIDC 回调、退出和注销 | `apps/workspace/api/server.ts:taskEntryServer` 保留 POST Origin 检查及 OIDC 路由。事务仍由 API 生成随机 cookie、state、nonce、PKCE verifier 和到期值（300 秒），关闭事务绑定原会话。回调验证 token 与组织、验证邮箱，成功由 `sessionAuth.startSession` 签发 24 小时会话。HTTP 使用 `bento_oidc`、`bento_one`，HTTPS 原有 `__Host-` 前缀及 Secure，均 HttpOnly、Path=/、OIDC 模式 SameSite=Lax。退出撤销会话后 303 至 provider end-session，回跳 `/auth`。注销要求 `prompt=login`、`max_age=0`、原会话和相同 subject，通过 `closeVerified` 关闭账号 | 本地 OIDC 测试、T4 检查登录、错误 state、退出、确认门禁、同主体再认证和旧会话拒绝 |
-| 同上，身份归属与重启 | `apps/workspace/api/account-store.ts:mysqlAccounts` 按 `issuer,subject,account` 三个必填字符串提交绑定，Go `accounts.linkIdentity` 持久化 issuer/subject → ownerId，返回 `{account:string,ownerId:string,closed:boolean}`，Go wire 另含 `inviteSha256:string`，OIDC 绑定时为空字符串。关闭仍由 Go 原子更新账号状态和清理标记。会话及 OIDC 事务留在进程内存，重启失效，账号绑定和关闭状态仍在 MySQL | T4 使用一次性真实 MySQL，重启 Web 入口后拒绝旧 cookie/事务，重新登录同一身份并核对绑定，注销后重启仍拒绝登录 |
+| 应用边界验收 1、独立构建设计 | `apps/workspace/auth/build.mjs` 生成 UTF-8 `login.html`、`account.html`、`style.css`，由 `keycloakAuth` 初始化一次读取，OIDC 启用且任一文件缺失时启动失败 | T1 构建，源码入口加载，镜像运行，T6 Readiness |
+| [Web 认证接口](../20-interfaces/WEB-INTERFACE.md)、[Web 设计](./WEB-DESIGN.md) WEB-01 | `apps/workspace/api/oidc.ts:keycloakAuth` 对 `GET /auth` 使用 `auth.account`，仅 401 走访客页，`GET /auth/style.css` 直接返回 CSS。保留原状态、响应头及路由。登录链接 `GET /api/oidc/start`，账号页返回 `/`、POST logout、POST close，确认表单字段 `confirmed=yes` | 本地 OIDC 测试和镜像 smoke 比较产物与 HTTP 字节，检查 CSP、Referrer-Policy、Cache-Control、nosniff、Content-Type 和表单 |
+| 同上，OIDC 回调、退出和注销 | `apps/workspace/api/server.ts:taskEntryServer` 保留 POST Origin 检查及 OIDC 路由。事务仍由 API 生成随机 cookie、state、nonce、PKCE verifier 和到期值（300 秒），关闭事务绑定原会话。回调验证 token 与组织、验证邮箱，成功由 `sessionAuth.startSession` 签发 24 小时会话。HTTP 使用 `bento_oidc`、`bento_one`，HTTPS 原有 `__Host-` 前缀及 Secure，均 HttpOnly、Path=/、OIDC 模式 SameSite=Lax。退出撤销会话后 303 至 provider end-session，回跳 `/auth`。注销要求 `prompt=login`、`max_age=0`、原会话和相同 subject，通过 `closeVerified` 关闭账号 | 本地 OIDC 测试和镜像 smoke 检查登录、错误 state、退出、确认门禁、同主体再认证和旧会话拒绝 |
+| 同上，身份归属与重启 | `apps/workspace/api/account-store.ts:mysqlAccounts` 按 `issuer,subject,account` 三个必填字符串提交绑定，Go `accounts.linkIdentity` 持久化 issuer/subject → ownerId，返回 `{account:string,ownerId:string,closed:boolean}`，Go wire 另含 `inviteSha256:string`，OIDC 绑定时为空字符串。关闭仍由 Go 原子更新账号状态和清理标记。会话及 OIDC 事务留在进程内存，重启失效，账号绑定和关闭状态仍在 MySQL | 镜像 smoke 使用一次性真实 MySQL，重启 Web 入口后拒绝旧 cookie/事务，重新登录同一身份并核对绑定，注销后重启仍拒绝登录 |
 
 输入与输出仅增加三个构建文件。无新公开字段、数据写入、Schema、事件、投影、幂等键、账本或重放策略。浏览器不会获得任何身份、会话或凭据数据作为页面插值。
 
 ## 并行顺序与停止规则
 
 - bento-a 的 WEB-03 项目整体删除先合入，本任务后合入。共享接入面为 `apps/workspace/api/server.ts:taskEntryServer` 的路由/Origin/会话入口，本任务在 `oidc.ts:keycloakAuth` 替换页面读取，并在 `main.ts` 的启动错误出口增加构建产物缺失诊断。保留 `server.ts`、`main.ts` 的路由、配置和服务初始化顺序。聚合检查共享 `package.json:scripts.check:workspace`、`apps/workspace/api/package.json:scripts.check`、`.github/workflows/checks.yml` 和 Playwright；保留 WEB-03 增加的检查及测试。Readiness 本任务只改独立应用入口行和 WEB-01 行，合并时保留 WEB-03 行和新证据。共享发布登记 `public-files.json` 按条目合并。起草时 bento-a 与本基线相同，其新增用例文件名尚无证据。
-- WEB-03 合入后，使用普通 merge 纳入最新 `origin/main`。重新跑 T5 全量命令并等待 T4 镜像 smoke 通过。T5 已删除时固定运行 `pnpm install --frozen-lockfile`、`pnpm check`、`pnpm --filter @bento/web test:e2e`，推送后回读同一 PR 当前 HEAD 的三个检查及镜像 smoke 日志。在 `git diff e2df225840dc9c7c065891788cc0587e9279b26e..origin/main --name-only` 中列出 WEB-03 新增或修改的 `apps/workspace/api/*.test.ts` 和 `apps/workspace/web/e2e/*.spec.ts`，分别核对 Node TAP、Chromium 报告确有执行。复验项目删除的同源与 owner 拒绝、Run/导入门禁、重试、清理完成后的额度回收与浏览器确认，具体断言以已合入测试为准。报告缺失覆盖给 MASTER，由 MASTER 固定复验命令后再合入。
+- WEB-03 合入后，使用普通 merge 纳入最新 `origin/main`。重新跑 T5 全量命令并等待镜像 smoke 通过。T5 已删除时固定运行 `pnpm install --frozen-lockfile`、`pnpm check`、`pnpm --filter @bento/web test:e2e`，推送后回读同一 PR 当前 HEAD 的三个检查及镜像 smoke 日志。在 `git diff e2df225840dc9c7c065891788cc0587e9279b26e..origin/main --name-only` 中列出 WEB-03 新增或修改的 `apps/workspace/api/*.test.ts` 和 `apps/workspace/web/e2e/*.spec.ts`，分别核对 Node TAP、Chromium 报告确有执行。复验项目删除的同源与 owner 拒绝、Run/导入门禁、重试、清理完成后的额度回收与浏览器确认，具体断言以已合入测试为准。报告缺失覆盖给 MASTER，由 MASTER 固定复验命令后再合入。
 - Docker 本地仅运行本任务前缀资源，无宿主端口、真实数据或外部卷。Playwright 原配置占用宿主回环 4319/4320，且可能复用监听器。每次运行 Chromium 前须持有 MASTER 分配给本 checkout 的有效窗口。先执行下列端口探测，再在同一窗口运行 Chromium，预计超出窗口即报 MASTER 排期。仅有空闲探测不能代替窗口授权。勿停止他人进程。Docker 碰到宿主独占资源时同样 STOP。
 - 每步 PASS 后按 Worker Skill 删已完成步骤、调整前置状态、单独提交并回读 SHA 与文件清单。所有未列文件均禁止编辑。验证出错保留工作树，清理本任务的临时进程、容器和网络。禁止改数据、扩大范围、放宽断言或借用他人环境。报告最后 PASS 的 SHA、触发条件、文件及符号、命令、脱敏输出与所需决定。
 
@@ -81,39 +81,9 @@ STOP：版本、基线、测试、资源或授权不满足即回报。2026-11-13
 
 GitHub Actions 环境核验：`gh run view 43193646474 -R thundax-lyp/bento --json jobs` 显示指定基线的 `Deployment image builds`、`Repository checks` 和 `Web Chromium E2E` 成功。现有镜像 job 在 Ubuntu runner 使用 Docker Compose 构建三个服务镜像，并对 Workspace API 模块做 import smoke。workflow 触发条件是 PR 目标 `main` 或 `codex/**`、以及 push `main`，无 `workflow_dispatch`，单独 push 实施分支不能触发。T4 保留三个 job 的名称与检查，添加真实入口 smoke。可在同一个 Draft PR 上以 GitHub runner 完成等量验证，具体取证顺序见 T5。
 
-### T4：在现有镜像 job 验证完整运行入口
-
-前置状态：Compose runtime 复制认证构建产物。Go 反代和真实启动脚本保留。
-
-允许修改（7 文件，含 RUNBOOK）：`public-files.json`、`.github/workflows/checks.yml`、`deploy/workspace/auth-smoke.mjs`、`deploy/workspace/auth-smoke.sh`、`.gitignore`、`apps/workspace/api/package.json`。
-
-禁止修改：现有 job 名称、构建范围、镜像 import 断言、Required checks、发布工作流、Realm 和生产配置。
-
-执行：
-
-1. 在 `.gitignore` 中逐项放行两个新 smoke 文件，并在 `public-files.json` 登记这两个路径。在 API `scripts.check` 的 `pnpm typecheck` 与 `cd go` 之间串联 `node --test ./*.test.ts`，保留分支中已有检查，避免重复执行同一 glob。根聚合检查已先构建 auth。在现有 `images` job 的 API import smoke 后增加 `bash deploy/workspace/auth-smoke.sh` 步骤。脚本使用 `set -euo pipefail`，从仓库根运行。前缀为 `bento-auth-${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}`。创建同名前缀 Docker 网络与 `-mysql` 容器，使用 `mysql:8.4`、tmpfs `/var/lib/mysql`、`MYSQL_DATABASE=bento`、`MYSQL_USER=bento`、`MYSQL_PASSWORD=fixture-only`、`MYSQL_RANDOM_ROOT_PASSWORD=yes`。检查输出只打印连接状态。轮询最多 90 秒，每秒执行一次 `docker exec` 内的 TCP `SELECT 1`。首次连接失败时继续，超时退出非零。用 EXIT trap 删除本脚本成功创建的容器和网络。创建前遇同名资源即退出，清理不得删除他人资源。
-2. 在该网络执行 `docker run --rm`，名称为前缀加 `-web`，使用现有 `bento-web:local`，不发布宿主端口。不改 entrypoint 文件。用 `--entrypoint node` 运行只读 bind mount 的 `deploy/workspace/auth-smoke.mjs`，另将 `apps/workspace/api/oidc-fixture.ts` 只读挂载到同一临时目录，脚本通过显式 `./oidc-fixture.ts` import 夹具。镜像名后的参数固定为 `/tmp/bento-auth-smoke/auth-smoke.mjs`，两个源文件分别挂载到该目录下的同名路径。传入 `BENTO_MYSQL_HOST=<本次 -mysql 容器名>:3306`、数据库用户、密码及库名。容器内断言源 HTML、CSS、build.mjs 和旧 auth-page 未复制，三个 dist 文件存在。
-3. Node smoke 在同一容器启动 `startOidcFixture`，用 `spawn('/usr/bin/tini',['--','/usr/local/bin/bento-web'],...)` 启动镜像原入口。子进程环境由当前环境加 `BENTO_ONE_MODE=mock`、`BENTO_AUTH_MODE=keycloak`、`BENTO_ONE_ORIGIN=http://127.0.0.1:8080`、fixture issuer、client ID、secret 和组织组成。从 `node:child_process`、`node:process`、`node:assert/strict`、`node:fs/promises`、`node:timers/promises` 显式导入所需 API。若读取 stdout/stderr 的 Buffer，从 `node:buffer` 显式导入。全部 HTTP 请求使用 `globalThis.fetch`，不增加 ESLint globals 或 disable 注释。请求 NGINX 8080 端口，`redirect: 'manual'`。最多轮询 30 秒，要求 `GET /` 200、`GET /api/session` 401、`GET /auth` 200，任一子进程提前退出即失败。测试退出时 SIGTERM 并等待 tini 结束，再关闭 issuer。重启场景调用同一启动函数并保留 MySQL 容器。
-4. 对 HTTP 链逐项断言：匿名、登录后页面与 CSS 等于镜像内对应产物，Content-Type 及 本地 `oidc.test.ts:checkAsset` 中按资源区分的响应头一致。错误 state 401，正确授权码回调 303 后 session 200，重放 401。正常退出 303 至 fixture 的 end-session，携带原 id token 和回跳路径，退出前的 cookie 不能读 session。再次登录，创建一个未完成事务后重启入口，旧 session 和未完成事务均 401。每次正确 OIDC 回调均先用新 cookie 调用 `GET /api/session` 并核对返回 `{account: "fixture@example.test"}`，随后才对容器内 `http://127.0.0.1:4103/internal/accounts/oidc` 发 `POST`，以 `Content-Type: application/json` 发送同一个已签名 token 中的 `{issuer: iss, subject: sub, account: email}`。此接口是幂等绑定，可能创建账号，禁止在首个成功回调前调用。断言 200、返回 account 等于登录邮箱、closed 为 false、ownerId 为 48 位小写十六进制，并用 `GET /internal/accounts/by-owner/{ownerId}` 核对同一 ownerId 存在。重启后同一身份重新登录并重复读回，断言 ownerId 与首次一致。错误 Origin close 返回 400，正确确认 close 请求带 `prompt=login,max_age=0`，用原 subject 完成回调，旧 session 401。再重启，回调同一身份仍为 401。以首次获得的 ownerId 发送 `GET http://127.0.0.1:4103/internal/accounts/by-owner/{ownerId}`，断言 200、相同 ownerId 且 closed 为 true。测试最后仅打印断言摘要，不打印 cookie、密码或 JWT。
-5. 在正例容器退出后以同一隔离网络再启动一个同镜像 `-missing` 容器。以 tmpfs 覆盖 `/app/apps/workspace/auth/dist`，使用同一 Node smoke 和 `--missing-artifacts` 模式。该模式只启动 fixture 与真实入口，分别捕获 stdout/stderr，断言 30 秒内原入口以非零数字退出码退出、无退出信号，且 stderr 包含 `main.ts` 固定诊断完整行 `Workspace auth build artifacts are unavailable`。通用启动报错或超时不满足此断言。正例仍检查三个产物。保留 CI 的 Compose config、三个服务镜像构建、API import 和 Orchestrator patch smoke。新步骤跟随相同 PR job 执行。
-
-验证：
-
-```bash
-bash -n deploy/workspace/auth-smoke.sh
-node --check deploy/workspace/auth-smoke.mjs
-pnpm exec eslint deploy/workspace/auth-smoke.mjs
-pnpm exec prettier --check .github/workflows/checks.yml deploy/workspace/auth-smoke.mjs apps/workspace/api/package.json public-files.json
-git diff --check
-```
-
-PASS：本步产物的静态检查通过并单独提交。镜像运行断言必须在 T5 回读同一 Draft PR HEAD 后方可记入验收证据。
-
-STOP：运行脚本需要宿主固定端口、外部服务凭据、现有卷、额外 CI 权限或更改门禁。回报脚本位置、错误和所需决定。
-
 ### T5：执行固定回归并回读同一 Draft PR 的镜像验证
 
-前置状态：T4 提交存在，MASTER 的开工指令授权按本步创建同一个交付用 Draft PR。WEB-03 可以仍在途，此时本步的验证只能证明当前分支，合并前须按并行顺序复跑。
+前置状态：Checks 的镜像 job 已接入 `deploy/workspace/auth-smoke.sh`，静态检查通过，MASTER 的开工指令授权按本步创建同一个交付用 Draft PR。WEB-03 可以仍在途，此时本步的验证只能证明当前分支，合并前须按并行顺序复跑。
 
 允许修改（1 文件）：RUNBOOK。
 

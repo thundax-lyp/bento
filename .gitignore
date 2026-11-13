@@ -26,6 +26,8 @@
 /deploy/workspace/*
 !/deploy/workspace/nginx.conf
 !/deploy/workspace/start.sh
+!/deploy/workspace/auth-smoke.sh
+!/deploy/workspace/auth-smoke.mjs
 !/deploy/keycloak/
 /deploy/keycloak/*
 !/deploy/keycloak/theme/
