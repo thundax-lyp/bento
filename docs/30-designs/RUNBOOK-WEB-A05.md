@@ -4,7 +4,7 @@
 
 ## 执行者契约
 
-从 T2 继续，按 T2、T3、T4 执行。每步只修改列出的文件和本 RUNBOOK，PASS 后按 WORKER 规则删去该步并独立提交。遇到实际契约或命令不符、门禁失败或需要扩大范围时 STOP，记录最后通过步骤、文件和符号、复现命令、脱敏输出和待决定项。保留失败现场。所有测试资源来自本地 Playwright mock 与独立临时目录。共享环境、生产对象存储、Keycloak、Temporal、执行调度、账本和部署配置均在范围外。B 的公平派发 PR 先合入，A 随后同步 main、复验并收口 Readiness。
+从 T3 继续，按 T3、T4 执行。每步只修改列出的文件和本 RUNBOOK，PASS 后按 WORKER 规则删去该步并独立提交。遇到实际契约或命令不符、门禁失败或需要扩大范围时 STOP，记录最后通过步骤、文件和符号、复现命令、脱敏输出和待决定项。保留失败现场。所有测试资源来自本地 Playwright mock 与独立临时目录。共享环境、生产对象存储、Keycloak、Temporal、执行调度、账本和部署配置均在范围外。B 的公平派发 PR 先合入，A 随后同步 main、复验并收口 Readiness。
 
 ## 目标与断点
 
@@ -54,23 +54,9 @@ pnpm --filter @bento/web test:e2e space-preview.spec.ts upload-intake.spec.ts ta
 
 PASS：作者已在基线以 Node.js 22.23.2、pnpm 12.15.0 运行，API 3/3、Chromium 15/15，通过且零跳过。开工核对获审草稿与基线一致。STOP：基线漂移、端口或浏览器不可用、继承远端配置或测试失败，报告实际证据。
 
-### T2 · 浏览器显示活跃任务阻塞
-
-前置状态：T0 已核对，已保存文件树及目录传输用例已提交，三文件 Chromium 9/9、Web 类型检查通过。允许修改：`apps/workspace/web/e2e/space-preview.spec.ts`。禁止修改：生产逻辑与丢失回执用例。
-
-执行：在原「项目删除显示影响、阻塞并等待完成」用例中，把布尔 blocked 改为 `'upload_pending' | 'project_busy' | undefined`，依次取这三个值。第一次打开时保持原未清理上传、计数及按钮禁用断言，另核对文件计数。取消后设置 project_busy，再打开，等待「项目仍有未结束的任务或文件清理。」出现，确认按钮禁用、下载仍可见且 deletes 仍为 0。再次取消并清除 blocker，沿用原删除、轮询、回执确认、旧空间链接和额度断言。
-
-验证：
-
-```bash
-pnpm --filter @bento/web test:e2e space-preview.spec.ts --workers=1
-```
-
-PASS：4 个用例通过，两种阻塞均禁止提交，清除后走原删除链。STOP：阻塞文案、计数、请求数量或后续状态不符时停在 T2。浏览器上下文关闭后 fixture 状态丢弃。
-
 ### T3 · 公开 HTTP 路径校验与同一 Run 删除门禁
 
-前置状态：T2 通过。允许修改：`apps/workspace/api/space-files.test.ts`。禁止修改：API 生产代码、调度和账本。
+前置状态：浏览器两种删除阻塞已提交，space-preview Chromium 4/4 通过。允许修改：`apps/workspace/api/space-files.test.ts`。禁止修改：API 生产代码、调度和账本。
 
 执行：
 

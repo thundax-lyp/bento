@@ -247,7 +247,8 @@ test('单文件删除确认后等待服务器回收额度', async ({ page, baseU
 test('项目删除显示影响、阻塞并等待完成', async ({ page }) => {
     const file = savedFile('project-delete-fixture', 50_000_000);
     let state: 'saved' | 'deleting' | 'deleted' = 'saved';
-    let blocked = true;
+    let blocker: 'upload_pending' | 'project_busy' | undefined =
+        'upload_pending';
     let deletes = 0;
     await page.route('**/api/session', (route) =>
         route.fulfill({ json: { account: 'project-delete-demo' } }),
@@ -280,10 +281,10 @@ test('项目删除显示影响、阻塞并等待完成', async ({ page }) => {
         route.fulfill({
             json: {
                 fileCount: 1,
-                uploadCount: blocked ? 1 : 0,
+                uploadCount: blocker === 'upload_pending' ? 1 : 0,
                 runCount: 2,
                 diffCount: 1,
-                blockers: blocked ? ['upload_pending'] : [],
+                blockers: blocker ? [blocker] : [],
             },
         }),
     );
@@ -313,6 +314,7 @@ test('项目删除显示影响、阻塞并等待完成', async ({ page }) => {
     const confirm = page.getByRole('region', { name: '确认删除项目' });
     const apply = confirm.getByRole('button', { name: '确认删除' });
     await open.click();
+    await expect(confirm).toContainText('文件 1');
     await expect(confirm).toContainText('未清理上传 1');
     await expect(confirm).toContainText('任务 2');
     await expect(confirm).toContainText('已发布补丁 1');
@@ -320,7 +322,14 @@ test('项目删除显示影响、阻塞并等待完成', async ({ page }) => {
     await expect(page.getByRole('link', { name: '下载文件' })).toBeVisible();
     expect(deletes).toBe(0);
     await confirm.getByRole('button', { name: '取消', exact: true }).click();
-    blocked = false;
+    blocker = 'project_busy';
+    await open.click();
+    await expect(confirm).toContainText('项目仍有未结束的任务或文件清理。');
+    await expect(apply).toBeDisabled();
+    await expect(page.getByRole('link', { name: '下载文件' })).toBeVisible();
+    expect(deletes).toBe(0);
+    await confirm.getByRole('button', { name: '取消', exact: true }).click();
+    blocker = undefined;
     await open.click();
     await expect(apply).toBeEnabled();
     await apply.click();
