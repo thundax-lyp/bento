@@ -692,11 +692,22 @@ test('project deletion crosses both HTTP boundaries', async (t) => {
         objects.delete(key);
     };
     storage.download = async (key) => 'https://fixture.invalid/' + key;
+    const base = localHost(join(dir, 'volume'));
+    let releaseRun = () => {};
+    const runGate = new Promise<void>((resolve) => {
+        releaseRun = resolve;
+    });
     const execution = await serveExecution({
         state: join(dir, 'exec'),
         token,
         retryMs: 20,
-        host: localHost(join(dir, 'volume')),
+        host: {
+            ...base,
+            async worker(request, signal) {
+                if (request.prompt === 'wait for deletion check') await runGate;
+                return base.worker(request, signal);
+            },
+        },
     });
     const backend = httpBackend(execution.url, token, 3000);
     const space = mySpace(dbPath, storage, backend);
@@ -744,7 +755,11 @@ test('project deletion crosses both HTTP boundaries', async (t) => {
                 json: () => JSON.parse(text) as Record<string, unknown>,
             };
         };
-        async function seed(caller: typeof owner, cookie: string) {
+        async function seed(
+            caller: typeof owner,
+            cookie: string,
+            hold = false,
+        ) {
             const project = randomUUID();
             const file = randomUUID();
             const bytes = Buffer.from('# Fixture\n');
@@ -762,7 +777,7 @@ test('project deletion crosses both HTTP boundaries', async (t) => {
             try {
                 sql.prepare(
                     `INSERT INTO space_uploads (id,project,owner,path,size,manifest,state,expires)
-                    VALUES (?,?,?,'README.md',?,?,'saved',0)`,
+                    VALUES (?,?,?,'nested/README.md',?,?,'saved',0)`,
                 ).run(
                     file,
                     project,
@@ -800,20 +815,88 @@ test('project deletion crosses both HTTP boundaries', async (t) => {
                 runs,
                 cookie,
                 'POST',
-                { prompt: 'change' },
+                { prompt: hold ? 'wait for deletion check' : 'change' },
                 'run-key',
             );
             assert.equal(created.status, 202);
             const run = runs + '/' + created.json().id;
             await waitFor(
                 () => request(run, cookie),
-                (result) => result.json().status === 'succeeded',
+                (result) =>
+                    result.json().status === (hold ? 'running' : 'succeeded'),
             );
             return { path, run, file, bytes: bytes.length };
         }
-        const a = await seed(owner, cookieA);
+        const a = await seed(owner, cookieA, true);
+        const filePath = '/api/space/files/' + a.file;
+        const fileUrl = filePath + '/download';
+        const detail = await request(a.path, cookieA);
+        assert.equal(detail.status, 200);
+        assert.deepEqual(detail.json().files, [
+            { id: a.file, path: 'nested/README.md', size: a.bytes },
+        ]);
+        for (const [path, status, code] of [
+            ['nested/../escape.txt', 400, 'invalid_space_input'],
+            ['nested/README.md', 409, 'space_conflict'],
+            ['nested', 409, 'space_conflict'],
+            ['nested/README.md/child.txt', 409, 'space_conflict'],
+        ] as const) {
+            const rejected = await request(
+                a.path + '/uploads',
+                cookieA,
+                'POST',
+                {
+                    id: randomUUID(),
+                    path,
+                    size: 0,
+                    checksums: [],
+                },
+            );
+            assert.equal(rejected.status, status);
+            assert.equal(
+                (rejected.json().error as { code: string }).code,
+                code,
+            );
+        }
+        const spaceAfterRejections = (
+            await request('/api/space', cookieA)
+        ).json();
+        assert.deepEqual(
+            (spaceAfterRejections.uploads as { id: string }[]).map(
+                ({ id }) => id,
+            ),
+            [a.file],
+        );
+        assert.equal(spaceAfterRejections.saved, a.bytes);
+        assert.equal(spaceAfterRejections.reserved, 0);
+        assert.deepEqual(
+            (await request(a.path + '/deletion', cookieA)).json(),
+            {
+                fileCount: 1,
+                uploadCount: 0,
+                runCount: 1,
+                diffCount: 0,
+                blockers: ['project_busy'],
+            },
+        );
+        const busy = await request(a.path, cookieA, 'DELETE');
+        assert.equal(busy.status, 409);
+        assert.equal(
+            (busy.json().error as { code: string }).code,
+            'project_busy',
+        );
+        assert.equal((await request(a.path, cookieA)).status, 200);
+        assert.equal((await request(fileUrl, cookieA)).status, 302);
+        assert.equal(
+            (await request('/api/space', cookieA)).json().saved,
+            a.bytes,
+        );
+        releaseRun();
+        await waitFor(
+            () => request(a.run, cookieA),
+            (result) => result.json().status === 'succeeded',
+        );
         const b = await seed(other, cookieB);
-        const fileUrl = '/api/space/files/' + a.file + '/download';
         assert.equal((await request(fileUrl, cookieA)).status, 302);
         assert.equal(
             (await request(a.run + '/diff?download=1', cookieA)).status,
@@ -852,6 +935,15 @@ test('project deletion crosses both HTTP boundaries', async (t) => {
         assert.equal((await request(a.path, cookieA, 'DELETE')).status, 204);
         assert.equal((await request(a.path, cookieA)).status, 404);
         assert.equal(
+            (await request(a.path + '/deletion', cookieA)).status,
+            404,
+        );
+        assert.equal((await request(a.run, cookieA)).status, 404);
+        assert.equal(
+            (await request(filePath + '/preview', cookieA)).status,
+            404,
+        );
+        assert.equal(
             (await request(a.run + '/diff?download=1', cookieA)).status,
             404,
         );
@@ -867,6 +959,7 @@ test('project deletion crosses both HTTP boundaries', async (t) => {
         );
         assert.deepEqual([...objects.keys()], [spaceObjectKey(b.file)]);
     } finally {
+        releaseRun();
         if (web) await web.close();
         else await space.close();
         await execution.close();

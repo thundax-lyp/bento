@@ -4,7 +4,7 @@
 
 ## 执行者契约
 
-从 T3 继续，按 T3、T4 执行。每步只修改列出的文件和本 RUNBOOK，PASS 后按 WORKER 规则删去该步并独立提交。遇到实际契约或命令不符、门禁失败或需要扩大范围时 STOP，记录最后通过步骤、文件和符号、复现命令、脱敏输出和待决定项。保留失败现场。所有测试资源来自本地 Playwright mock 与独立临时目录。共享环境、生产对象存储、Keycloak、Temporal、执行调度、账本和部署配置均在范围外。B 的公平派发 PR 先合入，A 随后同步 main、复验并收口 Readiness。
+从 T4 继续。每步只修改列出的文件和本 RUNBOOK，PASS 后按 WORKER 规则删去该步并独立提交。遇到实际契约或命令不符、门禁失败或需要扩大范围时 STOP，记录最后通过步骤、文件和符号、复现命令、脱敏输出和待决定项。保留失败现场。所有测试资源来自本地 Playwright mock 与独立临时目录。共享环境、生产对象存储、Keycloak、Temporal、执行调度、账本和部署配置均在范围外。B 的公平派发 PR 先合入，A 随后同步 main、复验并收口 Readiness。
 
 ## 目标与断点
 
@@ -54,27 +54,9 @@ pnpm --filter @bento/web test:e2e space-preview.spec.ts upload-intake.spec.ts ta
 
 PASS：作者已在基线以 Node.js 22.23.2、pnpm 12.15.0 运行，API 3/3、Chromium 15/15，通过且零跳过。开工核对获审草稿与基线一致。STOP：基线漂移、端口或浏览器不可用、继承远端配置或测试失败，报告实际证据。
 
-### T3 · 公开 HTTP 路径校验与同一 Run 删除门禁
-
-前置状态：浏览器两种删除阻塞已提交，space-preview Chromium 4/4 通过。允许修改：`apps/workspace/api/space-files.test.ts`。禁止修改：API 生产代码、调度和账本。
-
-执行：
-
-1. 扩展现有 `project deletion crosses both HTTP boundaries`。把原 localHost 存为 base，创建 `let releaseRun = () => {}; const runGate = new Promise<void>((resolve) => { releaseRun = resolve; });` 门闩，在 host.worker 包装中仅对 `request.prompt === 'wait for deletion check'` 等待 `runGate`，再调用 base.worker。finally 先调用 `releaseRun()`，再沿用现有服务关闭及临时目录删除。将 seed 的第三个参数设为 `hold = false`。仅 A 使用 true，提交指定 prompt 后等待 GET Run 为 running 才返回；B 仍用原 prompt 并等待 succeeded。先执行 A 的阻塞检查，再释放和等终态，之后才 seed B。
-2. A 的 saved 记录路径使用 `nested/README.md`，B 可使用同一路径。读取 A 的详情文件数组，校验原 ID、路径及实际 Buffer 长度。对 A 的 uploads 注册端点依次 POST 四个不同 UUID、`size: 0, checksums: []` 的输入，路径为 `nested/../escape.txt`、`nested/README.md`、`nested`、`nested/README.md/child.txt`。分别断言 `400 invalid_space_input` 和三次 `409 space_conflict`。用原 HTTP helper 检查 space 的 uploads 只有原 A 文件、saved 等于 A 文件长度、reserved 为零，证明拒绝后无登记和预占。
-3. A 仍 running 时，读取影响并断言 `{fileCount:1,uploadCount:0,runCount:1,diffCount:0,blockers:['project_busy']}`。直接 DELETE 应为 `409 project_busy`；原空间详情及文件下载仍分别为 200、302，额度仍为原字节数。调用 `releaseRun()` 并沿用原 waitFor 等同一 Run succeeded。之后保留原影响断言、B 隔离、204 重复删除、对象不存在和 quota 断言。终态删除后另外核对旧影响、Run 详情和原文件预览均为 404。保留原 diff 和附件 HTTP 404 断言。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --test --test-name-pattern='project deletion crosses both HTTP boundaries' apps/workspace/api/space-files.test.ts
-```
-
-PASS：目标用例通过，running 与 succeeded 对应同一 Run，未触发真实 worker 或对象存储，测试临时状态已清理。STOP：运行状态无法稳定复现、HTTP 拒绝码或额度不符时停在 T3。不得放宽断言或用 SQL 改 Run 状态。
-
 ### T4 · 回归与 Readiness
 
-前置状态：T1–T3 全部 PASS，MASTER 已核实 B 的公平派发 PR 合入 main。允许修改：`docs/40-readiness/CURRENT-READINESS.md` 和删除本文件。禁止修改：其他 Readiness 行、其他任务证据和产品代码。
+前置状态：文件树与目录传输已提交，Chromium 9/9 和 Web 类型检查通过；两种页面删除阻塞已提交，Chromium 4/4 通过；公开 HTTP 路径校验与同一 Run 删除门禁已提交，双 HTTP 用例 1/1 通过。MASTER 已核实 B 的公平派发 PR 合入 main。允许修改：`docs/40-readiness/CURRENT-READINESS.md` 和删除本文件。禁止修改：其他 Readiness 行、其他任务证据和产品代码。
 
 执行：
 
