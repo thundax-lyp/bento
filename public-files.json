@@ -92,6 +92,7 @@
         "apps/orchestrator/main.go",
         "apps/orchestrator/temporal.go",
         "apps/orchestrator/temporal_test.go",
+        "apps/orchestrator/temporal_fair_entry_test.go",
         "apps/worker/dsh-worker.ts",
         "apps/worker/run-worker.ts",
         "apps/workspace/api/account-store.ts",

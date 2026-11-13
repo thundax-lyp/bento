@@ -91,48 +91,9 @@ PASS：命令均退出 0，当前 HEAD 是唯一计划提交，源码基线与�
 
 作者已于 2026-11-13（Asia/Shanghai）在 `1197cc8` 上复验。macOS arm64、Node 22.23.2、Go 1.25.3。类型检查、Go 测试和 vet 通过。Node 29 项通过，1 项预期跳过。新场景尚未实现或执行。
 
-## T2：生产入口的双槽纵向场景
-
-前置状态：`temporal_test.go:TestTemporalFairDispatchControlProcess` 已提交，既有 Go 策略和单 Run 丢回包用例通过，独立 helper 按设计跳过。
-
-允许修改：新增 `apps/orchestrator/temporal_fair_entry_test.go`，修改 `apps/orchestrator/execution-service/service.test.ts` 和 `public-files.json`（3 文件）。本步计入 10 个文件，另核对本 RUNBOOK、`apps/orchestrator/temporal_test.go`、`apps/orchestrator/execution-service/{start,service,store,http,local}.ts` 五个文件。
-
-禁止修改：`start.ts`、生产 TS/Go 代码、worker 模块、部署配置及 HTTP 契约。
-
-执行：
-
-1. 在 `public-files.json` 的 `apps/orchestrator/temporal_test.go` 条目后添加 `apps/orchestrator/temporal_fair_entry_test.go`。在 `temporal_fair_entry_test.go`（`//go:build darwin || linux`，`package main`）新增 `TestTemporalFairDispatchThroughExecutionEntry(t *testing.T)`，沿用 `TestTemporalRetryAfterCompletedRun` 的 `os.Executable`、子 Node TAP 检查与诊断写法。Node 用同一现有 `--import` 和 `--experimental-strip-types` 参数，`--test-name-pattern` 精确匹配 `^execution entry enforces two-slot tenant fairness and queue backpressure$`，子进程环境注入绝对路径 `BENTO_TEST_FAIR_BINARY`。Go 创建外层临时目录（`os.MkdirTemp`，前缀 `bento-fair-entry-`），以 `BENTO_TEST_FAIR_DIR` 传给 Node 测试。Go 用 `SysProcAttr{Setpgid:true}` 启动 Node 测试，该进程 PID 是专用组 ID。实际服务和 Go stdio 子进程继承此组。使用 `Start`，保存组 ID 后通过 goroutine 调用 `Wait`。Go 在 75 秒超时或 `Wait` 失败时以 `syscall.Kill(-pid, syscall.SIGKILL)` 清理整组，仅忽略 ESRCH。正常路径 `Wait` 返回后，以信号 0 验证组消失；若仍存在，强杀整组并判失败。强杀后最多等 5 秒回收主进程并每 20 ms 检查组是否消失。只有确认组消失才删除外层临时目录，否则保留目录并报告 PID。stdout 和 stderr 共用一个由 `os/exec` 写入的缓冲区，Wait 回收后才读取；未回收时只报告超时和组 ID。必须找到 `ok 1 - execution entry enforces two-slot tenant fairness and queue backpressure`，并确认该行无 `SKIP`。
-2. 在 TS 测试文件新增上述精确名称的测试，超时 65 秒，缺 `BENTO_TEST_FAIR_BINARY` 时显式 skip。使用 Go 创建并传入的 `BENTO_TEST_FAIR_DIR` 作为本轮状态目录，在其中生成 0700 POSIX shell wrapper，沿用现有 shell 单引号转义，`exec` 测试二进制并带 `-test.run=^TestTemporalFairDispatchControlProcess$`。另生成受信 `host.mjs`，以 `new URL('./local.ts', import.meta.url).href` 在父测试解析为绝对文件 URL 后嵌入模块源码。状态、卷、标记与 wrapper 都放在该临时目录。Go 外层负责删除目录和异常进程组兜底。
-3. 受信模块默认导出 `({state}) => ExecutionHost`，从 `localHost(join(state,'volume'))` 展开，设 `workerSlots:2`、`warmWorker:()=>async()=>{}`，以现有 `fixtureSdk` 的值提供隔离 SDK 配置（本地回环不可达的 upstream，空凭据，workspace default，decode 抛错）。Worker 包装 `base.worker(request,signal,slot)`。仅接受 `request.mode==='execute'` 和指定的五个 prompt `A0,A1,A2,A3,B0`。在第一次 await 前从进程内计数器取得单调 `sequence`、增加当前活动数并计算 `peak`。先同步完整写入 `entered-<prompt>.tmp-<sequence>`（`wx`），再用同目录 `linkSync` 原子发布到 `entered-<prompt>` 并在 finally 删除临时名。最终文件内容必须为 `{sequence:number,active:number,peak:number,slot:0|1,run:string,tenant:string,project:string}`。最终名已存在时保留原始记录，写空的 `duplicate-<prompt>` 作为失败证据，再抛错。只把 link 的 EEXIST 视作重复，其他异常直接抛出。Worker 每 20 ms 用可被 `signal` 中止的等待检查 `release-<prompt>`，上限 35 秒，超限抛错；存在时调用本地 Worker，最终在 finally 减少活动数。Worker 进入记录使用同步独占写入，release 标记使用异步文件检查。异常除缺 marker 的 ENOENT 外直接向上抛出。
-4. 像已有 `documented startup installs trusted review and waits for its cleanup` 用 `process.execPath`、`process.execArgv` 和实际 `start.ts` 路径启动服务，设置 `detached:false`，继承 Go 外层专用组，stdin ignore，stdout/stderr pipe，持续消费 stderr 并保存最后 8 KiB。环境从 `process.env` 排除全部 `BENTO_` 项，再精确设置 `BENTO_STATE_DIR`、`BENTO_SERVICE_BEARER=testToken`、`BENTO_BIND_HOST=127.0.0.1`、`BENTO_PORT=0`、`BENTO_HOST_MODULE`、`BENTO_TENANT_QUEUE_LIMIT=2`、`BENTO_GO_CONTROL`、`BENTO_TEST_FAIR_DIR` 为临时目录、`BENTO_TEMPORAL_ADDRESS=fixture`、`BENTO_TEMPORAL_NAMESPACE=default`、`BENTO_TEMPORAL_TASK_QUEUE=fair-dispatch`。URL 来自 stdout 首行，与启动退出和 5 秒截止竞速。fixture 地址只传给 Go 测试模式。
-5. 使用现有 `client/project/submit` helper，为 owner `fair-a` 创建五个独立 ready 项目 A0/A1/A2/A3/A4，为 `fair-b` 创建一个 B0。必须先建立全部项目，再发首个 Run。每次提交使用相同的 prompt 和 key（例如 A0 的 prompt 与 key 均为 `A0`）。用 `until` 观察 marker 或 HTTP 状态，marker 读取只吞 ENOENT。每个进入 marker 校验 Run ID、owner、project 与对应 HTTP 路径一致。
-6. 按下表执行屏障。释放动作仅通过父测试用 `writeFile(...,{flag:'wx'})` 写空文件。等待下一阶段前读取当前可观测证据，不用固定 sleep 推断调度结果。
-
-| 阶段         | 动作                                                                         | 通过断言                                                                                                                                                                                                                                 |
-| ------------ | ---------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 占满两槽     | 提交 A0，等 entered A0；提交 A1，等 entered A1                               | 顺序 1/2，槽 0/1，两个 HTTP Run 均为 running，A1 记录 active=2、peak=2                                                                                                                                                                   |
-| 观察背压     | 提交 A2、A3；在 A4 项目用 key/prompt A4 提交；同 key/prompt 重放 A2；提交 B0 | A2、A3、B0 均为 queued；A4 返回 429 与 `tenant_queue_full`，A4 的 GET runs 返回 200 且 JSON 深比较精确等于 `{runs: []}`；A2 重放 200 且 ID 不变                                                                                          |
-| 空闲租户优先 | 只释放 A0，等待 entered B0                                                   | B0 sequence=3、slot=0、active=2、peak=2；A1 仍 running，A2/A3 仍 queued                                                                                                                                                                  |
-| 租户内 FIFO  | 释放 B0，等待 entered A2；释放 A2，等待 entered A3                           | A2/A3 分别 sequence=4/5、slot=0、active=2、peak=2，A1 仍 running                                                                                                                                                                         |
-| 收尾         | 释放 A3 和 A1                                                                | 五个 HTTP Run 均 succeeded；每个 Run 对应一个 `done-<runId>`；entered 集合正好是五个指定文件，duplicate 集合为空；五个本地卷的 `<state>/volume/<projectId>/volume/README.md` 全文分别为 `# Fixture\n<prompt>\n`，A4 为原文 `# Fixture\n` |
-
-7. 成功时给服务 PID 发 SIGTERM，5 秒内等 close，退出必须是 `[0,null]`。失败时停止发 HTTP，向服务 PID 发 SIGKILL 并最多等 close 5 秒。只在成功取得本轮服务 PID 时发送信号。统一关闭 readline，并向外层 Go 返回成功或失败。Go 按步骤 1 核对并清理组内残留，服务 PID 的 close 不作为整个组退出的证明。断言失败附最后 8 KiB stderr，保留可复现的阶段信息。不得保存 bearer 或授权 token。
-
-验证：
-
-```bash
-gofmt -w apps/orchestrator/temporal_fair_entry_test.go
-pnpm exec prettier --check apps/orchestrator/execution-service/service.test.ts
-GOPROXY=off GOSUMDB=off go -C apps/orchestrator test -run '^TestTemporalFairDispatchThroughExecutionEntry$' -count=3
-```
-
-PASS：连续三轮每轮均出现精确 PASS，所有 HTTP、顺序、槽位、卷文件、Workflow 标记和退出断言成立。
-
-STOP：环境缺 Node 22、POSIX 进程组、Go 或本地依赖；存在测试超时、夹具错误、非 fixture 地址、断言失败或需要改变生产代码。按步骤 7 清理，不放宽断言或增加重试掩盖失败。
-
 ## T3：完整验证
 
-前置状态：T2 PASS。
+前置状态：生产入口双槽用例已提交，`TestTemporalFairDispatchThroughExecutionEntry` 连续三轮通过。
 
 允许修改：0 文件。本步计入 7 个文件，含本 RUNBOOK、`public-files.json`、根 `package.json`、`apps/orchestrator/package.json`、`apps/orchestrator/temporal_test.go`、`apps/orchestrator/temporal_fair_entry_test.go` 和 `apps/orchestrator/execution-service/service.test.ts`。禁止更新证据或改变验证范围。
 
@@ -148,7 +109,7 @@ rg -n -F '"apps/orchestrator/temporal_fair_entry_test.go"' public-files.json
 git diff --check
 ```
 
-PASS：全执行宿主测试、Go test/vet、类型、lint、格式和 diff 检查全部退出 0；T2 的真正通过由 Go 外层检查，TS 全量测试直接跳过须由 Go 纵向测试补足。仅增加测试文件的公开清单条目，生产代码、产品接口和 Compose 配置无差异，因此本次完整验证覆盖执行宿主而无需构建 Web 或容器。
+PASS：全执行宿主测试、Go test/vet、类型、lint、格式和 diff 检查全部退出 0；纵向用例的通过由 Go 外层检查，TS 全量测试直接跳过须由 Go 纵向测试补足。仅增加测试文件的公开清单条目，生产代码、产品接口和 Compose 配置无差异，因此本次完整验证覆盖执行宿主而无需构建 Web 或容器。
 
 STOP：任一命令失败或主线变化影响步骤；按审计后的基线复核，不自行扩大改动。
 
@@ -158,7 +119,7 @@ STOP：任一命令失败或主线变化影响步骤；按审计后的基线复�
 
 允许修改：[Readiness](../40-readiness/CURRENT-READINESS.md) 和本 RUNBOOK（2 文件）。本步计入 2 个文件，无额外专门核对文件。禁止修改其他 Readiness 行。
 
-执行：保留 A6「部分实现」。在 A6 说明追加实测日期、基线、平台、Node/Go 版本、T2 命令和三轮结果。记录真实入口 + SDK testsuite 的覆盖范围，写明 429、幂等重放、两槽、空闲租户优先、同租户 FIFO、五次独立文件观测。未覆盖真实 Temporal Server、OpenShell/DSH、长期复用、升级排空、资源上限及 A3。保留现有 A6 证据。删除本 RUNBOOK，核对仅指向它的引用。
+执行：保留 A6「部分实现」。在 A6 说明追加实测日期、基线、平台、Node/Go 版本、纵向测试命令和三轮结果。记录真实入口 + SDK testsuite 的覆盖范围，写明 429、幂等重放、两槽、空闲租户优先、同租户 FIFO、五次独立文件观测。未覆盖真实 Temporal Server、OpenShell/DSH、长期复用、升级排空、资源上限及 A3。保留现有 A6 证据。删除本 RUNBOOK，核对仅指向它的引用。
 
 验证：
 
