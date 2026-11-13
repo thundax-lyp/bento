@@ -18,7 +18,7 @@ export type Upload = {
         | 'failed';
 };
 export type Space = {
-    projects: { id: string; name: string }[];
+    projects: { id: string; name: string; state?: 'deleting' }[];
     uploads: Upload[];
     quota: number;
     fileLimit: number;
@@ -33,6 +33,7 @@ type Execution = {
 };
 export type SpaceProject = {
     name: string;
+    state?: 'deleting';
     files: { id: string; path: string; size: number }[];
     execution: Execution;
 };
@@ -55,6 +56,7 @@ export const spaceQuery = (account: string) =>
             }
         },
         refetchInterval: ({ state }) =>
+            state.data?.projects.some((item) => item.state === 'deleting') ||
             state.data?.uploads.some((item) => item.state === 'deleting')
                 ? 2000
                 : false,
@@ -65,12 +67,44 @@ export const spaceProjectQuery = (account: string, id: string) =>
         queryFn: ({ signal }) =>
             json<SpaceProject>(projectPath(id), { signal }),
         refetchInterval: ({ state }) =>
-            ['validating', 'importing'].includes(
-                state.data?.execution.state ?? '',
-            )
-                ? 1500
-                : false,
+            state.data?.state === 'deleting'
+                ? 2000
+                : ['validating', 'importing'].includes(
+                        state.data?.execution.state ?? '',
+                    )
+                  ? 1500
+                  : false,
     });
+
+export type ProjectDeletionImpact = {
+    fileCount: number;
+    uploadCount: number;
+    runCount: number;
+    diffCount: number;
+    blockers: ('upload_pending' | 'project_importing' | 'project_busy')[];
+};
+
+export const getProjectDeletionImpact = (id: string, signal?: AbortSignal) =>
+    json<ProjectDeletionImpact>(
+        projectPath(id) + '/deletion',
+        signal ? { signal } : undefined,
+    );
+
+export async function deleteSpaceProject(
+    id: string,
+): Promise<'deleting' | 'deleted'> {
+    const response = await request(projectPath(id), {
+        method: 'DELETE',
+        signal: AbortSignal.timeout(15_000),
+    });
+    if (response.status === 204) return 'deleted';
+    if (
+        response.status === 202 &&
+        (await response.json())?.state === 'deleting'
+    )
+        return 'deleting';
+    throw new Error('Unexpected project deletion response');
+}
 
 export const createSpaceProject = (id: string, name: string) =>
     post<{ id: string }>(root + '/projects', { id, name });

@@ -60,25 +60,6 @@ PASS：两本地 ref 与远端 main 均为指定基线，远端为 `thundax-lyp/
 
 每步文件数均计入 RUNBOOK。下列命令均从仓库根目录执行。所有断言必须执行且退出 0，skip 或弱化断言一律 STOP。通用 STOP 报告最后 PASS 和 SHA、失败断言、文件和符号、复现命令、脱敏输出及待决条件。测试故障保留可重现 fixture 配置，清理仅测试自行创建的目录和端口。数据库或外部调用失败保持已持久化阶段，使用原标识续跑。
 
-### T5：项目删除确认与进度
-
-前置状态：公共预检查、状态投影和 DELETE 已实现。允许修改（5）：`apps/workspace/web/src/{space-api.ts,space.tsx,space-api.test.ts}` 三个文件、`apps/workspace/web/e2e/space-preview.spec.ts`、RUNBOOK。禁止修改：公共路由层级、账户入口、任务页面、单文件正常操作。
-
-执行：
-
-1. 在 space-api.ts 增加项目 state 可选字段、`ProjectDeletionImpact`、`getProjectDeletionImpact(id: string, signal?: AbortSignal)` 与 `deleteSpaceProject(id: string): Promise<'deleting'|'deleted'>`。DELETE 沿用单文件 15 秒 timeout 和 202/204 处理，空间列表及项目详情 deleting 时每 2 秒 refetch。
-2. `CloudProject` 展示「删除项目」按钮，打开确认区域才请求影响。展示四个计数、三种阻塞对应的中文原因与不可恢复范围。请求中、失败或存在 blocker 时禁用「确认删除」，「取消」只关闭确认。预检查期间保留文件及历史入口。发出首次确认 DELETE 前以 JSON.stringify(['bento:project-delete',account,id]) 为 sessionStorage 键记录用户已确认；只写入标志，不存错误或资源数据。明确 409 清标志并重新请求影响，显示稳定错误。收到 503、超时或断网保留标志和原项目 ID，回读详情和影响，允许「查询删除进度」。查询按钮每次提交原项目 DELETE 并在结果未知时保留标志，回读路径只读。收到 202 或回读 state=deleting 后关闭预览、上传、初始化及历史入口，显示进度和查询按钮；从服务器回读 deleting 时也记录标志。若详情或影响 404 且标志存在，先于通用 404 分支查询原 DELETE；对同一轮 404 只发一次，随后 503 或断网由查询按钮继续，DELETE 本身 404 显示原错误且不宣告完成。只有 204 时清标志、刷新空间列表与额度并回到 /space。无标志的未知项目 404 不发 DELETE。SpaceList 显示正在删除的项目，支持返回其进度页面。
-3. 在 space-api.test.ts 验证项目 ID 路径编码、GET/DELETE 方法和 202/204 解码。扩充 Chromium fixture `项目删除显示影响、阻塞并等待完成`，用拦截器断言点击确认前无 DELETE、阻塞禁用且文件可下载、确认后 202、刷新仍清理中、对象与额度在服务端完成后才从 UI 消失，直接访问旧链接失效。新增 Chromium fixture `项目删除响应丢失后用原编号确认完成`，分别运行初次 DELETE 503、网络中断两组：拦截端记录已提交，后台完成并令详情和影响都返回 404，确认至少观察到一个 404 后才发原路径 DELETE；该请求返回 204 后才导航 /space，显示回读后的额度且项目消失。对没有本页确认标志的另一未知 ID，断言不发 DELETE。
-
-验证：
-
-```bash
-pnpm --filter @bento/web check
-pnpm --filter @bento/web test:e2e -- e2e/space-preview.spec.ts
-```
-
-PASS：Web 构建、单测及四项 space-preview Chromium 测试通过，响应丢失测试内 503 和断网两个子场景均执行。STOP：通用条件或确认前提交 DELETE、仅凭本地乐观状态宣告额度回收。
-
 ### T6：完整验证与证据收口
 
 前置状态：项目确认与进度已提交，T1–T5 均有可追溯证据。允许修改（4）：`docs/20-interfaces/WEB-INTERFACE.md`、`docs/30-designs/WEB-DESIGN.md`、`docs/40-readiness/CURRENT-READINESS.md`、RUNBOOK（删除）。另专门核对（5）：`README.md`、`deploy/README.md`、`deploy/compose.yaml`、`public-files.json`、`package.json`。合计 9。禁止修改：发布入口、CI 配置或正式产品范围。
