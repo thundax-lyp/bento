@@ -48,7 +48,7 @@ node --import ./register-paths.mjs --env-file=debug-workspace/task-entry.env app
 | `AWS_REGION`              | 签名区域，默认 `us-east-1`。                                                       |
 | AWS SDK 凭证链            | 在任务入口运行环境提供受限凭证。                                                   |
 
-账号空间为 10 GB，单文件最大 4 GB。私有桶须支持带 SHA-256 校验的 S3 Multipart Upload、分块查询、条件完成、终止上传和私有对象读写。CORS 允许前端 origin 通过 `GET` 读取文本预览，通过 `PUT` 上传分块并发送 `x-amz-checksum-sha256` 请求头。中断后重新选择原文件可续传。
+账号空间为 200 MB（200,000,000 字节），单文件最大 100 MB（100,000,000 字节）。私有桶须支持带 SHA-256 校验的 S3 Multipart Upload、分块查询、条件完成、终止上传和私有对象读写。CORS 允许前端 origin 通过 `GET` 读取文本预览，通过 `PUT` 上传分块并发送 `x-amz-checksum-sha256` 请求头。中断后重新选择原文件可续传。
 
 注销后停止接受新任务，等已受理任务终结再清理。真实 OpenShell 宿主需要提供幂等的工作区删除，见 [宿主部署说明](../../../deploy/README.md#openshell-执行宿主)。
 

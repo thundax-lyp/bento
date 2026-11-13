@@ -66,7 +66,7 @@ test('已保存文件只读预览并保留下载', async ({ page, baseURL }) => 
                     projects: [project],
                     uploads: files,
                     quota: 1000000,
-                    fileLimit: 4000000000,
+                    fileLimit: 100_000_000,
                     partSize: 16777216,
                     saved: 262148 + Buffer.byteLength(literal),
                     reserved: 0,
@@ -158,7 +158,7 @@ test('单文件删除确认后等待服务器回收额度', async ({ page, baseU
                         ? [remaining]
                         : [{ ...file, state }, remaining],
                 quota: 100,
-                fileLimit: 4000000000,
+                fileLimit: 100_000_000,
                 partSize: 16777216,
                 saved: state === 'deleted' ? 0 : file.size,
                 reserved: 0,
@@ -245,7 +245,7 @@ test('单文件删除确认后等待服务器回收额度', async ({ page, baseU
 });
 
 test('项目删除显示影响、阻塞并等待完成', async ({ page }) => {
-    const file = savedFile('project-delete-fixture', 2_000_000_000);
+    const file = savedFile('project-delete-fixture', 50_000_000);
     let state: 'saved' | 'deleting' | 'deleted' = 'saved';
     let blocked = true;
     let deletes = 0;
@@ -268,8 +268,8 @@ test('项目删除显示影响、阻塞并等待完成', async ({ page }) => {
                               },
                           ],
                 uploads: state === 'deleted' ? [] : [{ ...file, state }],
-                quota: 10_000_000_000,
-                fileLimit: 4_000_000_000,
+                quota: 200_000_000,
+                fileLimit: 100_000_000,
                 partSize: 16_777_216,
                 saved: state === 'deleted' ? 0 : file.size,
                 reserved: 0,
@@ -330,7 +330,7 @@ test('项目删除显示影响、阻塞并等待完成', async ({ page }) => {
     await expect(page.getByText('正在删除项目', { exact: true })).toBeVisible();
     await page.getByRole('link', { name: '返回 Workspace' }).click();
     await expect(
-        page.getByText('已用 2.00 / 10 GB', { exact: false }),
+        page.getByText('已用 50.00 / 200 MB', { exact: false }),
     ).toBeVisible();
     await page.getByRole('link', { name: project.name }).click();
     await expect(page.getByText('正在删除项目', { exact: true })).toBeVisible();
@@ -338,7 +338,7 @@ test('项目删除显示影响、阻塞并等待完成', async ({ page }) => {
     state = 'deleted';
     await expect(page).toHaveURL(/\/workspaces$/);
     await expect(
-        page.getByText('已用 0.00 / 10 GB', { exact: false }),
+        page.getByText('已用 0.00 / 200 MB', { exact: false }),
     ).toBeVisible();
     await expect(page.getByRole('link', { name: project.name })).toHaveCount(0);
     expect(deletes).toBe(2);
@@ -368,10 +368,10 @@ test('项目删除响应丢失后用原编号确认完成', async ({ browser, ba
                     json: {
                         projects: completed ? [] : [project],
                         uploads: [],
-                        quota: 10_000_000_000,
-                        fileLimit: 4_000_000_000,
+                        quota: 200_000_000,
+                        fileLimit: 100_000_000,
                         partSize: 16_777_216,
-                        saved: completed ? 0 : 2_000_000_000,
+                        saved: completed ? 0 : 50_000_000,
                         reserved: 0,
                     },
                 }),
@@ -436,7 +436,7 @@ test('项目删除响应丢失后用原编号确认完成', async ({ browser, ba
                 .click();
             await expect(page).toHaveURL(/\/workspaces$/);
             await expect(
-                page.getByText('已用 0.00 / 10 GB', { exact: false }),
+                page.getByText('已用 0.00 / 200 MB', { exact: false }),
             ).toBeVisible();
             await expect(
                 page.getByRole('link', { name: project.name }),
