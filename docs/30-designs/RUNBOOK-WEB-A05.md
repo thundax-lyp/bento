@@ -4,7 +4,7 @@
 
 ## 执行者契约
 
-按 T0、T1、T2、T3、T4 执行。每步只修改列出的文件和本 RUNBOOK，PASS 后按 WORKER 规则删去该步并独立提交。遇到实际契约或命令不符、门禁失败或需要扩大范围时 STOP，记录最后通过步骤、文件和符号、复现命令、脱敏输出和待决定项。保留失败现场。所有测试资源来自本地 Playwright mock 与独立临时目录。共享环境、生产对象存储、Keycloak、Temporal、执行调度、账本和部署配置均在范围外。B 的公平派发 PR 先合入，A 随后同步 main、复验并收口 Readiness。
+从 T2 继续，按 T2、T3、T4 执行。每步只修改列出的文件和本 RUNBOOK，PASS 后按 WORKER 规则删去该步并独立提交。遇到实际契约或命令不符、门禁失败或需要扩大范围时 STOP，记录最后通过步骤、文件和符号、复现命令、脱敏输出和待决定项。保留失败现场。所有测试资源来自本地 Playwright mock 与独立临时目录。共享环境、生产对象存储、Keycloak、Temporal、执行调度、账本和部署配置均在范围外。B 的公平派发 PR 先合入，A 随后同步 main、复验并收口 Readiness。
 
 ## 目标与断点
 
@@ -54,29 +54,9 @@ pnpm --filter @bento/web test:e2e space-preview.spec.ts upload-intake.spec.ts ta
 
 PASS：作者已在基线以 Node.js 22.23.2、pnpm 12.15.0 运行，API 3/3、Chromium 15/15，通过且零跳过。开工核对获审草稿与基线一致。STOP：基线漂移、端口或浏览器不可用、继承远端配置或测试失败，报告实际证据。
 
-### T1 · 保存文件树和目录传输
-
-前置状态：T0 通过。允许修改：`apps/workspace/web/src/space.tsx`、`apps/workspace/web/e2e/upload-progress.spec.ts`。禁止修改：空间 API、传输实现、删除状态与执行入口。
-
-执行：
-
-1. 在 `space.tsx` 从现有类型导入补入 `ReactNode` 和 `Upload`，定义 `type SavedFileDirectory = { directories: Map<string, SavedFileDirectory>; files: Upload[] }` 和模块内 `function savedFileTree(uploads: Upload[]): SavedFileDirectory`。按上传数组顺序，仅对 saved 项以 `/` 切段，逐层在当前 Map 查找或创建目录，最后把原记录追加到当前目录的 files。根为空时省略树。
-2. 在 `CloudProject` 内以 `renderSavedFiles(directory: SavedFileDirectory, label: string): ReactNode` 渲染 `ul` 并以 label 作 aria-label，根标签「已保存文件」，子列表标签为目录段。每目录用一个 li，显示该段和递归列表。目录先于同层文件，目录及文件组内维持原数组首次出现顺序。文件行以 ID 作 key；文件标签保留完整路径用于消歧和既有选择器，在标签外显示 `{file.size} 字节`。原选择、预览、下载、删除动作及禁用状态按 ID 原样接线。原列表只渲染非 saved 记录，保留完整路径、状态和取消按钮。保留原预览、确认区域和初始化按钮。
-3. 在 `upload-progress.spec.ts` 的原 `fixture` 增加 `options.captureParts?: boolean`。开启时，保留 fixture 的 `partSize = 2`。签名请求的 `number` 和 PUT 路径中的分块号均须为整数且落在 `1..Math.ceil(file.size / 2)`，按上传 ID 与分块号保存 PUT 的 Buffer。7 字节文件必须包含 1、2、3、4 号，5 字节文件必须包含 1、2、3 号。complete 时逐号断言每块存在，再按分块号升序拼接，断言字节长度等于登记大小后将文件标为 saved。关闭 captureParts 时保留旧分支的分块断言。在 generic GET 前处理开启 captureParts 时匹配 `^/api/space/files/([^/]+)/(preview|download)$` 的 GET。以捕获的 ID 查找记录，要求该文件存在、属于当前 fixture 项目、状态为 saved 且已存完整 Buffer。断言失败即结束用例。preview 返回原 Buffer，download 返回同一 Buffer 并附 `Content-Disposition: attachment; filename="note.txt"`。保留现有 fixture 分支和测试语义。
-4. 新增用例「上传目录后按层级查看并下载原文件」。用临时目录构造 `fixture/nested/note.txt`（UTF-8 内容 `你好\n`，7 字节）和 `fixture/root.txt`（`root\n`，5 字节），使用「文件夹」选择 `fixture`，确认上传，等待两个结果均为已保存。刷新后核对「已保存文件」→「fixture」→「nested」列表，nested 仅包含 note，root 文件属于 fixture 且在 nested 外，分别核对字节数。打开 note 预览并核对 pre 的完整文本。点击 note 下载并使用 Playwright 下载对象读取字节，精确比较原 Buffer。finally 删除临时目录。
-
-验证：
-
-```bash
-pnpm --filter @bento/web test:e2e upload-progress.spec.ts upload-intake.spec.ts space-preview.spec.ts --workers=1
-pnpm --filter @bento/web typecheck
-```
-
-PASS：9 个浏览器用例及类型检查通过，新增用例覆盖真实浏览器文件选择与 PUT、回读及附件消费。STOP：原预览、选择、删除或续传行为回归、目录用例无法通过或需要改传输契约时停在 T1。运行结束后本地临时文件清除。
-
 ### T2 · 浏览器显示活跃任务阻塞
 
-前置状态：T1 通过。允许修改：`apps/workspace/web/e2e/space-preview.spec.ts`。禁止修改：生产逻辑与丢失回执用例。
+前置状态：T0 已核对，已保存文件树及目录传输用例已提交，三文件 Chromium 9/9、Web 类型检查通过。允许修改：`apps/workspace/web/e2e/space-preview.spec.ts`。禁止修改：生产逻辑与丢失回执用例。
 
 执行：在原「项目删除显示影响、阻塞并等待完成」用例中，把布尔 blocked 改为 `'upload_pending' | 'project_busy' | undefined`，依次取这三个值。第一次打开时保持原未清理上传、计数及按钮禁用断言，另核对文件计数。取消后设置 project_busy，再打开，等待「项目仍有未结束的任务或文件清理。」出现，确认按钮禁用、下载仍可见且 deletes 仍为 0。再次取消并清除 blocker，沿用原删除、轮询、回执确认、旧空间链接和额度断言。
 

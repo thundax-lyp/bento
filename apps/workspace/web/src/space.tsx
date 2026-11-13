@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import type { ChangeEvent, DragEvent, FormEvent } from 'react';
+import type { ChangeEvent, DragEvent, FormEvent, ReactNode } from 'react';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router';
 import {
     cancelUpload,
@@ -16,7 +16,7 @@ import {
     spaceQuery,
     transferFile,
 } from './space-api.ts';
-import type { PreviewResult, Space } from './space-api.ts';
+import type { PreviewResult, Space, Upload } from './space-api.ts';
 import { ApiError } from './api.ts';
 import { Button, Notice } from './ui';
 
@@ -289,6 +289,31 @@ const deletionBlockerText = {
     project_importing: '请等待工作区初始化结束。',
     project_busy: '项目仍有未结束的任务或文件清理。',
 };
+
+type SavedFileDirectory = {
+    directories: Map<string, SavedFileDirectory>;
+    files: Upload[];
+};
+
+function savedFileTree(uploads: Upload[]): SavedFileDirectory {
+    const root: SavedFileDirectory = { directories: new Map(), files: [] };
+    for (const file of uploads) {
+        if (file.state !== 'saved') continue;
+        const segments = file.path.split('/');
+        segments.pop();
+        let directory = root;
+        for (const segment of segments) {
+            let child = directory.directories.get(segment);
+            if (!child) {
+                child = { directories: new Map(), files: [] };
+                directory.directories.set(segment, child);
+            }
+            directory = child;
+        }
+        directory.files.push(file);
+    }
+    return root;
+}
 
 function CloudProject({ account, id }: { account: string; id: string }) {
     const client = useQueryClient();
@@ -583,6 +608,86 @@ function CloudProject({ account, id }: { account: string; id: string }) {
     const selectable =
         execution.state === 'uninitialized' ||
         (execution.state === 'failed' && !execution.projectId);
+    const tree = savedFileTree(uploads);
+    const pendingUploads = uploads.filter(
+        (file): file is Upload & { state: Exclude<Upload['state'], 'saved'> } =>
+            file.state !== 'saved',
+    );
+
+    function renderSavedFiles(
+        directory: SavedFileDirectory,
+        label: string,
+    ): ReactNode {
+        return (
+            <ul aria-label={label} className="divide-y divide-zinc-200">
+                {[...directory.directories].map(([segment, child]) => (
+                    <li key={segment} className="space-y-1 py-2 pl-4">
+                        <span className="font-medium">{segment}</span>
+                        {renderSavedFiles(child, segment)}
+                    </li>
+                ))}
+                {directory.files.map((file) => (
+                    <li
+                        key={file.id}
+                        className="flex justify-between gap-3 py-2"
+                    >
+                        {selectable ? (
+                            <label className="flex items-center gap-2">
+                                <input
+                                    type="checkbox"
+                                    checked={files.includes(file.id)}
+                                    onChange={(event) =>
+                                        setFiles(
+                                            event.target.checked
+                                                ? [...files, file.id]
+                                                : files.filter(
+                                                      (value) =>
+                                                          value !== file.id,
+                                                  ),
+                                        )
+                                    }
+                                />
+                                {file.path}
+                            </label>
+                        ) : (
+                            <span>{file.path}</span>
+                        )}
+                        <span className="text-sm text-zinc-600">
+                            {file.size} 字节
+                        </span>
+                        <div className="flex items-center gap-2">
+                            <Button
+                                type="button"
+                                onClick={() => setPreviewId(file.id)}
+                            >
+                                预览文本
+                            </Button>
+                            <a
+                                className="text-sm underline"
+                                href={downloadFileUrl(file.id)}
+                            >
+                                下载文件
+                            </a>
+                            <Button
+                                type="button"
+                                disabled={remove.isPending}
+                                onClick={() => {
+                                    remove.reset();
+                                    setDeleteTarget({
+                                        id: file.id,
+                                        path: file.path,
+                                    });
+                                }}
+                            >
+                                删除文件
+                            </Button>
+                        </div>
+                    </li>
+                ))}
+            </ul>
+        );
+    }
+
     const choices = [...fileChoices, ...folderChoices];
     const { available, checklist, selected } = planUpload(choices, config, id);
     function pick(
@@ -784,77 +889,29 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                 <p role="status" className="text-sm text-zinc-600">
                     {executionLabels[execution.state]}
                 </p>
+                {(tree.directories.size > 0 || tree.files.length > 0) &&
+                    renderSavedFiles(tree, '已保存文件')}
                 <ul className="divide-y divide-zinc-200">
-                    {uploads.map((file) => (
+                    {pendingUploads.map((file) => (
                         <li
                             key={file.id}
                             className="flex justify-between gap-3 py-2"
                         >
-                            {file.state === 'saved' && selectable ? (
-                                <label className="flex items-center gap-2">
-                                    <input
-                                        type="checkbox"
-                                        checked={files.includes(file.id)}
-                                        onChange={(event) =>
-                                            setFiles(
-                                                event.target.checked
-                                                    ? [...files, file.id]
-                                                    : files.filter(
-                                                          (value) =>
-                                                              value !== file.id,
-                                                      ),
-                                            )
-                                        }
-                                    />
-                                    {file.path}
-                                </label>
-                            ) : (
-                                <span>{file.path}</span>
-                            )}
-                            {file.state === 'saved' ? (
-                                <div className="flex items-center gap-2">
-                                    <Button
-                                        type="button"
-                                        onClick={() => setPreviewId(file.id)}
-                                    >
-                                        预览文本
-                                    </Button>
-                                    <a
-                                        className="text-sm underline"
-                                        href={downloadFileUrl(file.id)}
-                                    >
-                                        下载文件
-                                    </a>
-                                    <Button
-                                        type="button"
-                                        disabled={remove.isPending}
-                                        onClick={() => {
-                                            remove.reset();
-                                            setDeleteTarget({
-                                                id: file.id,
-                                                path: file.path,
-                                            });
-                                        }}
-                                    >
-                                        删除文件
-                                    </Button>
-                                </div>
-                            ) : (
-                                <span className="text-sm text-zinc-600">
+                            <span>{file.path}</span>
+                            <span className="text-sm text-zinc-600">
+                                {
                                     {
-                                        {
-                                            preparing: '准备中',
-                                            uploading: '可续传',
-                                            completing: '正在确认',
-                                            cleaning: '清理中',
-                                            deleting: '正在删除',
-                                            cancelled: '已取消',
-                                            expired: '已过期',
-                                            failed: '失败',
-                                        }[file.state]
-                                    }
-                                </span>
-                            )}
+                                        preparing: '准备中',
+                                        uploading: '可续传',
+                                        completing: '正在确认',
+                                        cleaning: '清理中',
+                                        deleting: '正在删除',
+                                        cancelled: '已取消',
+                                        expired: '已过期',
+                                        failed: '失败',
+                                    }[file.state]
+                                }
+                            </span>
                             {['preparing', 'uploading'].includes(
                                 file.state,
                             ) && (
