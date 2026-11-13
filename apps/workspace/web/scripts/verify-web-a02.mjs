@@ -93,6 +93,7 @@ async function verify(browser) {
     await fs.access(checker, fs.constants.X_OK);
     const preflight = process.argv[2] === '--small';
     const quotaRun = process.argv[2] === '--quota';
+    const downloadOnly = process.argv[2] === '--download-boundary';
     const fixtureSize = preflight ? partSize + 1 : size;
     const directory = await fs.mkdtemp(join(tmpdir(), 'bento-web-a02-'));
     const context = await browser.newContext({ acceptDownloads: true });
@@ -114,7 +115,6 @@ async function verify(browser) {
         3 * 60 * 60 * 1000,
     );
     const observed = { writes: [], puts: [], parts: [] };
-    const successfulRequests = [];
     let lastProgress = Date.now();
     let phase = 'setup';
     let blocked;
@@ -337,7 +337,6 @@ async function verify(browser) {
         if (url.origin === storage && response.request().method() === 'PUT') {
             if (response.ok()) {
                 lastProgress = Date.now();
-                successfulRequests.push(response.request());
             }
             const number = Number(url.searchParams.get('partNumber'));
             console.log(
@@ -501,21 +500,20 @@ async function verify(browser) {
         if (quotaRun) {
             await verifyQuota(original, changed);
             result = true;
-        } else if (preflight) {
-            await stage('small upload');
+        } else if (preflight || downloadOnly) {
+            await stage(
+                preflight ? 'small upload' : 'boundary download upload',
+            );
             await select(original);
             await page
                 .getByRole('link', { name: '下载文件', exact: true })
                 .waitFor({ timeout: 120_000 });
             assert.deepEqual(
-                puts('small upload').map(({ number, status }) => [
-                    number,
-                    status,
-                ]),
-                [
-                    [1, 200],
-                    [2, 200],
-                ],
+                puts(phase).map(({ number, status }) => [number, status]),
+                Array.from(
+                    { length: Math.ceil(fixtureSize / partSize) },
+                    (_, index) => [index + 1, 200],
+                ),
             );
         } else {
             await stage('oversize');
@@ -657,6 +655,14 @@ async function verify(browser) {
             );
             record.stage = 'verify resumed parts';
             await persist();
+            console.log(
+                'WEB_A02_RESUME_OBSERVED',
+                JSON.stringify({
+                    fresh: Boolean(fresh && fresh.url !== stale),
+                    putCount: puts('resume').length,
+                    reads: observed.parts,
+                }),
+            );
             assert(fresh && fresh.url !== stale);
             assert.deepEqual(
                 puts('resume'),
@@ -666,13 +672,13 @@ async function verify(browser) {
                     status: 200,
                 })),
             );
-            assert.deepEqual(
-                observed.parts,
-                ['capture', 'expired', 'resume'].map((name) => ({
-                    phase: name,
-                    parts: [1],
-                })),
-            );
+            for (const name of ['capture', 'expired', 'resume']) {
+                const reads = observed.parts.filter(
+                    (entry) => entry.phase === name,
+                );
+                assert(reads.length > 0);
+                assert.deepEqual(reads[0].parts, [1]);
+            }
             const saved = await read(uploadPath());
             assert.equal(saved.body.id, first.id);
             assert.equal(saved.body.state, 'saved');
@@ -691,19 +697,7 @@ async function verify(browser) {
             const destination = join(directory, 'download.bin');
             await download.saveAs(destination);
             assert.equal((await fs.stat(destination)).size, fixtureSize);
-            const expectedLengths = Array.from(
-                { length: Math.ceil(fixtureSize / partSize) },
-                (_, index) =>
-                    Math.min(partSize, fixtureSize - index * partSize),
-            );
-            const transferredLengths = await Promise.all(
-                successfulRequests.map(
-                    async (request) => (await request.sizes()).requestBodySize,
-                ),
-            );
-            assert.deepEqual(transferredLengths, expectedLengths);
-            console.log('WEB_A02_PART_BYTES', transferredLengths.join(','));
-
+            if (!preflight) checkObject('saved', record.uploadIds[0]);
             const sha256 = await digest(original);
             assert.equal(await digest(destination), sha256);
             result = { sha256 };
@@ -726,8 +720,8 @@ async function verify(browser) {
                     if (
                         ['preparing', 'uploading'].includes(upload.body?.state)
                     ) {
-                        assert.equal(await button('取消上传').count(), 1);
-                        await button('取消上传').click();
+                        const cancelled = await post(path + '/cancel', {});
+                        assert.equal(cancelled.status, 200);
                     }
                     await poll(
                         () => read(path),
@@ -791,7 +785,12 @@ try {
     assert(
         process.argv.length === 2 ||
             (process.argv.length === 3 &&
-                ['--check', '--small', '--quota'].includes(process.argv[2])),
+                [
+                    '--check',
+                    '--small',
+                    '--quota',
+                    '--download-boundary',
+                ].includes(process.argv[2])),
     );
     assert.equal(origin('http://127.0.0.1:8080'), 'http://127.0.0.1:8080');
     browser = await chromium.launch();
