@@ -1881,6 +1881,443 @@ if (process.argv[2] === '--effect-worker') {
         t.diagnostic('business.sqlite SHA-256 ' + digest);
     });
 
+    test('restores stopped execution state and continues fenced session history', async (t) => {
+        const root = await mkdtemp(
+            join(tmpdir(), 'bento-execution-state-restore-'),
+        );
+        const source = join(root, 'source');
+        const archive = join(root, 'backup');
+        const restored = join(root, 'restore');
+        const names = [
+            'business.sqlite',
+            'authority.sqlite',
+            'history.sqlite',
+        ] as const;
+        const batches = [
+            '00000000-0000-4000-8000-000000000001',
+            '00000000-0000-4000-8000-000000000002',
+        ] as const;
+        const prompt = 'restore-source';
+        const idempotencyKey = 'restore-source-key';
+        let service: Awaited<ReturnType<typeof start>> | undefined;
+        let sourceGrant: { request: WorkerRequest; key: string } | undefined;
+        let nextRequest: WorkerRequest | undefined;
+        let sourceCalls = 0;
+        let restoreCalls = 0;
+        let workerFailure: { error: unknown } | undefined;
+
+        const turn = (number: number) => {
+            const seq = (number - 1) * 2;
+            return [
+                {
+                    type: 'turn/start',
+                    seq,
+                    time: 1700000000001 + seq,
+                    data: { turn: number },
+                },
+                {
+                    type: 'turn/end',
+                    seq: seq + 1,
+                    time: 1700000000002 + seq,
+                    data: { turn: number, reason: { kind: 'completed' } },
+                },
+            ];
+        };
+        const events = [turn(1), turn(2)] as const;
+        const receipts = batches.map((batch, index) => ({
+            epoch: index + 1,
+            batch,
+            digest: createHash('sha256')
+                .update(JSON.stringify(events[index]))
+                .digest('hex'),
+            first: index * 2,
+            count: 2,
+        }));
+        const header = (id: string) => ({
+            id,
+            version: 4,
+            createdAt: 1700000000000,
+            isSeeded: false,
+        });
+        const sha256 = async (path: string) =>
+            createHash('sha256')
+                .update(await readFile(path))
+                .digest('hex');
+
+        async function call<T = unknown>(
+            request: WorkerRequest,
+            method: string,
+            fields: object = {},
+        ): Promise<T> {
+            const response = await rpc(request, method, fields);
+            assert.equal(response.status, 200, method);
+            const result = (await response.json()) as { ok: boolean; value: T };
+            assert.equal(result.ok, true, method);
+            return result.value;
+        }
+
+        async function commitTurn(
+            request: WorkerRequest,
+            key: string,
+            index: 0 | 1,
+        ) {
+            const fields = {
+                key,
+                batch: batches[index],
+                events: events[index],
+            };
+            await call(request, 'stage', fields);
+            assert.deepEqual(
+                await call(request, 'append', fields),
+                receipts[index],
+            );
+            assert.deepEqual(
+                await call(request, 'append', fields),
+                receipts[index],
+            );
+            assert.deepEqual(await call(request, 'reconcile', { key }), {
+                outcome: 'already-committed',
+                receipt: receipts[index],
+            });
+            await call(request, 'flush', { key });
+            await call(request, 'close', { key });
+        }
+
+        function fixture(
+            state: string,
+            execute: (request: WorkerRequest) => Promise<void>,
+        ): ExecutionHost {
+            return {
+                ...localHost(join(state, 'volume')),
+                async worker(request) {
+                    try {
+                        assert.equal(request.mode, 'execute');
+                        await execute(request);
+                        return 'completed';
+                    } catch (error) {
+                        workerFailure ??= { error };
+                        throw error;
+                    }
+                },
+            };
+        }
+
+        async function completed(
+            api: ReturnType<typeof client>,
+            runPath: string,
+        ) {
+            const response = await until(
+                () => api(runPath),
+                (value) => {
+                    if (workerFailure) throw workerFailure.error;
+                    return value.json().status === 'succeeded';
+                },
+                'restored fixture Run succeeded',
+            );
+            assert.equal(response.status, 200);
+            return response.json();
+        }
+
+        function inspect(
+            state: string,
+            binding: WorkerRequest['binding'],
+            runIds: string[],
+            epoch: 1 | 2,
+        ) {
+            const read = (
+                name: (typeof names)[number],
+                query: (db: DatabaseSync) => void,
+            ) => {
+                const db = new DatabaseSync(join(state, name), {
+                    readOnly: true,
+                });
+                try {
+                    if (state === archive) {
+                        assert.equal(
+                            db.prepare('PRAGMA integrity_check').get()
+                                ?.integrity_check,
+                            'ok',
+                        );
+                        assert.deepEqual(
+                            db.prepare('PRAGMA foreign_key_check').all(),
+                            [],
+                        );
+                    }
+                    query(db);
+                } finally {
+                    db.close();
+                }
+            };
+            read('business.sqlite', (db) => {
+                const projects = db
+                    .prepare(
+                        'SELECT owner AS tenant, id AS project, sessionId AS session, sandbox, volume FROM projects',
+                    )
+                    .all();
+                assert.deepEqual(
+                    projects.map((row) => ({ ...row })),
+                    [binding],
+                );
+                const runs = db
+                    .prepare(
+                        'SELECT id, projectId, sessionId, status, receipt FROM runs ORDER BY rowid',
+                    )
+                    .all();
+                assert.deepEqual(
+                    runs.map((row) => ({ ...row })),
+                    runIds.map((id) => ({
+                        id,
+                        projectId: binding.project,
+                        sessionId: binding.session,
+                        status: 'succeeded',
+                        receipt: 1,
+                    })),
+                );
+            });
+            read('authority.sqlite', (db) => {
+                const rows = db
+                    .prepare('SELECT * FROM execution_sessions')
+                    .all();
+                assert.deepEqual(
+                    rows.map((row) => ({ ...row })),
+                    [
+                        {
+                            ...binding,
+                            generation: epoch + 1,
+                            state: 'READY',
+                            run: null,
+                            capability: null,
+                            expires: null,
+                        },
+                    ],
+                );
+            });
+            read('history.sqlite', (db) => {
+                const sessions = db
+                    .prepare(
+                        'SELECT id, header, epoch, owner, handle, next, revision, inherited, materialized FROM sessions',
+                    )
+                    .all();
+                assert.deepEqual(
+                    sessions.map((row) => ({
+                        ...row,
+                        header: JSON.parse(String(row.header)),
+                    })),
+                    [
+                        {
+                            id: binding.session,
+                            header: header(binding.session),
+                            epoch,
+                            owner: 'bento:revoked',
+                            handle: null,
+                            next: epoch * 2,
+                            revision: epoch,
+                            inherited: 0,
+                            materialized: 1,
+                        },
+                    ],
+                );
+                const storedEvents = db
+                    .prepare('SELECT id, seq, event FROM events ORDER BY seq')
+                    .all();
+                assert.deepEqual(
+                    storedEvents.map((row) => ({
+                        ...row,
+                        event: JSON.parse(String(row.event)),
+                    })),
+                    events
+                        .slice(0, epoch)
+                        .flat()
+                        .map((event) => ({
+                            id: binding.session,
+                            seq: event.seq,
+                            event,
+                        })),
+                );
+                const storedReceipts = db
+                    .prepare('SELECT * FROM batch_receipts ORDER BY epoch')
+                    .all();
+                assert.deepEqual(
+                    storedReceipts.map((row) => ({ ...row })),
+                    receipts.slice(0, epoch).map((receipt) => ({
+                        id: binding.session,
+                        ...receipt,
+                    })),
+                );
+                assert.deepEqual(
+                    db.prepare('SELECT * FROM batch_intents').all(),
+                    [],
+                );
+            });
+        }
+
+        try {
+            service = await start(
+                source,
+                fixture(source, async (request) => {
+                    sourceCalls++;
+                    assert.equal(request.grant.generation, 1);
+                    const { key } = await call<{ key: string }>(
+                        request,
+                        'create',
+                        {
+                            header: header(request.grant.session),
+                        },
+                    );
+                    sourceGrant = { request, key };
+                    await commitTurn(request, key, 0);
+                }),
+            );
+            const api = client(service.url);
+            const projectPath = await project(api);
+            const runPath = await submit(
+                api,
+                projectPath,
+                prompt,
+                idempotencyKey,
+            );
+            const sourceDetail = await completed(api, runPath);
+            assert.equal(sourceCalls, 1);
+            assert(sourceGrant);
+            const old = sourceGrant;
+            const binding = old.request.binding;
+            const runsPath = projectPath + '/runs';
+            const replay = await api(
+                runsPath,
+                'POST',
+                { prompt },
+                idempotencyKey,
+            );
+            assert.equal(replay.status, 200);
+            const sourceReplay = replay.json();
+            assert.equal(sourceReplay.id, sourceDetail.id);
+            assert.equal(sourceReplay.status, 'succeeded');
+            await service.close();
+            service = undefined;
+
+            await mkdir(archive, { mode: 0o700 });
+            for (const name of names) {
+                const db = new DatabaseSync(join(source, name), {
+                    readOnly: true,
+                });
+                try {
+                    await backup(db, join(archive, name));
+                } finally {
+                    db.close();
+                }
+            }
+            inspect(archive, binding, [sourceDetail.id], 1);
+            await mkdir(restored, { mode: 0o700 });
+            const digests = new Map<string, string>();
+            for (const name of names) {
+                const backupPath = join(archive, name);
+                const target = join(restored, name);
+                const digest = await sha256(backupPath);
+                digests.set(name, digest);
+                await copyFile(backupPath, target, constants.COPYFILE_EXCL);
+                assert.equal(await sha256(target), digest);
+            }
+            const volume = join('volume', binding.project, 'volume');
+            const data = await readFile(join(source, volume, 'README.md'));
+            assert.deepEqual(data, Buffer.from('# Fixture\n'));
+            await mkdir(join(restored, volume), {
+                recursive: true,
+                mode: 0o700,
+            });
+            const restoredFile = join(restored, volume, 'README.md');
+            await writeFile(restoredFile, data, { flag: 'wx', mode: 0o600 });
+            assert.deepEqual(await readFile(restoredFile), data);
+
+            service = await start(
+                restored,
+                fixture(restored, async (request) => {
+                    restoreCalls++;
+                    nextRequest = request;
+                    assert.deepEqual(request.binding, binding);
+                    assert.equal(request.grant.generation, 2);
+                    const stale = { ...request, grant: old.request.grant };
+                    assert.equal(
+                        (
+                            await rpc(stale, 'append', {
+                                key: old.key,
+                                batch: batches[0],
+                                events: events[0],
+                            })
+                        ).status,
+                        403,
+                    );
+                    assert.equal(
+                        (await rpc(stale, 'flush', { key: old.key })).status,
+                        403,
+                    );
+                    assert.equal(
+                        (await rpc(stale, 'close', { key: old.key })).status,
+                        403,
+                    );
+                    assert.deepEqual(await call(request, 'stat'), {
+                        header: header(binding.session),
+                        eventCount: 2,
+                        revision: '1',
+                        formatStatus: 'current',
+                    });
+                    const { key } = await call<{ key: string }>(
+                        request,
+                        'open',
+                        { access: 'write' },
+                    );
+                    assert.deepEqual(await call(request, 'read', { key }), {
+                        eventState: 'detached',
+                        events: events[0],
+                    });
+                    await commitTurn(request, key, 1);
+                }),
+            );
+            const restoredApi = client(service.url);
+            const restoredDetail = await restoredApi(runPath);
+            assert.equal(restoredDetail.status, 200);
+            assert.deepEqual(restoredDetail.json(), sourceDetail);
+            const restoredReplay = await restoredApi(
+                runsPath,
+                'POST',
+                { prompt },
+                idempotencyKey,
+            );
+            assert.equal(restoredReplay.status, 200);
+            assert.deepEqual(restoredReplay.json(), sourceReplay);
+            const nextPath = await submit(
+                restoredApi,
+                projectPath,
+                'restore-next',
+                'restore-next-key',
+            );
+            assert.notEqual(nextPath, runPath);
+            const nextDetail = await completed(restoredApi, nextPath);
+            assert.equal(restoreCalls, 1);
+            assert(nextRequest);
+            assert.equal(nextRequest.grant.run, nextDetail.id);
+            const list = await restoredApi(runsPath);
+            assert.equal(list.status, 200);
+            const { runs } = JSON.parse(list.text) as { runs: ResponseBody[] };
+            assert.deepEqual(
+                runs.map(({ id }) => id).sort(),
+                [sourceDetail.id, nextDetail.id].sort(),
+            );
+            await service.close();
+            service = undefined;
+            inspect(restored, binding, [sourceDetail.id, nextDetail.id], 2);
+            for (const [name, digest] of digests) {
+                assert.equal(await sha256(join(archive, name)), digest);
+                t.diagnostic(name + ' SHA-256 ' + digest);
+            }
+        } finally {
+            try {
+                await service?.close();
+            } finally {
+                await rm(root, { recursive: true, force: true });
+            }
+        }
+    });
+
     test('a completed Run retries capture after restart without rerunning its worker', async () => {
         const state = await mkdtemp(join(tmpdir(), 'bento-capture-retry-'));
         const base = localHost(join(state, 'volume'));

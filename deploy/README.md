@@ -52,7 +52,21 @@ node --import ./register-paths.mjs --experimental-strip-types --test --test-name
 
 PASS 时只通过一个匹配测试，报告备份 SHA-256。项目、Run、diff、同键同输入的原 Run 回执均一致，同键异输入返回冲突，其他 owner 读不到该 Run，列表只有原 Run，且没有调用还原侧 fixture 的执行入口。摘要来自合成数据，每次运行可变化。命令失败时使用测试输出定位失败断言，测试会关闭服务并清理本次临时目录。修复前置条件后重新执行，下一次使用全新目录。测试进程被强杀后，先核实进程已退出，再清理仅属于该次运行的 `bento-ledger-restore-*` 临时目录。
 
-Compose 当前的 TS 执行服务持有该业务账本。演练覆盖其中已结束 Run 的读取和幂等重放。生产恢复还需单独验证授权账本、会话历史、外部 Workspace、Temporal、账号与身份数据、S3 及部署级回滚。演练产物只用于本地校验，禁止覆盖已运行或曾运行的状态目录。
+Compose 当前的 TS 执行服务持有该业务账本。演练覆盖其中已结束 Run 的读取和幂等重放。授权账本与会话历史见下方[三库停服演练](#单节点执行宿主停服备份还原演练)。生产恢复还需单独验证外部 Workspace、Temporal、账号与身份数据、S3 及部署级回滚。演练产物只用于本地校验，禁止覆盖已运行或曾运行的状态目录。
+
+## 单节点执行宿主停服备份还原演练
+
+从仓库根目录使用 Node.js 22、`node:sqlite.backup` 和已安装的锁定依赖。命令通过动态回环端口在私有临时目录运行单库与三库演练。
+
+```bash
+node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='^restores (the completed Run business ledger from an isolated backup|stopped execution state and continues fenced session history)$' apps/orchestrator/execution-service/service.test.ts
+```
+
+三库演练等待源执行服务关闭。在源服务持续关闭且无写者的同一窗口，使用 SQLite backup API 依次备份 `business.sqlite`、`authority.sqlite`、`history.sqlite`。逐库核对完整性、外键和 SHA-256，在全新隔离目录还原。还原侧以同一项目绑定路径排他创建经字节校验的合成 `README.md`，供后续 Run 读取基线。演练产物仅包含合成状态，禁止覆盖已运行或曾运行的状态目录。
+
+PASS 时两项测试通过，零失败、零跳过。三库演练报告三个备份摘要，原 Run 的详情和同键重放各自一致，旧代 append、flush、close 均返回 403，新 Run 在下一代读回旧历史并追加一批事件，两代持久回执均与 RPC 结果一致。失败时按测试输出定位断言，测试会关闭服务、数据库句柄并清理临时目录。修复前置条件后用新目录重跑。若测试进程被强杀，先确认其退出，再清理仅属于本次运行的 `bento-execution-state-restore-*` 目录。
+
+该演练验证已完成 Run 的停服边界，真实 OpenShell Workspace 卷及其生命周期、真实 DSH provider/checkpoint、未结批次与故障注入、在线备份和部署级恢复需单独验收。
 
 ## OpenShell 执行宿主
 
