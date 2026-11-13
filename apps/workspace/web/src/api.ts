@@ -4,11 +4,14 @@ export type Session = { account: string };
 export type Project = {
     id: string;
     name: string;
+    createdAt: string;
     status: 'importing' | 'ready' | 'failed';
 };
 export type Run = {
     id: string;
     projectId: string;
+    sessionId: string;
+    createdAt: string;
     status:
         | 'queued'
         | 'running'
@@ -30,6 +33,13 @@ export class ApiError extends Error {
     ) {
         super(message);
     }
+}
+
+export function isUnavailableRun(error: unknown): boolean {
+    return (
+        error instanceof ApiError &&
+        (error.status === 401 || error.status === 404)
+    );
 }
 
 export async function request(path: string, init?: RequestInit) {
@@ -143,13 +153,19 @@ export const runQuery = (account: string, project: string, run: string) =>
     queryOptions({
         queryKey: ['account', account, 'run', project, run],
         queryFn: ({ signal }) => json<Run>(runApi(project, run), { signal }),
+        staleTime: 0,
+        refetchOnReconnect: 'always',
         refetchInterval: ({ state }) =>
-            isActive(state.data?.status) ? 1500 : false,
+            !isUnavailableRun(state.error) && isActive(state.data?.status)
+                ? 1500
+                : false,
     });
 
 export const diffQuery = (account: string, project: string, run: string) =>
     queryOptions({
         queryKey: ['account', account, 'diff', project, run],
+        staleTime: 0,
+        refetchOnReconnect: 'always',
         queryFn: async ({ signal }) =>
             (await request(runApi(project, run) + '/diff', { signal })).text(),
     });

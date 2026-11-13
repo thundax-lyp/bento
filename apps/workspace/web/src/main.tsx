@@ -13,13 +13,14 @@ import {
     RouterProvider,
     useRouteError,
 } from 'react-router';
-import { ApiError, projectsQuery, runQuery, sessionQuery } from './api';
+import { ApiError, projectsQuery, sessionQuery } from './api';
 import {
     AccountSettings,
     Dashboard,
     Login,
     Register,
     RunDetails,
+    TaskList,
     Workspace,
     Workbench,
 } from './pages';
@@ -115,19 +116,17 @@ const router = createBrowserRouter([
             { path: '/workspaces', Component: Workspace },
             { path: '/workspaces/:workspaceId', Component: Workspace },
             { path: '/space/:spaceId', Component: CloudProjectRoute },
+            { path: '/runs', Component: TaskList },
             { path: '/account', Component: AccountSettings },
             {
                 path: '/runs/:runId',
                 async loader({ params, request }) {
-                    const session = await requireSession(request);
+                    await requireSession(request);
                     const project = new URL(request.url).searchParams.get(
                         'project',
                     );
                     if (!project || !params.runId)
                         throw new Response(null, { status: 404 });
-                    await client.ensureQueryData(
-                        runQuery(session.account, project, params.runId),
-                    );
                     return { project, run: params.runId };
                 },
                 Component: RunDetails,
