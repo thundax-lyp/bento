@@ -24,6 +24,7 @@
         ".prettierrc.json",
         "README.md",
         "AGENTS.md",
+        "ENVIRONMENTS.example.md",
         "deploy/compose.yaml",
         "deploy/orchestrator/Dockerfile",
         "deploy/orchestrator/Dockerfile.dockerignore",
