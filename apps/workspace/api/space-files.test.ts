@@ -2263,3 +2263,94 @@ test(
         }
     },
 );
+
+test(
+    'WEB-A03 deleted quota releases after storage confirmation',
+    { timeout: 20000 },
+    async (t) => {
+        const clock = recoveryClock(t);
+        const f = await openQuotaFixture();
+        try {
+            const deleted = f.register('delete.bin', twoGB);
+            const fill1 = f.register('fill1.bin', fourGB);
+            const fill2 = f.register('fill2.bin', fourGB);
+            const one = f.register('one.bin', 1);
+            await f.begin(deleted);
+            await f.save(deleted);
+            await f.begin(fill1);
+            await f.begin(fill2);
+            await f.usage(twoGB, 2 * fourGB);
+            const key = spaceObjectKey(deleted.id);
+            const entry = f.object(key);
+            const barrier = recoveryBarrier();
+            f.hooks.remove = async (candidate) => {
+                if (candidate === key) await barrier.pause();
+            };
+            const remove = () => f.request(f.fileUrl(deleted), 'DELETE');
+            const intents = () =>
+                f.rows(
+                    'SELECT * FROM space_file_deletions WHERE fileId=?',
+                    deleted.id,
+                );
+            async function pending() {
+                f.state(deleted, 'deleting');
+                const rows = intents();
+                assert.equal(rows.length, 1);
+                assert.equal(rows[0]?.phase, 'deleting');
+                assert.equal(rows[0]?.executionProjectId, null);
+                assertUploadError(
+                    await f.request(f.fileUrl(deleted) + '/download'),
+                    404,
+                    'not_found',
+                );
+                const detail = await f.request(f.projectUrl('a'));
+                assert.equal(detail.status, 200);
+                assert.deepEqual(detail.json.files, []);
+                assert.equal(entry.size, twoGB);
+                await f.usage(twoGB, 2 * fourGB);
+                await rejectQuota(f, one);
+            }
+            try {
+                for (let attempt = 0; attempt < 2; attempt++) {
+                    const response = await remove();
+                    assert.equal(response.status, 202);
+                    assert.deepEqual(response.json, { state: 'deleting' });
+                }
+                await pending();
+                await clock.sweep();
+                await barrier.waitForEntry();
+                assert(!entry.calls.includes('remove-confirmed'));
+                await pending();
+            } finally {
+                barrier.release();
+                await new Promise<void>((resolve) => setImmediate(resolve));
+            }
+            await waitForQuotaState(f, deleted, 'deleted');
+            assert.deepEqual(intents(), []);
+            assert.equal(entry.size, null);
+            assert.equal(entry.active, false);
+            assert.equal(entry.parts.size, 0);
+            assert.equal(
+                entry.calls.filter((call) => call === 'remove-confirmed')
+                    .length,
+                1,
+            );
+            const view = await f.usage(0, 2 * fourGB);
+            assert(
+                !view.uploads.some(
+                    (upload: { id: string }) => upload.id === deleted.id,
+                ),
+            );
+            const calls = [...entry.calls];
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const response = await remove();
+                assert.equal(response.status, 204);
+                assert.equal(response.json, null);
+            }
+            assert.deepEqual(entry.calls, calls);
+            await reuseQuota(f, one);
+        } finally {
+            await f.dispose();
+        }
+    },
+);

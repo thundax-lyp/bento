@@ -38,6 +38,8 @@
 
 已通过 T4：过期确认后复用额度聚焦用例通过。
 
+已通过 T5：删除确认后复用额度聚焦用例通过。
+
 ## 执行步骤
 
 ### T0：核定开工边界
@@ -66,23 +68,9 @@ pnpm check
 
 PASS：工作树干净，分支和基线如上，仅 RUNBOOK 差异，聚焦 14/14，统一检查全过。STOP：任一不符；缺工具或依赖报告实际失败，不自动安装或改锁文件。
 
-### T5：删除后复用额度
-
-前置状态：上一提交已完成 T4，过期确认后复用额度聚焦用例通过。允许修改：`apps/workspace/api/space-files.test.ts`（含 RUNBOOK 共 2 个）。禁止修改：已验场景、执行门禁和生产代码。
-
-执行：新增 `WEB-A03 deleted quota releases after storage confirmation`。A start、签名、登记并完成 `delete.bin:2000000000`，再 start `fill1.bin:4000000000,fill2.bin:4000000000`；用量 `(2000000000,8000000000)`。安装仅阻塞 delete 的 remove 前置屏障。DELETE 两次均为 202 deleting，确认 SQLite 仍计入 saved，有一条 deletion intent，下载 404，项目详情不列文件，one.bin:1 start 409。sweep 进入 remove 屏障后重复检查同一用量、intent、fixture 对象大小仍 2 GB，one 原请求仍 409。放行后等 SQLite deleted，intent 无行、无残留分块/对象、仅一次 remove-confirmed；GET space 不列该 ID，DELETE 两次均 204 且不再次调用存储，用量 `(0,8000000000)`。用原 one 请求 start 并重放，均返回同一 uploading DTO，用量 `(0,8000000001)`。
-
-验证：
-
-```bash
-node --test --test-name-pattern='WEB-A03 deleted' apps/workspace/api/space-files.test.ts
-```
-
-PASS：1 项实际执行并通过。单步提交 `Test(task-entry): 验证删除清理后复用额度`。STOP：删除可见性、intent、存储或额度断言失败，保留临界状态证据。
-
 ### T6：同步、完整验证与收口
 
-前置状态：T5 PASS，工作树干净。逐文件上传进度已通过 #32 合入 T0 基线 `20714e6`。
+前置状态：上一提交已完成 T5，删除确认后复用额度聚焦用例通过，工作树干净。逐文件上传进度已通过 #32 合入 T0 基线 `20714e6`。
 允许修改：`docs/40-readiness/CURRENT-READINESS.md` 和删除本 RUNBOOK。核对这两份文档与聚焦命令涉及的 `apps/workspace/api/space-files.test.ts`、`apps/workspace/api/file-delete-hold.test.ts`，共 4 个文件。
 禁止修改：测试与生产代码、他人分支。
 
