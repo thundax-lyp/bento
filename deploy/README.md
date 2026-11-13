@@ -107,3 +107,18 @@ docker compose -f deploy/compose.yaml --profile dev exec temporal temporal opera
 Temporal UI 位于宿主回环 `18233`，Mailpit 位于 `18494`。Temporal 开发实例使用持久卷保存 SQLite。开发模式命令见 [Temporal CLI 文档](https://github.com/temporalio/cli/blob/main/README.md#run-via-docker)。反向代理路径配置见 [Keycloak 文档](https://www.keycloak.org/server/reverseproxy)。
 
 诊断时按 Workflow ID 查询 `advanceRun` 历史，与 Bento Run 状态核对。停用 Temporal 前先排空执行宿主，再停止并清除三项 Temporal 配置。完成状况见[需求完成状况](../docs/40-readiness/CURRENT-READINESS.md)。
+
+## 空间上传实栈验收
+
+在同一独立开发栈独占测试账号，确认 Web 和私有对象存储均可从 Chromium 访问。使用空测试空间，服务端应返回 100,000,000 字节单文件上限、200,000,000 字节账号额度及 16 MiB 分块。按顺序运行：
+
+```sh
+node apps/workspace/web/scripts/verify-web-a02.mjs --check
+node apps/workspace/web/scripts/verify-web-a02.mjs --small
+node apps/workspace/web/scripts/verify-web-a02.mjs
+node apps/workspace/web/scripts/verify-web-a02.mjs --quota
+```
+
+通过受控环境注入 Web 和存储 origin（`BENTO_A02_ORIGIN`、`BENTO_A02_STORAGE_ORIGIN`）、测试账号（`BENTO_A02_LOGIN`、`BENTO_A02_PASSWORD`），以及只读检查器路径 `BENTO_A02_STORAGE_CHECK`。检查器接收 `saved` 或 `absent` 和 `space/{uploadId}`，检查该键无 multipart 残留，并分别确认 HEAD 为 100,000,000 字节或对象不存在。满足条件时退出 0。
+
+先通过两块预检再跑边界。脚本打印阶段、分块编号、HTTP 状态和成功时间，边界传输采用两分钟无进展截止及十分钟阶段截止。签名自然到期单列等待。清理每次轮询最多 12 分钟。失败时查看阶段和受限临时目录中的 `recovery.json`，按原项目与上传 ID 回读。取消未完成上传，待签名失效并确认分块清理后，通过正常项目删除入口清理。核对下载入口失效、对象和分块不存在及账号用量回到起始值，再删除恢复记录和临时文件。上传记录过期回收由 API 受控时钟回归覆盖。
