@@ -1,3 +1,9 @@
+import {
+    maxSnapshotBytes,
+    maxSnapshotFiles,
+    snapshotPathParts,
+    wellFormed,
+} from '../../../shared/text-snapshot.ts';
 import type { FileText } from './types.ts';
 
 export class RequestError extends Error {
@@ -30,31 +36,11 @@ export function object(value: unknown): Record<string, unknown> {
     return value as Record<string, unknown>;
 }
 
-export function wellFormed(text: string) {
-    return Buffer.from(text).toString('utf8') === text;
-}
-
 export function filePath(path: string) {
-    const parts = path.split('/');
-    if (
-        !wellFormed(path) ||
-        Buffer.byteLength(path) > 4096 ||
-        /[\\\p{Cc}]/u.test(path) ||
-        parts.some(
-            (part) =>
-                !part ||
-                part === '.' ||
-                part === '..' ||
-                part.toLowerCase() === '.git' ||
-                Buffer.byteLength(part) > 255,
-        )
-    )
-        throw invalid('Invalid relative file path.');
+    const parts = snapshotPathParts(path);
+    if (!parts) throw invalid('Invalid relative file path.');
     return parts;
 }
-
-export const maxSnapshotFiles = 100;
-export const maxSnapshotBytes = 1024 * 1024;
 
 export function textSnapshot(value: unknown): FileText[] {
     if (!Array.isArray(value)) throw invalid('Expected a files array.');

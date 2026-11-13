@@ -27,6 +27,7 @@
         "typescript-eslint": "^8.72.1"
     },
     "files": [
+        "shared/text-snapshot.ts",
         "apps/orchestrator",
         "apps/workspace/api",
         "apps/workspace/auth",

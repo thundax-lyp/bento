@@ -1,10 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import {
-    filePath,
+    snapshotPathParts,
     maxSnapshotBytes,
     maxSnapshotFiles,
-} from '../../../apps/orchestrator/execution-service/input.ts';
+} from '../../../shared/text-snapshot.ts';
 import { notFound, object, RequestError } from './protocol.ts';
 import type { Backend, ProjectInput } from './protocol.ts';
 import { spaceObjectKey } from './space-storage.ts';
@@ -221,9 +221,7 @@ export function spaceExecution(
         for (const { fileId, path, size, manifest } of JSON.parse(
             row.inputs,
         ) as Input[]) {
-            try {
-                filePath(path);
-            } catch {
+            if (!snapshotPathParts(path)) {
                 issues.push({ fileId, path, code: 'invalid_path' });
                 continue;
             }

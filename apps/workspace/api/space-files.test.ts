@@ -14,9 +14,33 @@ import { sessionAuth } from './auth.ts';
 import { httpBackend } from './execution-service-http.ts';
 import { taskEntryServer } from './server.ts';
 import { mockBackend } from './mock.ts';
-import { RequestError } from './protocol.ts';
+import { projectInput, RequestError } from './protocol.ts';
 import { mySpace } from './space.ts';
 import { spaceObjectKey, spaceStorage } from './space-storage.ts';
+
+test('direct text import enforces the snapshot limits', () => {
+    const files = Array.from({ length: 100 }, (_, i) => ({
+        path: `file-${i}.txt`,
+        text: '',
+    }));
+    files[0]!.text = 'é'.repeat(512 * 1024);
+    assert.equal(projectInput({ name: 'fixture', files }).files.length, 100);
+    assert.throws(
+        () =>
+            projectInput({
+                name: 'fixture',
+                files: [...files, { path: 'extra.txt', text: '' }],
+            }),
+        (error: unknown) =>
+            error instanceof RequestError && error.code === 'too_many_files',
+    );
+    files[0]!.text += 'a';
+    assert.throws(
+        () => projectInput({ name: 'fixture', files }),
+        (error: unknown) =>
+            error instanceof RequestError && error.code === 'project_too_large',
+    );
+});
 
 const noBody = () => Promise.reject(new Error('Unexpected request body'));
 const errorIs =

@@ -157,3 +157,6 @@
 /coverage/
 
 /apps/workspace/auth/dist/
+
+!/shared/
+!/shared/text-snapshot.ts

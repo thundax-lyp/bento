@@ -1,5 +1,6 @@
 {
     "files": [
+        "shared/text-snapshot.ts",
         ".agents/skills/bento-codex-comment-fix/SKILL.md",
         ".agents/skills/bento-codex-comment-fix/agents/openai.yaml",
         ".agents/skills/bento-pr-review/SKILL.md",

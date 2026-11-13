@@ -15,3 +15,5 @@
 !apps/worker/
 !apps/worker/package.json
 !apps/worker/*.ts
+!shared/
+!shared/text-snapshot.ts

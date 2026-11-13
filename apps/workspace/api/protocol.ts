@@ -1,7 +1,7 @@
 import {
     maxSnapshotBytes,
     maxSnapshotFiles,
-} from '../../../apps/orchestrator/execution-service/input.ts';
+} from '../../../shared/text-snapshot.ts';
 
 const projectStatuses = ['importing', 'ready', 'failed'] as const;
 const runStatuses = [
