@@ -3,10 +3,8 @@ package main
 import (
 	"context"
 	"crypto/sha256"
-	_ "embed"
 	"encoding/json"
 	"errors"
-	"html/template"
 	"io"
 	"net"
 	"net/http"
@@ -18,14 +16,6 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2"
 )
-
-//go:embed auth.html
-var loginHTML string
-
-//go:embed auth.css
-var loginCSS string
-
-var loginPage = template.Must(template.New("login").Parse(loginHTML))
 
 const oidcLifetime = 5 * time.Minute
 
@@ -326,24 +316,6 @@ func (k *keycloak) routes(mux *http.ServeMux) {
 			}
 		})
 	}
-	register("GET /auth", func(w http.ResponseWriter, r *http.Request) error {
-		w.Header().Set("Referrer-Policy", "same-origin")
-		_, err := k.sessions.current(r)
-		if err != nil && !errors.Is(err, errLoginRequired) {
-			return err
-		}
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' "+k.logoutURL.Scheme+"://"+k.logoutURL.Host)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = loginPage.Execute(w, err == nil)
-		return nil
-	})
-	register("GET /auth/style.css", func(w http.ResponseWriter, _ *http.Request) error {
-		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		_, _ = io.WriteString(w, loginCSS)
-		return nil
-	})
 	register("GET /api/oidc/start", func(w http.ResponseWriter, r *http.Request) error { return k.start(w, r, nil) })
 	register("GET /api/oidc/callback", k.callback)
 	register("POST /api/oidc/logout", func(w http.ResponseWriter, r *http.Request) error {

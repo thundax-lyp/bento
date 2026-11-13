@@ -10,7 +10,7 @@ services:
                 WORKDIR /build
                 COPY apps/workspace/api/go/go.mod apps/workspace/api/go/go.sum ./
                 RUN go mod download
-                COPY apps/workspace/api/go/*.go apps/workspace/api/go/auth.html apps/workspace/api/go/auth.css ./
+                COPY apps/workspace/api/go/*.go ./
                 RUN CGO_ENABLED=0 go build -trimpath -o /out/bento-web-api .
 
                 FROM $${NODE_IMAGE} AS dependencies

@@ -81,34 +81,6 @@ STOP：版本、基线、测试、资源或授权不满足即回报。2026-11-13
 
 GitHub Actions 环境核验：`gh run view 43193646474 -R thundax-lyp/bento --json jobs` 显示指定基线的 `Deployment image builds`、`Repository checks` 和 `Web Chromium E2E` 成功。现有镜像 job 在 Ubuntu runner 使用 Docker Compose 构建三个服务镜像，并对 Workspace API 模块做 import smoke。workflow 触发条件是 PR 目标 `main` 或 `codex/**`、以及 push `main`，无 `workflow_dispatch`，单独 push 实施分支不能触发。T4 保留三个 job 的名称与检查，添加真实入口 smoke。可在同一个 Draft PR 上以 GitHub runner 完成等量验证，具体取证顺序见 T5。
 
-### T3：移除两套旧页面实现
-
-前置状态：TypeScript 已从构建产物响应，`node --test apps/workspace/api/oidc.test.ts` 通过。
-
-允许修改（9 文件，含 RUNBOOK）：`public-files.json`、`apps/workspace/auth/auth-page.ts`、`apps/workspace/api/go/{oidc.go,auth.html,auth.css}`、`apps/workspace/api/tsconfig.json`、`deploy/compose.yaml`、`.dockerignore`。
-
-禁止修改：Go OIDC 协议逻辑，`go/main.go`，Go 会话和账号仓储。
-
-执行：
-
-1. 删除旧 `auth-page.ts`。把 API tsconfig 的 `include` 改为 `["*.ts"]`。
-2. 删除 Go OIDC 的两个 embed 声明、`loginPage` 初始化、`_ "embed"` 与 `"html/template"` import，以及 `(*keycloak).routes` 的两个 `GET /auth` 页面注册块。保留 `io` 及其对注销表单的读取。删除 Go 的 `auth.html` 与 `auth.css`，用 gofmt 整理 `oidc.go`。
-3. 从 `.dockerignore` 删除两个 Go HTML/CSS 的例外，Compose 的 `go-build` COPY 仅复制 `*.go`。删除 `.dockerignore` 旧 auth-page 例外。保留 auth-build 构建产物 COPY。同步删除 `public-files.json` 中的三个旧页面条目。
-
-验证：
-
-```bash
-(cd apps/workspace/api/go && go test ./... && go vet ./...)
-pnpm --filter @bento/workspace-auth build
-node --test apps/workspace/api/oidc.test.ts
-! rg -n 'auth-page\.ts|go/auth\.(html|css)|loginPage|loginCSS|loginHTML' apps deploy .dockerignore
-git diff --check
-```
-
-PASS：Go 测试、vet 和 OIDC 回归通过，源码和部署入口无旧文件引用。发布清单已删除旧页面条目。README 由 T6 同步。
-
-STOP：发现 Go 运行入口注册了旧页面，或需修改 Go OIDC 其他处理逻辑。
-
 ### T4：在现有镜像 job 验证完整运行入口
 
 前置状态：Compose runtime 复制认证构建产物。Go 反代和真实启动脚本保留。
