@@ -1,14 +1,21 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { openSync, closeSync, fsyncSync, writeSync } from 'node:fs';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { constants, openSync, closeSync, fsyncSync, writeSync } from 'node:fs';
+import {
+    copyFile,
+    mkdir,
+    mkdtemp,
+    readFile,
+    rm,
+    writeFile,
+} from 'node:fs/promises';
 import { connect } from 'node:http2';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { DatabaseSync } from 'node:sqlite';
+import { backup, DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
@@ -1711,6 +1718,167 @@ if (process.argv[2] === '--effect-worker') {
             await service.close();
             await rm(state, { recursive: true, force: true });
         }
+    });
+
+    test('restores the completed Run business ledger from an isolated backup', async (t) => {
+        const root = await mkdtemp(join(tmpdir(), 'bento-ledger-restore-'));
+        const original = join(root, 'source');
+        const restored = join(root, 'restore');
+        const source = join(original, 'business.sqlite');
+        const archive = join(root, 'backup.sqlite');
+        const target = join(restored, 'business.sqlite');
+        const prompt = 'ledger restore fixture';
+        const key = 'ledger-restore-key';
+        let service: Awaited<ReturnType<typeof start>> | undefined;
+        let restoreCalls = 0;
+        let digest: string;
+        try {
+            service = await start(
+                original,
+                localHost(join(original, 'volume')),
+            );
+            const api = client(service.url);
+            const projectPath = await project(api);
+            const projectView = await api(projectPath);
+            assert.equal(projectView.status, 200);
+            assert.equal(projectView.json().status, 'ready');
+            const runsPath = projectPath + '/runs';
+            const accepted = await api(runsPath, 'POST', { prompt }, key);
+            assert.equal(accepted.status, 202);
+            const runId = accepted.json().id;
+            assert(runId);
+            assert(accepted.json().sessionId);
+            const runPath = runsPath + '/' + runId;
+            const before = await until(
+                () => api(runPath),
+                (r) => r.json().status === 'succeeded',
+                'ledger fixture Run succeeded',
+            );
+            assert.equal(before.status, 200);
+            assert.equal(before.json().sessionId, accepted.json().sessionId);
+            const diff = await api(runPath + '/diff');
+            assert.equal(diff.status, 200);
+            assert.match(diff.text, /\+ledger restore fixture/);
+            const replay = await api(runsPath, 'POST', { prompt }, key);
+            assert.equal(replay.status, 200);
+            assert.equal(replay.json().id, runId);
+            assert.equal(replay.json().status, 'succeeded');
+
+            await service.close();
+            service = undefined;
+            const sourceDb = new DatabaseSync(source, { readOnly: true });
+            try {
+                await backup(sourceDb, archive);
+            } finally {
+                sourceDb.close();
+            }
+            const archiveDb = new DatabaseSync(archive, { readOnly: true });
+            try {
+                assert.equal(
+                    archiveDb.prepare('PRAGMA integrity_check').get()
+                        ?.integrity_check,
+                    'ok',
+                );
+                assert.deepEqual(
+                    archiveDb.prepare('PRAGMA foreign_key_check').all(),
+                    [],
+                );
+                const row = archiveDb
+                    .prepare(
+                        'SELECT status, receipt, key, prompt, sessionId, diff FROM runs WHERE id = ?',
+                    )
+                    .get(runId);
+                assert(row);
+                assert.deepEqual(
+                    { ...row },
+                    {
+                        status: 'succeeded',
+                        receipt: 1,
+                        key,
+                        prompt,
+                        sessionId: accepted.json().sessionId,
+                        diff: diff.text,
+                    },
+                );
+            } finally {
+                archiveDb.close();
+            }
+
+            await mkdir(restored, { mode: 0o700 });
+            await copyFile(archive, target, constants.COPYFILE_EXCL);
+            const sha256 = async (path: string) =>
+                createHash('sha256')
+                    .update(await readFile(path))
+                    .digest('hex');
+            digest = await sha256(archive);
+            assert.equal(await sha256(target), digest);
+
+            const fixture = localHost(join(restored, 'volume'));
+            const unexpected = async (): Promise<never> => {
+                restoreCalls++;
+                throw new Error(
+                    'Terminal ledger restore must not touch the fixture host',
+                );
+            };
+            service = await start(restored, {
+                ...fixture,
+                provision: unexpected,
+                snapshot: unexpected,
+                start: unexpected,
+                stop: unexpected,
+                running: unexpected,
+                stopped: unexpected,
+                worker: unexpected,
+            });
+            const restoredApi = client(service.url);
+            const restoredProject = await restoredApi(projectPath);
+            assert.equal(restoredProject.status, 200);
+            assert.deepEqual(restoredProject.json(), projectView.json());
+            const restoredRun = await restoredApi(runPath);
+            assert.equal(restoredRun.status, 200);
+            assert.deepEqual(restoredRun.json(), before.json());
+            const restoredDiff = await restoredApi(runPath + '/diff');
+            assert.equal(restoredDiff.status, 200);
+            assert.equal(restoredDiff.text, diff.text);
+            assert.equal(
+                (await client(service.url, 'account-b')(runPath)).status,
+                404,
+            );
+            const restoredReplay = await restoredApi(
+                runsPath,
+                'POST',
+                { prompt },
+                key,
+            );
+            assert.equal(restoredReplay.status, 200);
+            assert.deepEqual(restoredReplay.json(), replay.json());
+            const conflict = await restoredApi(
+                runsPath,
+                'POST',
+                { prompt: 'different fixture input' },
+                key,
+            );
+            assert.equal(conflict.status, 409);
+            assert.equal(
+                JSON.parse(conflict.text).error.code,
+                'idempotency_conflict',
+            );
+            const list = await restoredApi(runsPath);
+            assert.equal(list.status, 200);
+            assert.deepEqual(JSON.parse(list.text), { runs: [replay.json()] });
+
+            await service.close();
+            service = undefined;
+            assert.equal(restoreCalls, 0);
+            assert.equal(await sha256(archive), digest);
+        } finally {
+            try {
+                await service?.close();
+            } finally {
+                await rm(root, { recursive: true, force: true });
+            }
+        }
+        t.diagnostic('business.sqlite SHA-256 ' + digest);
     });
 
     test('a completed Run retries capture after restart without rerunning its worker', async () => {
