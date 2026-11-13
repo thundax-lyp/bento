@@ -79,47 +79,11 @@ PASS：基线与远端匹配，工作树归属明确，本地检查、API 测试
 
 STOP：版本、基线、测试、资源或授权不满足即回报。2026-11-13 起草实测 Node 22.23.2、pnpm 12.15.0、Go 1.25.3（darwin/arm64），本地与远端 main 均为指定 SHA，初始 Git 工作树干净。离线冻结安装、`pnpm check`、5 项 Workspace API Node 测试（含 4 项 WEB-03 相邻断言）、7 项 Chromium 通过。Docker CLI 指向已失效的 Docker.app 路径，当前无可用本地 engine。实施 T0 仍待审核和开工指令。
 
-GitHub Actions 环境核验：`gh run view 43193646474 -R thundax-lyp/bento --json jobs` 显示指定基线的 `Deployment image builds`、`Repository checks` 和 `Web Chromium E2E` 成功。现有镜像 job 在 Ubuntu runner 使用 Docker Compose 构建三个服务镜像，并对 Workspace API 模块做 import smoke。workflow 触发条件是 PR 目标 `main` 或 `codex/**`、以及 push `main`，无 `workflow_dispatch`，单独 push 实施分支不能触发。T4 保留三个 job 的名称与检查，添加真实入口 smoke。可在同一个 Draft PR 上以 GitHub runner 完成等量验证，具体取证顺序见 T5。
-
-### T5：执行固定回归并回读同一 Draft PR 的镜像验证
-
-前置状态：Checks 的镜像 job 已接入 `deploy/workspace/auth-smoke.sh`，静态检查通过，MASTER 的开工指令授权按本步创建同一个交付用 Draft PR。WEB-03 可以仍在途，此时本步的验证只能证明当前分支，合并前须按并行顺序复跑。
-
-允许修改（2 文件，含 RUNBOOK）：`deploy/workspace/auth-smoke.mjs` 和本 RUNBOOK。
-
-禁止修改：浏览器业务用例、既有检查名称、镜像、生产启动脚本、账号实现、等待时间、断言和测试环境。
-
-现场证据：PR #28 初次在 `f61202be25627f58cae2573613073b9bd69953c8` 的镜像 smoke 失败。诊断提交 `ffa7846386a7e72f9e374ebf12fa17deb22bf826` 的 Actions run `43352912592`、job `131648008295` 再次失败，日志为 `Image entrypoint exited before readiness: exit=1, signal=none, markers=nginx-config-parsed,nginx-fatal`。同 HEAD 的 Repository checks 和 Web Chromium E2E 成功。三个镜像构建和 API import 成功，Orchestrator patch 检查被跳过。
-
-`deploy/workspace/start.sh` 在启动 NGINX、Go 和 TypeScript 子进程前执行 `nginx -t`。当前 smoke 用 Node `spawn` 的 `pipe` 捕获 stdout/stderr，NGINX 配置则通过路径重新打开 `/dev/stdout` 与 `/dev/stderr`。工作假设是 Linux 下重开 Node 的 socket-backed stdio 失败。本机 Darwin 上 Node 子进程 `fstatSync(1)` 确认 `isSocket() === true`、`isFIFO() === false`，但 `openSync("/dev/stdout", "a")` 成功。本机结果只确认 Node 传递的 fd 类型。Linux CI 日志确认 NGINX 配置测试阶段失败，尚无具体 errno。本次以两个普通临时文件代替 Node 管道，并增加精确错误标签。正例、重启和负例全部通过后才完成 T5。
-
-执行：
-
-1. 仅在 `deploy/workspace/auth-smoke.mjs` 修改日志捕获。导入 `mkdtemp, open, readFile, rm` 自 `node:fs/promises`，`tmpdir` 自 `node:os`，`join` 自 `node:path`。改 `startEntry` 为 async，每次调用使用 `mkdtemp(join(tmpdir(), 'bento-auth-entry-'))`，在该目录独立以 `'a'`、`0o600` 打开 `stdout.log` 和 `stderr.log`。将 `spawn` 的 stdio 固定为 `['ignore', stdoutFile.fd, stderrFile.fd]`，保留原命令和环境。注册既有 error/close 监听后关闭父进程中的两个文件句柄。子进程退出后再读两个 UTF-8 日志并返回原 `{code,signal,stdout,stderr}`，最后删除本次临时目录。文件创建、打开或 spawn 失败时也关闭已打开句柄并清理本次目录。所有三处 `entry = startEntry()` 改为 `entry = await startEntry()`。不打印原始日志。
-2. 保留诊断表、错误前缀和所有启动断言，在 `startupDiagnostics` 的 NGINX 标签后补充 `nginx-stdio-reopen-failed`，只在同一行含 `/dev/stdout` 或 `/dev/stderr` 且含 `No such device or address` 时输出标签。缺产物的负例继续从捕获的 stderr 校验完整固定诊断行和非零数字退出码。保留 NGINX 配置、生产启动脚本、镜像、等待时间和原测试请求。
-3. 执行下列静态与聚合验证。继续引用 `f61202be25627f58cae2573613073b9bd69953c8` 的本地 7 项 Chromium 证据，当前 HEAD 的远端 Chromium 必须通过。修复提交保留 T5，推送同一个 Draft PR #28。若同 HEAD 的镜像 job 失败，保留现场和全部断言，回报退出阶段及标签再复审。镜像 smoke 通过后，在 T6 前置状态记录通过的 SHA 与 Actions 链接，删除 T5 并提交。
-
-验证：
-
-```bash
-pnpm install --frozen-lockfile
-pnpm check
-bash -n deploy/workspace/auth-smoke.sh
-node --check deploy/workspace/auth-smoke.mjs
-pnpm exec eslint deploy/workspace/auth-smoke.mjs
-pnpm exec prettier --check deploy/workspace/auth-smoke.mjs
-git diff --check
-gh pr checks --watch --fail-fast
-gh pr view --json headRefOid,isDraft,statusCheckRollup
-```
-
-PASS：本地 API 全部 TAP、Go test/vet、Web 类型检查/测试/构建、lint、format 通过。复用的本地 Chromium 证据为 7 项通过。当前 Draft PR HEAD 的 `Deployment image builds` 成功，逐步回读 Actions 日志确认三个镜像、现有两个 runtime smoke 与新增真实入口 smoke 均执行并通过，同时 `Repository checks` 和 `Web Chromium E2E` 通过。发现并发导致 SHA 更换时重新核对。完成后记录证据链接与提交。
-
-STOP：按并行顺序与停止规则中的 CI 失败恢复处理。
+GitHub Actions 环境核验：`gh run view 43193646474 -R thundax-lyp/bento --json jobs` 显示指定基线的 `Deployment image builds`、`Repository checks` 和 `Web Chromium E2E` 成功。现有镜像 job 在 Ubuntu runner 使用 Docker Compose 构建三个服务镜像，并对 Workspace API 模块做 import smoke。workflow 触发条件是 PR 目标 `main` 或 `codex/**`、以及 push `main`，无 `workflow_dispatch`，单独 push 实施分支不能触发。T4 保留三个 job 的名称与检查，添加真实入口 smoke。可在同一个 Draft PR 上以 GitHub runner 完成等量验证，取证结果见本地收口前置状态。
 
 ### T6：同步发布文件、正式文档与验收证据
 
-前置状态：T5 的真实镜像验证通过。实际准备合并前须纳入已合入的 WEB-03 并复验。
+前置状态：实现 `a06af26027fb42dff9f05da9e4d461680ca433be` 的 [Actions run 43353556458](https://github.com/thundax-lyp/bento/actions/runs/43353556458) 三个 job 均通过。镜像日志确认认证页面、OIDC 生命周期、重启、账号持久化以及缺产物启动失败的断言均通过。实际准备合并前须纳入已合入的 WEB-03 并复验。
 
 允许修改（7 文件，含 RUNBOOK）：`README.md`、`apps/workspace/api/README.md`、`deploy/README.md`、`docs/00-governance/ARCHITECTURE.md`、`docs/30-designs/APPLICATION-BOUNDARIES-DESIGN.md`、`docs/40-readiness/CURRENT-READINESS.md`。
 
