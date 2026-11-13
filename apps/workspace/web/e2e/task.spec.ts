@@ -365,9 +365,16 @@ test('任务列表找回原项目和 Run', async ({ page }) => {
     });
     await page.goto('/');
     await page.getByRole('link', { name: '任务', exact: true }).click();
-    await expect(page.getByText('这个项目还没有任务。')).toBeVisible();
-    await page.getByLabel('执行项目').selectOption(second.id);
-    const list = page.getByRole('list', { name: '任务列表' });
+    const tasks = page.getByRole('main').filter({
+        has: page.getByRole('heading', { name: '任务', exact: true }),
+    });
+    await expect(page).toHaveURL(/\/runs$/);
+    await expect(tasks).toBeVisible();
+    await expect(tasks.getByText('这个项目还没有任务。')).toBeVisible();
+    const project = tasks.getByLabel('执行项目');
+    await project.selectOption(second.id);
+    await expect(project).toHaveValue(second.id);
+    const list = tasks.getByRole('list', { name: '任务列表' });
     await expect(list.getByRole('link')).toHaveText([
         /task-a/,
         /Readme review/,
