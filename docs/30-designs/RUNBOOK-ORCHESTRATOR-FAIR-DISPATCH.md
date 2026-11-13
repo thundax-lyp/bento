@@ -91,31 +91,9 @@ PASS：命令均退出 0，当前 HEAD 是唯一计划提交，源码基线与�
 
 作者已于 2026-11-13（Asia/Shanghai）在 `1197cc8` 上复验。macOS arm64、Node 22.23.2、Go 1.25.3。类型检查、Go 测试和 vet 通过。Node 29 项通过，1 项预期跳过。新场景尚未实现或执行。
 
-## T3：完整验证
-
-前置状态：生产入口双槽用例已提交，`TestTemporalFairDispatchThroughExecutionEntry` 连续三轮通过。
-
-允许修改：0 文件。本步计入 7 个文件，含本 RUNBOOK、`public-files.json`、根 `package.json`、`apps/orchestrator/package.json`、`apps/orchestrator/temporal_test.go`、`apps/orchestrator/temporal_fair_entry_test.go` 和 `apps/orchestrator/execution-service/service.test.ts`。禁止更新证据或改变验证范围。
-
-执行：在主线同步后的工作目录从仓库根执行以下命令。
-
-验证：
-
-```bash
-GOPROXY=off GOSUMDB=off pnpm check:orchestrator
-pnpm exec eslint apps/orchestrator/execution-service/service.test.ts
-pnpm exec prettier --check apps/orchestrator/execution-service/service.test.ts public-files.json
-rg -n -F '"apps/orchestrator/temporal_fair_entry_test.go"' public-files.json
-git diff --check
-```
-
-PASS：全执行宿主测试、Go test/vet、类型、lint、格式和 diff 检查全部退出 0；纵向用例的通过由 Go 外层检查，TS 全量测试直接跳过须由 Go 纵向测试补足。仅增加测试文件的公开清单条目，生产代码、产品接口和 Compose 配置无差异，因此本次完整验证覆盖执行宿主而无需构建 Web 或容器。
-
-STOP：任一命令失败或主线变化影响步骤；按审计后的基线复核，不自行扩大改动。
-
 ## T4：Readiness 与草稿收口
 
-前置状态：T3 PASS，#42 已包含在审核基线中。B 的 PR 先合入，A 随后同步 B 的 Readiness。
+前置状态：`pnpm check:orchestrator`、本次文件 lint/格式、清单与 diff 检查均已通过，#42 已包含在审核基线中。B 的 PR 先合入，A 随后同步 B 的 Readiness。
 
 允许修改：[Readiness](../40-readiness/CURRENT-READINESS.md) 和本 RUNBOOK（2 文件）。本步计入 2 个文件，无额外专门核对文件。禁止修改其他 Readiness 行。
 
