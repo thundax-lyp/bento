@@ -169,9 +169,12 @@ test('登录、导入文本、提交任务、关闭后找回并下载修改', as
     await reopened.getByLabel('账号').fill('guest');
     await reopened.getByLabel('密码', { exact: true }).fill(guestPassword);
     await reopened.getByRole('button', { name: '登录', exact: true }).click();
-    await expect(reopened.getByRole('heading')).toHaveText(
-        '找不到这个页面或任务。',
-    );
+    await expect(
+        reopened.getByRole('heading', {
+            name: '找不到这个页面或任务。',
+            exact: true,
+        }),
+    ).toBeVisible();
     await expect(reopened.getByRole('link', { name: '下载 diff' })).toHaveCount(
         0,
     );
