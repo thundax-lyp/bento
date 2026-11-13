@@ -60,25 +60,6 @@ PASS：两本地 ref 与远端 main 均为指定基线，远端为 `thundax-lyp/
 
 每步文件数均计入 RUNBOOK。下列命令均从仓库根目录执行。所有断言必须执行且退出 0，skip 或弱化断言一律 STOP。通用 STOP 报告最后 PASS 和 SHA、失败断言、文件和符号、复现命令、脱敏输出及待决条件。测试故障保留可重现 fixture 配置，清理仅测试自行创建的目录和端口。数据库或外部调用失败保持已持久化阶段，使用原标识续跑。
 
-### T2：接通执行侧清理与服务回执
-
-前置状态：Store 的项目冻结和终态事务已提交。允许修改（6）：`apps/orchestrator/execution-service/{http,service,store,service.test}.ts` 四个文件、`deploy/README.md`、RUNBOOK。禁止修改：Temporal 协议、真实宿主配置、执行授权模型。
-
-执行：
-
-1. `executionHttp` 增加末尾参数 `advanceProjectDeletion: (owner: string, projectId: string, operationId: string) => Promise<ProjectDeletionReceipt>`，回执类型由 store.ts 导出。接入内部 GET 影响路径和既有项目路径上的 DELETE。复用认证、UUID v4 校验及 RequestError。把账本的 denied/deleting/deleted 分别序列化为固定 409/202/204，204 使用 writeHead(204).end()。Run POST 解析请求体前将原 store.project 调用替换为 store.requireRunProject，入队事务仍重查。同步更新 service.test.ts 内现有 `executionHttp` 直接调用，传入失败即报错的未调用 stub。
-2. `serveExecution` 实现该回调，先同步调用 begin，再按 projectId 合并同一 deleting 操作的在途 Promise。assigned 中含该项目 Run、或当前 Temporal 发布循环 active 时返回 deleting；否则逐个 `scheduler.purgeClosed(runId)`，任何 false 保持持久 deleting 并返回 202，直到描述确认 Workflow 缺失。逐个调用 purgeClosed 时捕获异常，同样保留持久 deleting 并返回 202；false 或异常均立即结束本轮，禁止继续宿主清理或提交账本终态。Temporal Activity 取到 Run 后、占槽前检查冻结，冻结时直接返回，缺失沿用原错误语义；既有已占槽 Activity 必须先退出。然后 `execution.purge(binding, host.purge.bind(host))`，确认返回才提交 Store 终态。缺 host.purge、共享或绑定不明、宿主回执丢失时保持 deleting，内部返回 deleting，允许同 ID 重新观察。完成直接返回 deleted。关闭服务时先等待在途项目清理，再关闭 scheduler 与账本。
-3. 账号 purge 先同步调用既有 `db.drainOwner(owner)`，再查该 owner 的已受理项目删除；存在时返回 `complete:false` 交原项目请求推进。新操作的拒绝以持久 `draining_owners` 为准；同 ID 已有回执先读取，已受理操作可继续。新增 `Store.hasProjectDeletionInProgress(owner: string): boolean`。账号其余资源清理完成时调用 clearProjectDeletionReceipts。将可信宿主既有幂等 purge 契约的适用范围更新为项目删除及账号注销。已完成 204 的回执重放范围截至该账号 purge 完成；其后沿用不存在语义。
-4. 新增 `project deletion execution HTTP`，用 serveExecution、localHost、临时账本和回环 HTTP。以 barrier 令删除先赢、Run 先赢各一次；验证无 bearer、错 owner、缺失/重复/无效 Idempotency-Key、别的 operationId、冻结后深链及空 diff、目标与另一账号工作区。注入可信宿主移除成功后抛错、关闭重开并重试原操作，验证目标 Session 历史和授权记录、Run、项目与 diff 均消失，另一账号仍可继续。fixture 的 purge 记录操作次数与绑定，验证第二次针对已不存在的同一绑定。追加 `project deletion owner drain`：先 drain 的分支以现有账号 purge 入口触发，另一未结束 Run 令清理保持 202，目标项目的新 DELETE 在重启前后均 409 owner_closed；先删除的分支用目标清理 barrier 卡住，账号 purge 返回 202，重启后同操作继续且重放 204，新的操作仍拒绝，账号 purge 随后完成。账号请求使用原私有 POST /v1/account/purge 并带同一 bearer 和 owner；删除先到用同 owner 的另一个仍存在项目断言新操作拒绝。追加 `project deletion Temporal purge receipts`：沿用真实 temporalRuns 客户端，以同一测试文件的 `--project-delete-control-fixture` 模式模拟子进程协议；在临时目录生成可执行 wrapper 通过 BENTO_GO_CONTROL 启动该模式，finally 恢复变量，测试串行。以 Store 创建后写入已终结 Run 的临时账本启动服务。fixture 对该 Run 的 purge 依次返回 false、error、true（模拟确认不存在），start/close 返回成功，choose 返回空字符串；通过临时计数文件跨重启保留序列，在 error 后重开，断言前两次均 202、宿主未调用、历史和冻结保留，第三次确认缺失后才 204 且宿主只调用一次。该 fixture 验证控制协议和条件分支。扩展既有含 fault-effect 证明的 reviewRun 测试：待核对时原项目 DELETE 返回 409 project_busy，既有可信 reviewRun(proof) 成功后仍能读取原补丁；用新操作 ID 删除同一项目，断言 204 和旧 Run/diff 404。保留原有 UNKNOWN 与证据断言，将删除断言放在该项目原断言之后。在同一测试文件加入 `project deletion host observation`，直接调用 `dockerOpenShellPurge` 并以函数模拟 Gateway/Docker，断言标签不匹配不发删除命令，挂载仍在不删卷，卷删除回执丢失后原绑定再次调用确认已不存在。
-
-验证：
-
-```bash
-pnpm --filter @bento/orchestrator check
-```
-
-PASS：执行 HTTP 和所有现有 Orchestrator 测试通过，Run 与删除竞态只准一个胜者，账号 drain 两向顺序与重启断言通过。Temporal false/error 保留 202 并且不触发宿主清理，确认不存在后才 204。待核对阻断，既有 reviewRun 确认成功后同项目可删。宿主观察失败时无终态。STOP：通用条件或账本清理早于关闭 Workflow、撤权、宿主确认。
-
 ### T3：个人端内部 HTTP 接线
 
 前置状态：两个执行内部路由和回执已实现。允许修改（7）：`apps/workspace/api/{protocol,execution-service-http,mock,file-delete-hold.test,server,space}.ts` 六个文件、RUNBOOK。禁止修改：浏览器 API、Run/取消响应、账号认证。

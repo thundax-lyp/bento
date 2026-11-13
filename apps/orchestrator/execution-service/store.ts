@@ -335,6 +335,14 @@ export class Store {
         return projectBinding(this.ownedProject(owner, projectId));
     }
 
+    hasProjectDeletionInProgress(owner: string): boolean {
+        return !!this.db
+            .prepare(
+                "SELECT 1 FROM project_deletions WHERE owner=? AND state='deleting'",
+            )
+            .get(owner);
+    }
+
     clearProjectDeletionReceipts(owner: string): void {
         this.db
             .prepare('DELETE FROM project_deletions WHERE owner=?')
