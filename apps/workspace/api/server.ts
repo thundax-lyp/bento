@@ -235,7 +235,9 @@ export async function taskEntryServer({
             if (
                 (request.method === 'POST' ||
                     (request.method === 'DELETE' &&
-                        /^\/api\/space\/files\/[^/]+$/.test(path))) &&
+                        /^\/api\/space\/(?:files|projects)\/[^/]+$/.test(
+                            path,
+                        ))) &&
                 request.headers.origin !== origin
             ) {
                 throw new RequestError(

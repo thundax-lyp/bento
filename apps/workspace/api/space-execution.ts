@@ -27,6 +27,7 @@ export function spaceExecution(
     db: DatabaseSync,
     backend: Backend,
     readFile: (key: string, size: number) => Promise<Buffer>,
+    requireWritableProject: (owner: string, spaceId: string) => void,
 ) {
     db.exec(`
         CREATE TABLE IF NOT EXISTS space_execution (
@@ -133,6 +134,7 @@ export function spaceExecution(
 
     function start(owner: string, spaceId: string, key: string, body: unknown) {
         project(owner, spaceId);
+        requireWritableProject(owner, spaceId);
         const { fileIds } = object(body);
         if (
             !Array.isArray(fileIds) ||
@@ -306,6 +308,16 @@ export function spaceExecution(
     const timer = setInterval(wake, 2000).unref();
     return {
         detail,
+        projectDeletionInput(owner: string, spaceId: string) {
+            project(owner, spaceId);
+            const row = current(spaceId);
+            if (row && row.owner !== owner) throw notFound();
+            return {
+                importing:
+                    row?.state === 'validating' || row?.state === 'importing',
+                projectId: row?.projectId ?? null,
+            };
+        },
         start,
         deletionProject,
         drain(owner: string) {

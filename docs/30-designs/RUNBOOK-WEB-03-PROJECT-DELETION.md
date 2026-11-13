@@ -60,28 +60,6 @@ PASS：两本地 ref 与远端 main 均为指定基线，远端为 `thundax-lyp/
 
 每步文件数均计入 RUNBOOK。下列命令均从仓库根目录执行。所有断言必须执行且退出 0，skip 或弱化断言一律 STOP。通用 STOP 报告最后 PASS 和 SHA、失败断言、文件和符号、复现命令、脱敏输出及待决条件。测试故障保留可重现 fixture 配置，清理仅测试自行创建的目录和端口。数据库或外部调用失败保持已持久化阶段，使用原标识续跑。
 
-### T4：空间端持久清理与用户 HTTP
-
-前置状态：严格内部 HTTP 回执已提交。允许修改（5）：`apps/workspace/api/{space,space-execution,server,space-files.test}.ts` 四个文件、RUNBOOK。禁止修改：对象存储协议、额度上限、账号认证、其他上传接口的既有正常行为。
-
-执行：
-
-1. `mySpace` 建项目意图表。新增 `projectDeletionImpact(owner: string, spaceId: string)`、`deleteProject(owner: string, spaceId: string)`、`advanceProjectDeletion(owner: string, spaceId: string)`。预检查先读 owner 及上传计数，再查执行影响并合并 blocker。上传阻断查固定四态，fileCount 计当前 `saved/deleting`，runCount/diffCount 取内部结果。未受理时 404 仅用于空间资源不存在或异 owner；内部 404 归未知 503。
-2. DELETE 先检查 owner 完成墓碑，命中则 204。否则在 `commitDeletionChange` 事务内先读已有同 owner 意图，再对新意图重查 owner、持久 space drain、上传、初始化及独立单文件意图；仅无 blocker 且无独立文件意图时写入同一项目唯一意图。已有意图复用，未知门禁不得删除意图。无绑定直接 cleaning。有绑定先 checking，收到约定的明确 409 时原子删除意图并按固定映射返回 409。内部 202 保留 checking 并返回 202。内部 204 原子转 cleaning，并把本项目所有 saved 改为 deleting，仍计用量。无绑定直接进入 cleaning 时在同一意图事务把 saved 改为 deleting。回执未知保留 checking，记录错误并返回 503。
-3. 在 `reserve` 的原事务内先确认 owner 对项目有权且未冻结，再按全局 `space_retired_upload_ids` 查上传 ID，命中统一 404，无预占或存储副作用。新冻结写入守卫接到`spaceExecution.start` 的同步入口、`deleteFile` 写意图前，以及上传 POST 锁内查空间项目冻结。把冻结检查作为 `spaceExecution` 的新增第四个参数 `requireWritableProject: (owner: string, spaceId: string) => void`。该调用直到初始化插入之间无 await。添加 `spaceExecution.projectDeletionInput(owner: string, spaceId: string): {importing:boolean,projectId:string|null}`，复用 project/current，`validating/importing` 为 importing，其余读持久绑定。preview/download 在发签名前与返回 Location 前校验无未完成项目意图。上传读取在删除中返回 404；项目详情和列表投影按固定传输。创建项目检查墓碑，原 ID 不复用且返回 404。
-4. 请求和后台复用以 spaceId 为键的在途 Promise，避免清理并发。每次 30 秒 sweep 在现有上传与文件清理之后按 rowid 推进所有 checking/cleaning 意图，不要求用户登录。checking 使用原远端操作，只有确定拒绝才解除冻结；cleaning 仅处理同 owner/spaceId 的上传。按 rowid 遍历 deleting 行，HEAD 非空则调用 storage.remove，再 HEAD，只有 null 才将该行置 deleted。异常保持额度及阶段并记录 storage_unconfirmed。原已清理上传无需再 Abort。所有对象确认后在同一事务将该项目所有上传 ID（含历史 cancelled/expired/failed/deleted）写入全局退休表，再清除上传、初始化及项目行，写 deleted 项目墓碑。后续重复 DELETE 返回 204。close 等 sweep 和在途操作结束。
-5. `mySpace.drain` 先同步持久化 owner drain，再调用原 execution.drain，并在该 owner 有 checking/cleaning 时返回 false。服务重启时 `taskEntryServer.sweepAccounts` 继续读取既有持久账号清理请求；已写的 space drain 在首轮 sweep 之前仍生效。账号 `mySpace.purge` 入口也必须先执行 drain 并等已有项目删除完成。账号清理每个上传时沿用原签名时限守卫和对象清理，确认 HEAD 缺失后，在同一事务写退休 ID 并删除上传记录。保留全局退休表及 drain；账号最终事务清除该 owner 的项目墓碑。`server.ts` 的现有 DELETE Origin 条件同时匹配 `files` 和 `projects`，复用 deleteStatus 序列化。
-6. 在 `space-files.test.ts` 添加 `project deletion space`，复用临时 SQLite 和对象 fixture。空间状态断言调用 mySpace.route，Origin 断言通过 taskEntryServer 回环端口 0，注入同文件内 Auth fixture，给带 Cookie 的 DELETE 发匹配与不匹配的 Origin。用明确的 barrier 锁定上传/初始化先到与删除先到两种顺序。覆盖预检查不冻结、未清理上传（含 cleaning）、初始化未知、执行拒绝时解除冻结、单文件清理交错、Origin、两账号、两个对象分阶段清理。模拟执行受理回执与对象删除回执丢失，重开同 DB 并驱动原 sweep；断言原 operationId、仍可读对象对应额度保留、清理后一次释放、重复 204、旧 ID 不可复用。覆盖项目删除及账号 purge 两条路径：用另一 owner 在其项目 reserve 同一已清理 ID，断言 404、无存储调用、额度不变，重开后仍拒绝；旧签名指向的键始终不存在。分别测试 drain 先到的 409 和项目意图先到的 202，重启后新删除仍拒绝、旧项目原操作继续及 204 查询，项目完成前账号 purge 不发对象清理，完成后账号 purge 继续。测试用存储 fixture 验证 HEAD unknown 保留额度；单文件历史保留场景继续通过。再在同文件添加 `project deletion crosses both HTTP boundaries`，以 taskEntryServer + httpBackend 连接真实 serveExecution 和 localHost，各用独立临时目录及动态端口，存储由对象 fixture 提供。用真实初始化绑定和两个 owner 的 Run 验证预检查、删除、旧公共补丁 URL 404、另一账号仍可下载及空间用量回收。所有状态等待用 5 秒总期限，空间 sweep 以现有 mock timer 驱动。
-
-验证：
-
-```bash
-pnpm --filter @bento/workspace-api check
-pnpm --filter @bento/workspace-api exec node --experimental-strip-types --test space-files.test.ts file-delete-hold.test.ts cancel-run.test.ts
-```
-
-PASS：全部断言通过，两向 drain 顺序重启后保持，跨账号复用项目或账号已清理的文件 ID 均拒绝，无未确认对象提前释放额度。STOP：通用条件或任何故障可绕过 owner、冻结、回执及对象确认。
-
 ### T5：项目删除确认与进度
 
 前置状态：公共预检查、状态投影和 DELETE 已实现。允许修改（5）：`apps/workspace/web/src/{space-api.ts,space.tsx,space-api.test.ts}` 三个文件、`apps/workspace/web/e2e/space-preview.spec.ts`、RUNBOOK。禁止修改：公共路由层级、账户入口、任务页面、单文件正常操作。
