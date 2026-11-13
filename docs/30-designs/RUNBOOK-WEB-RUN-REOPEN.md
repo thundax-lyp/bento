@@ -59,47 +59,9 @@ PASS：作者已核对上述 SHA，基线 Web check 通过（11 个单测），C
 
 STOP：基线、checkout、审核版本、固定端口、命令结果或共享边界不符，报告具体差异和失败输出。
 
-### T3：单轮补丁读取、恢复和字节验证
-
-前置状态：详情 observer 的 `detailReady` 门控已提交且「原详情恢复」用例通过。允许修改：`apps/workspace/web/src/ui.tsx`、`apps/workspace/web/src/api.ts`、`apps/workspace/web/src/pages.tsx`、`apps/workspace/web/e2e/task.spec.ts`、本文件。禁止修改：`splitFileDiff`、服务端、下载契约。
-
-执行：
-
-1. 保留 `diffQuery` 的 `staleTime: 0` 和 `refetchOnReconnect: 'always'`和现有响应 text、AbortSignal 消费。保留全局有限网络/5xx 自动重试。409 不开启后台轮询，由用户主动重新读取，或浏览器重连后回读。保持 `downloadUrl` 的同源 GET。
-2. 从 `RunDetails` 提取 `RunResult({account,project,runId}: {account:string;project:string;runId:string})` 到 `ui.tsx`。父组件仅在 `detailReady` 成立且 status 为 `succeeded` 时挂载，key 使用 `JSON.stringify([account,project,runId])`。其他状态下文件变更区显示「当前没有可审阅的补丁。」。结果组件查询 `diffQuery`；初次读取或重新读取时显示「正在读取变更…」。409 显示「结果尚未可用。」及「重新读取补丁」。网络错误或 5xx 显示「暂时无法读取补丁。」及同一重试控件。401/404 隐藏内容并显示「当前没有可审阅的补丁。」；其他 4xx 显示公开错误文本和同一重试控件。仅当当前 diff query 的 `isSuccess && fetchStatus === 'idle'` 成立才显示预览和下载。成功且空串时渲染 `DiffPreview` 已有空状态和下载链接；非空时沿用逐文件和完整补丁交互。下载放在文件变更区紧接标题下，链接名继续为「下载 diff」。
-3. 增加标题含「单轮交付恢复」的用例。用同一 Run fixture 先返回 409，确认无 diff 内容或下载。切换为已发布补丁并点击「重新读取补丁」，验证新增、修改、删除三类文件的按钮及点击后仅显示所选补丁块，切回「完整补丁」恢复完整文本。下载响应同时由相同 fixture bytes 提供并附附件头，断言收到的 download 文件字节与 preview 原文响应字节严格相同。第二个独立 Run 返回零字节和只读结论，核对可下载零字节，且不显示上一 Run 的路径或原要求。两个 Run fixture 都使用既有协议，不构造续聊或检查结果。
-4. 扩展现有「登录、导入文本、提交任务、刷新找回并下载修改」用例，将标题更新为「登录、导入文本、提交任务、关闭后找回并下载修改」。沿用该用例的 demo、guest 预置账号和现有注册、登录、Workspace 导入步骤。在提交前为页面安装 `/\/api\/projects\/[^/]+\/runs\/[^/?]+$/` 的一次性详情拦截，并用 `page.waitForResponse` 监听 Run 创建 POST，在该 promise 的 `.then` 中立即解析并保存响应状态和 JSON（关页后不能再读该响应 body）。在 route 回调中调用 `route.fetch()` 读取真实 mock 详情，检查 200 并读出 `{id,projectId,status}` 及原请求 URL，通过下列 `firstDetail` promise 同步交给测试主体，成功时调用 `resolveFirstDetail`，失败时调用 `rejectFirstDetail`，最后 abort 原详情请求。点击「发送任务」后直接等待 `firstDetail` 并立即 `await page.close()`，两者之间不等待 URL、状态文本、详情渲染或 POST JSON。关闭后断言首次 GET 返回 queued 或 running，核对创建 POST 返回 202 及相同的 Run ID 和项目 ID。用原 context 的 `request.get` 回读同一详情 URL，断言首个关页后响应仍为 queued 或 running；再用 `expect.poll` 重读，每次确认原页已关闭、HTTP 200、响应属于同一 Run，直到 succeeded。新页面从工作台「任务」找回相同 URL 和原要求。预览并下载同一补丁，把下载文件应用到临时目录内原始 README，通过 `execFileSync('git', ['apply', '--check', patchPath], {cwd: scratch})` 和 `execFileSync('git', ['apply', patchPath], {cwd: scratch})`，确认 README 严格等于 `# 手册\nBento 模拟任务已完成。\n`。临时目录用 `finally` 清理。保留后半段原地址刷新和 guest 越权断言，使用新页面及稳定原 Run URL。fixture 的实际推进只证明本机 mock，不作为真实模型或 OpenShell 验收。
-
-
-   在注册详情 route 之前声明：
-
-   ```ts
-   type FirstDetail = Pick<Run, 'id' | 'projectId' | 'status'> & { url: string };
-   let resolveFirstDetail!: (detail: FirstDetail) => void;
-   let rejectFirstDetail!: (reason: unknown) => void;
-   const firstDetail = new Promise<FirstDetail>((resolve, reject) => {
-       resolveFirstDetail = resolve;
-       rejectFirstDetail = reject;
-   });
-   ```
-
-   在测试文件中用 `import type { Run } from '../src/api.ts'` 引用现有类型。
-
-验证：
-
-```bash
-pnpm --filter @bento/web typecheck
-pnpm --filter @bento/web test:e2e task.spec.ts -g '单轮交付恢复|关闭后找回|可信核对结束'
-for iteration in 1 2 3 4 5 6 7 8; do
-    pnpm --filter @bento/web test:e2e task.spec.ts -g '关闭后找回' --workers=1 || exit 1
-done
-```
-
-PASS：三个场景实际运行。关闭后找回定向重复 8 次均通过，每次独立启动 mock，恢复预置账号的初始状态。满足读错误、逐文件、原文字节、空补丁、关闭前后均活跃及关闭期间到终态断言。STOP：补丁下载或应用结果不一致、关闭时无活跃证据或 409/401/404 仍暴露缓存补丁。记录错误和脱敏的测试输出，禁止延长 fixture 进程时序或模拟缺失的后端能力。
-
 ### T4：完整本地验证、同步设计与 Readiness
 
-前置状态：T3 通过，B 已先合入共享 Readiness；若期间基线推进，按 MASTER 派发同步并在同步后执行本步。允许修改：`docs/30-designs/WEB-DESIGN.md`、`docs/40-readiness/CURRENT-READINESS.md`、本文件。禁止修改：接口与需求、B 的证据、部署和白名单。
+前置状态：单轮交付恢复用例已通过，关闭后找回独立重复 8 次已通过，B 已先合入共享 Readiness；若期间基线推进，按 MASTER 派发同步并在同步后执行本步。允许修改：`docs/30-designs/WEB-DESIGN.md`、`docs/40-readiness/CURRENT-READINESS.md`、本文件。禁止修改：接口与需求、B 的证据、部署和白名单。
 
 执行：
 

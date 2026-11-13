@@ -1,5 +1,9 @@
 import { expect, test } from '@playwright/test';
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { Run } from '../src/api.ts';
 import { randomUUID } from 'node:crypto';
 
 async function register(
@@ -19,8 +23,9 @@ async function register(
     await expect(page).toHaveURL(/\/login(?:\?|$)/);
 }
 
-test('登录、导入文本、提交任务、刷新找回并下载修改', async ({
+test('登录、导入文本、提交任务、关闭后找回并下载修改', async ({
     page,
+    context,
     request,
     baseURL,
 }) => {
@@ -55,33 +60,121 @@ test('登录、导入文本、提交任务、刷新找回并下载修改', async
         page.getByLabel('执行项目').locator('option:checked'),
     ).toHaveText('产品手册');
     await page.getByLabel('任务要求').fill('请补充 README 安装说明。');
+    type FirstDetail = Pick<Run, 'id' | 'projectId' | 'status'> & {
+        url: string;
+    };
+    let resolveFirstDetail!: (detail: FirstDetail) => void;
+    let rejectFirstDetail!: (reason: unknown) => void;
+    const firstDetail = new Promise<FirstDetail>((resolve, reject) => {
+        resolveFirstDetail = resolve;
+        rejectFirstDetail = reject;
+    });
+    await page.route(
+        /\/api\/projects\/[^/]+\/runs\/[^/?]+$/,
+        async (route) => {
+            try {
+                const response = await route.fetch();
+                expect(response.status()).toBe(200);
+                const run: Run = await response.json();
+                resolveFirstDetail({
+                    id: run.id,
+                    projectId: run.projectId,
+                    status: run.status,
+                    url: route.request().url(),
+                });
+            } catch (error) {
+                rejectFirstDetail(error);
+            } finally {
+                await route.abort();
+            }
+        },
+        { times: 1 },
+    );
+    const submission = page
+        .waitForResponse(
+            (response) =>
+                response.request().method() === 'POST' &&
+                /\/api\/projects\/[^/]+\/runs$/.test(response.url()),
+        )
+        .then(async (response) => ({
+            status: response.status(),
+            run: (await response.json()) as Run,
+        }));
     await page.getByRole('button', { name: '发送任务' }).click();
+    const active = await firstDetail;
+    await page.close();
 
-    await expect(page).toHaveURL(/\/runs\/[^?]+\?project=/);
-    const url = page.url();
-    await page.reload();
-    await expect(page).toHaveURL(url);
-    await expect(page.getByLabel('逐行变更')).toContainText(
+    expect(['queued', 'running']).toContain(active.status);
+    const accepted = await submission;
+    expect(accepted.status).toBe(202);
+    expect(accepted.run.id).toBe(active.id);
+    expect(accepted.run.projectId).toBe(active.projectId);
+    const readState = async () => {
+        expect(page.isClosed()).toBe(true);
+        const response = await context.request.get(active.url);
+        expect(response.status()).toBe(200);
+        const run: Run = await response.json();
+        expect(run.id).toBe(active.id);
+        expect(run.projectId).toBe(active.projectId);
+        return run.status;
+    };
+    expect(['queued', 'running']).toContain(await readState());
+    await expect.poll(readState).toBe('succeeded');
+
+    const reopened = await context.newPage();
+    await reopened.goto('/');
+    await reopened.getByRole('link', { name: '任务', exact: true }).click();
+    await reopened.getByLabel('执行项目').selectOption(active.projectId);
+    await reopened.getByRole('link', { name: /模拟 diff 已生成/ }).click();
+    const url = new URL(
+        '/runs/' +
+            active.id +
+            '?' +
+            new URLSearchParams({ project: active.projectId }),
+        baseURL,
+    ).href;
+    await expect(reopened).toHaveURL(url);
+    await expect(
+        reopened.getByText('请补充 README 安装说明。', { exact: true }),
+    ).toBeVisible();
+    await reopened.reload();
+    await expect(reopened).toHaveURL(url);
+    await expect(reopened.getByLabel('逐行变更')).toContainText(
         '+Bento 模拟任务已完成。',
     );
-    const download = page.waitForEvent('download');
-    await page.getByRole('link', { name: '下载 diff' }).click();
+    const download = reopened.waitForEvent('download');
+    await reopened.getByRole('link', { name: '下载 diff' }).click();
     const patch = await download;
     expect(patch.suggestedFilename()).toBe('bento.diff');
-    const path = await patch.path();
-    expect(path).not.toBeNull();
-    expect(await readFile(path!, 'utf8')).toContain('+Bento 模拟任务已完成。');
+    const patchPath = await patch.path();
+    expect(await readFile(patchPath, 'utf8')).toContain(
+        '+Bento 模拟任务已完成。',
+    );
+    const scratch = await mkdtemp(join(tmpdir(), 'bento-patch-'));
+    try {
+        const original = join(scratch, 'README.md');
+        await writeFile(original, '# 手册\n');
+        execFileSync('git', ['apply', '--check', patchPath], { cwd: scratch });
+        execFileSync('git', ['apply', patchPath], { cwd: scratch });
+        expect(await readFile(original, 'utf8')).toBe(
+            '# 手册\nBento 模拟任务已完成。\n',
+        );
+    } finally {
+        await rm(scratch, { recursive: true, force: true });
+    }
 
-    await page.getByRole('button', { name: '退出登录' }).click();
-    await page.goto(url);
-    await expect(page).toHaveURL(/\/login\?next=/);
-    await page.getByLabel('账号').fill('guest');
-    await page.getByLabel('密码', { exact: true }).fill(guestPassword);
-    await page.getByRole('button', { name: '登录', exact: true }).click();
-    await expect(page.getByRole('heading')).toHaveText(
+    await reopened.getByRole('button', { name: '退出登录' }).click();
+    await reopened.goto(url);
+    await expect(reopened).toHaveURL(/\/login\?next=/);
+    await reopened.getByLabel('账号').fill('guest');
+    await reopened.getByLabel('密码', { exact: true }).fill(guestPassword);
+    await reopened.getByRole('button', { name: '登录', exact: true }).click();
+    await expect(reopened.getByRole('heading')).toHaveText(
         '找不到这个页面或任务。',
     );
-    await expect(page.getByRole('link', { name: '下载 diff' })).toHaveCount(0);
+    await expect(reopened.getByRole('link', { name: '下载 diff' })).toHaveCount(
+        0,
+    );
 });
 
 test('任务详情在可信核对结束后自动显示 diff', async ({ page }) => {
@@ -549,4 +642,92 @@ test('原详情恢复等待缓存 Run 的最新授权状态', async ({ page }) =
     gated = false;
     release!(200);
     await expect(cancel).toBeVisible();
+});
+
+test('单轮交付恢复保持逐文件、完整下载和空补丁对应原 Run', async ({ page }) => {
+    const result = recoveryRun('result', 'succeeded');
+    const empty = { ...recoveryRun('empty', 'succeeded'), summary: '只读结论' };
+    const bytes = [
+        recoveryPatch,
+        '--- /dev/null\n+++ b/added.txt\n@@ -0,0 +1 @@\n+added line\n',
+        '--- a/deleted.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-deleted line\n',
+    ].join('');
+    await recoveryRoutes(page, [result, empty]);
+    await page.route('**' + recoveryRoot + '/result', (route) =>
+        route.fulfill({ json: result }),
+    );
+    await page.route('**' + recoveryRoot + '/empty', (route) =>
+        route.fulfill({ json: empty }),
+    );
+    let published = false;
+    let previewResponse: Buffer | undefined;
+    page.on('response', async (response) => {
+        if (response.url().endsWith('/result/diff') && response.ok()) {
+            previewResponse = await response.body();
+        }
+    });
+    await page.route('**' + recoveryRoot + '/*/diff**', (route) => {
+        const url = new URL(route.request().url());
+        const isResult = url.pathname.endsWith('/result/diff');
+        if (isResult && !published) {
+            return route.fulfill({
+                status: 409,
+                json: {
+                    error: { code: 'conflict', message: '成果尚未可用。' },
+                },
+            });
+        }
+        return route.fulfill({
+            contentType: 'text/plain; charset=utf-8',
+            headers: url.searchParams.has('download')
+                ? { 'content-disposition': 'attachment; filename="bento.diff"' }
+                : {},
+            body: isResult ? bytes : '',
+        });
+    });
+    const download = page.getByRole('link', { name: '下载 diff' });
+    const preview = page.getByLabel('逐行变更');
+    await page.goto('/runs/result?project=recovery');
+    await expect(page.getByText('结果尚未可用。')).toBeVisible();
+    await expect(download).toHaveCount(0);
+    await expect(preview).toHaveCount(0);
+    published = true;
+    await page.getByRole('button', { name: '重新读取补丁' }).click();
+    for (const [label, line, other] of [
+        ['修改 README.md', '+new', '+added line'],
+        ['新增 added.txt', '+added line', '-deleted line'],
+        ['删除 deleted.txt', '-deleted line', '+new'],
+    ] as const) {
+        await page.getByRole('button', { name: label }).click();
+        await expect(preview).toContainText(line);
+        await expect(preview).not.toContainText(other);
+    }
+    await page.getByRole('button', { name: '完整补丁' }).click();
+    expect(await preview.textContent()).toBe(bytes);
+    await expect(download).toHaveAttribute(
+        'href',
+        recoveryRoot + '/result/diff?download=1',
+    );
+    const pending = page.waitForEvent('download');
+    await download.click();
+    expect(await readFile(await (await pending).path())).toEqual(
+        previewResponse,
+    );
+    await page.getByRole('link', { name: '任务', exact: true }).click();
+    await page.getByRole('link', { name: /只读结论/ }).click();
+    await expect(page.getByText('只读结论', { exact: true })).toBeVisible();
+    await expect(page.getByText('这次任务没有文件变更。')).toBeVisible();
+    await expect(page.getByText('原要求 result')).toHaveCount(0);
+    await expect(
+        page.getByRole('button', { name: '修改 README.md' }),
+    ).toHaveCount(0);
+    await expect(download).toHaveAttribute(
+        'href',
+        recoveryRoot + '/empty/diff?download=1',
+    );
+    const pendingEmpty = page.waitForEvent('download');
+    await download.click();
+    expect((await readFile(await (await pendingEmpty).path())).byteLength).toBe(
+        0,
+    );
 });

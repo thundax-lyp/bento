@@ -1,6 +1,8 @@
+import { useQuery } from '@tanstack/react-query';
 import { Slot } from '@radix-ui/react-slot';
 import { useMemo, useState } from 'react';
 import type { ComponentProps } from 'react';
+import { ApiError, diffQuery, downloadUrl, isUnavailableRun } from './api.ts';
 import { splitFileDiff } from './file-diff.ts';
 
 // Button follows the shadcn/ui Radix pattern so links and buttons share a style.
@@ -128,5 +130,50 @@ export function DiffPreview({ text }: { text: string }) {
             )}
             <DiffText text={selected?.text ?? text} />
         </>
+    );
+}
+
+export function RunResult({
+    account,
+    project,
+    runId,
+}: {
+    account: string;
+    project: string;
+    runId: string;
+}) {
+    const diff = useQuery(diffQuery(account, project, runId));
+    if (diff.fetchStatus !== 'idle' || diff.isPending) {
+        return (
+            <p role="status" className="text-sm text-zinc-600">
+                正在读取变更…
+            </p>
+        );
+    }
+    if (diff.isSuccess) {
+        return (
+            <>
+                <Button asChild>
+                    <a href={downloadUrl(project, runId)}>下载 diff</a>
+                </Button>
+                <DiffPreview text={diff.data} />
+            </>
+        );
+    }
+    if (isUnavailableRun(diff.error)) {
+        return <p className="text-sm text-zinc-600">当前没有可审阅的补丁。</p>;
+    }
+    let message = '暂时无法读取补丁。';
+    if (diff.error instanceof ApiError) {
+        if (diff.error.status === 409) message = '结果尚未可用。';
+        else if (diff.error.status < 500) message = diff.error.message;
+    }
+    return (
+        <ReadFailure
+            message={message}
+            label="重新读取补丁"
+            pending={diff.isFetching}
+            onRetry={() => void diff.refetch()}
+        />
     );
 }

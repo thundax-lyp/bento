@@ -25,8 +25,6 @@ import {
     register,
     createProject,
     createRun,
-    diffQuery,
-    downloadUrl,
     isUnavailableRun,
     login,
     logout,
@@ -41,7 +39,7 @@ import type { Run, Session } from './api';
 import { loadDraft, prepareSubmission, saveDraft } from './draft';
 import type { Draft } from './draft';
 import { SpaceList } from './space';
-import { Button, DiffPreview, Notice, ReadFailure } from './ui';
+import { Button, Notice, ReadFailure, RunResult } from './ui';
 
 const errorMessage = (error: unknown) =>
     error instanceof ApiError ? error.message : '暂时无法连接，请稍后重试。';
@@ -881,17 +879,8 @@ export function RunDetails() {
         cancel.variables.project === project &&
         cancel.variables.runId === runId;
     const projects = useQuery(projectsQuery(account));
-    const diff = useQuery({
-        ...diffQuery(account, project, runId),
-        enabled: detailReady && run.data.status === 'succeeded',
-    });
     const name = projects.data?.find((item) => item.id === project)?.name;
     const status: Run['status'] | undefined = run.data?.status;
-    const diffReady =
-        detailReady &&
-        status === 'succeeded' &&
-        diff.isSuccess &&
-        diff.fetchStatus === 'idle';
     if (isUnavailableRun(run.error)) {
         if (run.error instanceof ApiError && run.error.status === 401) {
             return null;
@@ -930,11 +919,6 @@ export function RunDetails() {
                             {status === 'queued' ? '取消排队' : '请求停止'}
                         </Button>
                     )}
-                {diffReady && (
-                    <Button asChild>
-                        <a href={downloadUrl(project, runId)}>下载 diff</a>
-                    </Button>
-                )}
             </div>
             {(!online || run.fetchStatus === 'paused') && (
                 <p role="status">连接中断，正在等待重新连接。</p>
@@ -979,24 +963,17 @@ export function RunDetails() {
                 </section>
                 <section className="min-w-0 space-y-3 rounded-xl border border-zinc-200 p-4">
                     <h2 className="font-semibold">文件变更</h2>
-                    {detailReady && status === 'succeeded' && diff.error && (
-                        <Notice message={errorMessage(diff.error)} />
-                    )}
-                    {diffReady ? (
-                        <DiffPreview
+                    {detailReady && status === 'succeeded' ? (
+                        <RunResult
                             key={JSON.stringify([account, project, runId])}
-                            text={diff.data}
+                            account={account}
+                            project={project}
+                            runId={runId}
                         />
                     ) : (
-                        (!detailReady ||
-                            status !== 'succeeded' ||
-                            !diff.error) && (
-                            <p className="text-sm text-zinc-600">
-                                {detailReady && status === 'succeeded'
-                                    ? '正在读取变更…'
-                                    : '当前没有可审阅的补丁。'}
-                            </p>
-                        )
+                        <p className="text-sm text-zinc-600">
+                            当前没有可审阅的补丁。
+                        </p>
                     )}
                 </section>
             </div>
