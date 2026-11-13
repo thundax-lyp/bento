@@ -1993,3 +1993,77 @@ test(
         }
     },
 );
+
+test(
+    'WEB-A03 concurrent reserves cannot oversubscribe',
+    { timeout: 20000 },
+    async () => {
+        const f = await openQuotaFixture();
+        try {
+            const seed = f.register('seed.bin', fourGB);
+            const pending = f.register('pending.bin', twoGB);
+            const a = f.register('race-a.bin', fourGB);
+            const b = f.register('race-b.bin', fourGB);
+            await f.begin(seed);
+            await f.save(seed);
+            await f.usage(fourGB, 0);
+            await f.begin(pending);
+            await f.usage(fourGB, twoGB);
+            const barrier = recoveryBarrier();
+            f.hooks.abort = async (key, upload) => {
+                if (
+                    upload === undefined &&
+                    [spaceObjectKey(a.id), spaceObjectKey(b.id)].includes(key)
+                ) {
+                    await barrier.pause();
+                }
+            };
+            const requests = [a, b].map(async (input) => ({
+                input,
+                response: await f.start(input),
+            }));
+            let loser: QuotaInput;
+            let winner: QuotaInput;
+            try {
+                await barrier.waitForEntry();
+                const first = await Promise.race(requests);
+                assertUploadError(first.response, 409, 'space_quota');
+                loser = first.input;
+                winner = loser === a ? b : a;
+                f.noEffects(loser);
+                f.state(winner, 'preparing');
+                await f.usage(fourGB, fourGB + twoGB);
+            } finally {
+                barrier.release();
+                await Promise.allSettled(requests);
+            }
+            const outcomes = await Promise.all(requests);
+            assert.deepEqual(
+                outcomes.map(({ response }) => response.status).sort(),
+                [200, 409],
+            );
+            const winning = outcomes.find(({ input }) => input === winner)!;
+            const upload = f.assertUpload(
+                winning.response,
+                winner,
+                'uploading',
+            );
+            const entry = f.object(spaceObjectKey(winner.id));
+            assert.equal(
+                entry.calls.filter((call) => call === 'create').length,
+                1,
+            );
+            const calls = [...entry.calls];
+            assert.deepEqual(
+                f.assertUpload(await f.start(winner), winner, 'uploading'),
+                upload,
+            );
+            assert.deepEqual(entry.calls, calls);
+            assertUploadError(await f.start(loser), 409, 'space_quota');
+            f.noEffects(loser);
+            await f.usage(fourGB, fourGB + twoGB);
+        } finally {
+            await f.dispose();
+        }
+    },
+);

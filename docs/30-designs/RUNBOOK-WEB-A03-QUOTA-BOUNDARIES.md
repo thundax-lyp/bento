@@ -32,6 +32,8 @@
 
 已通过 T1：T0 在 20714e6 基线通过，T1 精确额度及 A04 共 7 项通过，API typecheck 通过。
 
+已通过 T2：并发预占聚焦用例通过。
+
 ## 执行步骤
 
 ### T0：核定开工边界
@@ -60,23 +62,9 @@ pnpm check
 
 PASS：工作树干净，分支和基线如上，仅 RUNBOOK 差异，聚焦 14/14，统一检查全过。STOP：任一不符；缺工具或依赖报告实际失败，不自动安装或改锁文件。
 
-### T2：并发预占
-
-前置状态：上一提交已完成 T1，T0 在 20714e6 基线通过，T1 精确额度及 A04 共 7 项通过，API typecheck 通过。允许修改：`apps/workspace/api/space-files.test.ts`（含 RUNBOOK 共 2 个）。禁止修改：T1、A04 断言和生产代码。
-
-执行：新增 `WEB-A03 concurrent reserves cannot oversubscribe`。A 用 `seed.bin:4000000000` start+part+complete 得 `(4000000000,0)`，再以 `pending.bin:2000000000` start 不签名得 `(4000000000,2000000000)`。创建 `race-a.bin`、`race-b.bin` 各 4 GB。对这两个 key 的首次 prepare abort 用同一个 `recoveryBarrier` 暂停（其他 key 不暂停）。同时发出两条 HTTP start，不先 await 单条；等屏障进入，再用 `Promise.race` 等其中第一条响应，必须是败者 409 space_quota，胜者此时仍卡在存储，SQLite state=preparing 且用量 `(4000000000,6000000000)`。败者无行无调用。finally 放行并用 `Promise.allSettled` 收尾；正常路径断言最终响应集合恰为一条 200 uploading、一条 409 space_quota（不指定获胜 ID），只有胜者 create 一次、用量不变。相同胜者请求重放得到同一 DTO；败者原请求重放仍 409。
-
-验证：
-
-```bash
-node --test --test-name-pattern='WEB-A03 concurrent' apps/workspace/api/space-files.test.ts
-```
-
-PASS：1 项实际执行并通过。单步提交 `Test(task-entry): 验证并发上传原子预占`。STOP：先返回成功、两胜两败、超时、拒绝仍有行或上述断言失败；放行屏障并收尾，保留失败证据。
-
 ### T3：取消后复用额度
 
-前置状态：T2 PASS。允许修改：`apps/workspace/api/space-files.test.ts`（含 RUNBOOK 共 2 个）。禁止修改：已验场景和生产代码。
+前置状态：上一提交已完成 T2，并发预占聚焦用例通过。允许修改：`apps/workspace/api/space-files.test.ts`（含 RUNBOOK 共 2 个）。禁止修改：已验场景和生产代码。
 
 执行：新增 `WEB-A03 cancelled quota releases after storage confirmation`。A 对 `fill1.bin:4000000000,fill2.bin:4000000000,fill3.bin:2000000000` 逐个 start，不完成；只给 fill3 的 part 1 签名并登记。用量 `(0,10000000000)`。cancel(fill3) 两次均返回 cleaning；查上传 GET 为 cleaning、parts=[]，SQLite cleanup=cancelled，fixture 仍 active 且有一块，无带 ID 的 abort。固定重试请求 `one.bin:1` 此时返回 409。安装只拦 fill3 的带 ID abort 的屏障，将 clock advanceTo(fill3.signedUntil+1) 后 sweep；屏障内仍 cleaning、满额、对象分块仍在，原 one 请求仍 409。放行并等 SQLite cancelled：确认 abort 一次、无分块/对象，GET 为 cancelled、parts=[]，用量 `(0,8000000000)`。cancel 重放同 DTO；原 one 原样 start 得 200 uploading 和 `(0,8000000001)`，再重放 DTO 相等且额度不增加。
 
