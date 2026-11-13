@@ -60,26 +60,6 @@ PASS：两本地 ref 与远端 main 均为指定基线，远端为 `thundax-lyp/
 
 每步文件数均计入 RUNBOOK。下列命令均从仓库根目录执行。所有断言必须执行且退出 0，skip 或弱化断言一律 STOP。通用 STOP 报告最后 PASS 和 SHA、失败断言、文件和符号、复现命令、脱敏输出及待决条件。测试故障保留可重现 fixture 配置，清理仅测试自行创建的目录和端口。数据库或外部调用失败保持已持久化阶段，使用原标识续跑。
 
-### T1：执行账本的项目冻结与完成回执
-
-前置状态：T0 通过，已核对审核提交。允许修改（3）：`apps/orchestrator/execution-service/store.ts`、`apps/orchestrator/execution-service/service.test.ts`、RUNBOOK。禁止修改：Worker、执行状态枚举、Temporal、公开 API。
-
-执行：
-
-1. 在 Store 实现 `projectDeletionImpact(owner: string, projectId: string)`、`beginProjectDeletion(owner: string, projectId: string, operationId: string)`，返回固定内部类型。begin 在 `Store.write` 内先按 projectId/operationId 读历史回执并校验 owner，再查项目 owner、已有有效意图、既有持久 owner drain、导入、pending Run、held 单文件门禁。drain 时 `requireOpenOwner` 拒绝新意图，已有原操作回执走前置分支。导入优先于 busy；held 单文件归 project_busy。明确拒绝也写回执。原 denied 回执不得在条件消失后转为接受。
-2. 将冻结条件接到 `Store.projects/project/runs/ownedRun/enqueueRun/acquireFileDeleteHold`，读入口、历史 diff 深链、创建项目键重放使用 404；新 Run 在查已有 Run key 前返回 409 `project_busy`。新增 `Store.requireRunProject(owner: string, projectId: string): void`，冻结时返回 409，异 owner 返回 404，enqueueRun 在事务中调用该守卫。内部 `ownedProject` 保持原始 owner 查询，供影响及清理读取；冻结前已发出的读响应可以完成。禁止新单文件 hold，旧 hold 仍能按原入口释放。冻结项目的 cancel 同样在原写事务中返回 404，避免终态记录被重入。
-3. 新增 `projectDeletionBinding(owner: string, projectId: string, operationId: string): Binding`，必须匹配持久 deleting。将 `purgeProject(binding: Binding, operationId?: string)` 接入同一账本事务。指定操作时严格匹配绑定和 deleting 回执，移除现有历史、Run、补丁、导入提交键和项目，同时转为 deleted。省略时供旧账号路径，遇到 deleting 项目拒绝。新增 `clearProjectDeletionReceipts(owner: string): void`，仅由 T2 的账号清理成功分支调用。
-4. 在 service.test.ts 添加 `project deletion ledger`。使用临时 SQLite 和 Store，先用真实 createProject/addRun 写入关联记录，再对 fixture SQLite 精确写入各测试状态；覆盖所有五种未结束 Run、导入、单文件 held、空补丁计数、两种入队顺序、异 owner、无回执伪造完成、事务回滚、关闭重开及 204 对应的 deleted 回执。验证冻结后无旧操作 ID 时返回 idempotency_conflict，按原 ID 回读成功；使用其他 owner 回读均为 404。事务回滚使用临时 SQLite trigger 阻止删除项目，断言历史与冻结同在，再移除 trigger 重试。
-
-验证：
-
-```bash
-pnpm --filter @bento/orchestrator typecheck
-node --experimental-strip-types --test --test-name-pattern='project deletion ledger' apps/orchestrator/execution-service/service.test.ts
-```
-
-PASS：所列断言全部通过，项目冻结与 Run 入队不存在同时成功，回执提交与历史删除同时生效。STOP：通用条件或已有 Run、文件删除验证语义改变。
-
 ### T2：接通执行侧清理与服务回执
 
 前置状态：Store 的项目冻结和终态事务已提交。允许修改（6）：`apps/orchestrator/execution-service/{http,service,store,service.test}.ts` 四个文件、`deploy/README.md`、RUNBOOK。禁止修改：Temporal 协议、真实宿主配置、执行授权模型。

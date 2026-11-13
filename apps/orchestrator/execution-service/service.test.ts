@@ -275,6 +275,168 @@ if (process.argv[2] === '--effect-worker') {
         assert.equal(completedTurn([unknown, completed]), false);
         assert.equal(completedTurn([]), false);
     });
+    test('project deletion ledger', async () => {
+        const dir = await mkdtemp(join(tmpdir(), 'bento-project-deletion-'));
+        const path = join(dir, 'ledger.sqlite');
+        let store = new Store(path);
+        const sql = new DatabaseSync(path);
+        try {
+            const owner = 'owner-a';
+            const project = store.createProject(
+                owner,
+                'project',
+                readme,
+                'import',
+            ).project.id;
+            const begin = (operation = randomUUID()) =>
+                store.beginProjectDeletion(owner, project, operation);
+            assert.deepEqual(begin(), {
+                state: 'denied',
+                code: 'project_importing',
+            });
+            store.importResult(project, 'ready');
+            const { run } = store.addRun(
+                owner,
+                project,
+                'run',
+                'original prompt',
+            );
+            const denied = randomUUID();
+            for (const status of [
+                'queued',
+                'running',
+                'recovering',
+                'cancelling',
+                'needs_review',
+            ]) {
+                sql.prepare('UPDATE runs SET status=? WHERE id=?').run(
+                    status,
+                    run.id,
+                );
+                assert.deepEqual(
+                    begin(status === 'queued' ? denied : randomUUID()),
+                    {
+                        state: 'denied',
+                        code: 'project_busy',
+                    },
+                );
+            }
+            sql.prepare(
+                "UPDATE runs SET status='succeeded', diff='' WHERE id=?",
+            ).run(run.id);
+            assert.deepEqual(begin(denied), {
+                state: 'denied',
+                code: 'project_busy',
+            });
+            const hold = randomUUID();
+            assert.deepEqual(
+                store.acquireFileDeleteHold(owner, project, hold),
+                { state: 'held' },
+            );
+            assert.deepEqual(begin(), {
+                state: 'denied',
+                code: 'project_busy',
+            });
+            store.releaseFileDeleteHold(owner, project, hold);
+            assert.deepEqual(store.projectDeletionImpact(owner, project), {
+                runCount: 1,
+                diffCount: 1,
+                blockers: [],
+            });
+            assert.equal(store.diff(owner, project, run.id), '');
+            const operation = randomUUID();
+            assert.throws(
+                () => store.projectDeletionBinding(owner, project, operation),
+                { status: 404 },
+            );
+            assert.deepEqual(begin(operation), { state: 'deleting' });
+            assert.throws(
+                () => store.addRun(owner, project, 'new', 'new prompt'),
+                { code: 'project_busy' },
+            );
+            assert.throws(
+                () => store.addRun(owner, project, 'run', 'original prompt'),
+                { code: 'project_busy' },
+            );
+            assert.throws(
+                () => store.createProject(owner, 'project', readme, 'import'),
+                { status: 404 },
+            );
+            assert.throws(
+                () => store.beginProjectDeletion('owner-b', project, operation),
+                { status: 404 },
+            );
+            assert.throws(
+                () =>
+                    store.beginProjectDeletion(
+                        'owner-b',
+                        project,
+                        randomUUID(),
+                    ),
+                { status: 404 },
+            );
+            assert.throws(() => begin(), { code: 'idempotency_conflict' });
+            assert.deepEqual(store.projects(owner), []);
+            assert.throws(() => store.diff(owner, project, run.id), {
+                status: 404,
+            });
+            assert.throws(() => store.cancelQueuedRun(owner, project, run.id), {
+                status: 404,
+            });
+            assert.throws(
+                () => store.acquireFileDeleteHold(owner, project, randomUUID()),
+                { status: 404 },
+            );
+
+            store.close();
+            store = new Store(path);
+            assert.deepEqual(begin(operation), { state: 'deleting' });
+            const binding = store.projectDeletionBinding(
+                owner,
+                project,
+                operation,
+            );
+            assert.throws(() => store.purgeProject(binding), {
+                code: 'project_busy',
+            });
+            assert.throws(() => store.purgeProject(binding, randomUUID()), {
+                status: 404,
+            });
+            assert.throws(
+                () =>
+                    store.purgeProject(
+                        { ...binding, volume: 'other' },
+                        operation,
+                    ),
+                { status: 404 },
+            );
+            sql.exec(
+                "CREATE TRIGGER fail_purge BEFORE DELETE ON projects BEGIN SELECT RAISE(ABORT, 'fixture rollback'); END",
+            );
+            assert.throws(
+                () => store.purgeProject(binding, operation),
+                /fixture rollback/,
+            );
+            assert.deepEqual(store.projectRunIds(project), [run.id]);
+            assert.deepEqual(begin(operation), { state: 'deleting' });
+            sql.exec('DROP TRIGGER fail_purge');
+            store.purgeProject(binding, operation);
+            assert.deepEqual(store.projectRunIds(project), []);
+            assert.deepEqual(begin(operation), { state: 'deleted' });
+            assert.throws(() => store.projectDeletionImpact(owner, project), {
+                status: 404,
+            });
+            assert.throws(
+                () => store.beginProjectDeletion('owner-b', project, operation),
+                { status: 404 },
+            );
+        } finally {
+            sql.close();
+            store.close();
+            await rm(dir, { recursive: true, force: true });
+        }
+    });
+
     test('file deletion hold fences Run admission', async () => {
         const state = await mkdtemp(join(tmpdir(), 'bento-file-hold-'));
         const database = join(state, 'execution.sqlite');
