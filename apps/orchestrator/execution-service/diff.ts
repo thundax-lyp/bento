@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FileText } from './types.ts';
 
-function git(cwd: string, args: string[], input = '') {
+function git(cwd: string, args: string[], input?: string) {
     return new Promise<string>((resolve, reject) => {
         const child = spawn('git', args, {
             cwd,
@@ -16,23 +16,23 @@ function git(cwd: string, args: string[], input = '') {
                 GIT_CONFIG_GLOBAL: '/dev/null',
                 LC_ALL: 'C',
             },
-            stdio: ['pipe', 'pipe', 'ignore'],
+            stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'ignore'],
             signal: AbortSignal.timeout(15_000),
         });
         const output: Buffer[] = [];
         let bytes = 0;
-        child.stdout.on('data', (chunk: Buffer) => {
+        child.stdout?.on('data', (chunk: Buffer) => {
             bytes += chunk.length;
             if (bytes > 8 * 1024 * 1024) child.kill('SIGKILL');
             else output.push(chunk);
         });
-        child.stdin.on('error', reject);
+        child.stdin?.on('error', reject);
         child.once('error', reject);
         child.once('close', (code) => {
             if (code === 0) resolve(Buffer.concat(output).toString('utf8'));
             else reject(new Error('Git diff generation failed'));
         });
-        child.stdin.end(input);
+        child.stdin?.end(input);
     });
 }
 
