@@ -65,24 +65,6 @@ node --test apps/workspace/api/space-files.test.ts
 
 PASS：工作树干净、分支正确，HEAD 文件列表只有 RUNBOOK，父提交与最新审核基线、本地跟踪与远端 SHA 一致。Node 22、仓库指定 pnpm，现有 4 项用例全通过。STOP：任何不匹配或未得到 MASTER 开工指令，记录命令输出和基线，留在 T0。T0 无提交。
 
-### T2 · 对象大小不符与清理额度
-
-前置状态：T1 PASS。允许修改 2 个文件，本 RUNBOOK、`apps/workspace/api/space-files.test.ts`。禁止修改生产、签名时限与项目门禁。
-
-执行：
-
-1. 新增 `WEB-A04 wrong object size stays hidden`，正确上传两块，令 fixture Complete 写入 16777218 字节。断言完成 `409 space_conflict`，SQLite `cleaning/failed`（state/cleanup），只调用一次合并。验证隐藏、预占与门禁。
-2. 在签名窗口内 tick 一次，断言未调用清理 abort 或 remove，预占仍在。跨过窗口再 tick，断言清理结束为 `failed`、remove 一次、门禁消失。取消回读 `200 failed`，额度保持，重复完成 `409 space_conflict`。
-
-验证：
-
-```bash
-node --test --test-name-pattern='WEB-A04 wrong object size stays hidden' apps/workspace/api/space-files.test.ts
-git diff --check
-```
-
-PASS：实际执行 1 项且全部通过。STOP：状态、调用次数或额度偏差按执行契约报告。提交 `Test(task-entry): 验证大小不符的清理与额度`。
-
 ### T3 · 完成回执丢失后同 ID 重试
 
 前置状态：T2 PASS。允许修改 2 个文件，本 RUNBOOK、`apps/workspace/api/space-files.test.ts`。禁止修改生产或 HTTP 错误契约。

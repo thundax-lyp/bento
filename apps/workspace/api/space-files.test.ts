@@ -1194,3 +1194,80 @@ test(
         });
     },
 );
+
+async function uploadRecoveryParts(f: UploadRecoveryFixture) {
+    await f.sendPart(1);
+    await f.sendPart(2);
+}
+
+function recoveryClock(t: TestContext) {
+    t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: 1800000000000 });
+    return {
+        async sweep() {
+            t.mock.timers.tick(30000);
+            await new Promise<void>((resolve) => setImmediate(resolve));
+        },
+        expireSignature(f: UploadRecoveryFixture) {
+            const signedUntil = f.row().signedUntil;
+            assert(typeof signedUntil === 'number');
+            t.mock.timers.setTime(signedUntil + 1);
+        },
+    };
+}
+
+const recoveryCallCount = (f: UploadRecoveryFixture, operation: string) =>
+    f.calls.filter(([name]) => name === operation).length;
+
+async function assertRecoveryGate(f: UploadRecoveryFixture, pending: boolean) {
+    const result = await f.request(f.projectUrl + '/deletion');
+    assert.equal(result.status, 200);
+    assert.equal(result.json.uploadCount, pending ? 1 : 0);
+    assert.deepEqual(result.json.blockers, pending ? ['upload_pending'] : []);
+    if (pending) {
+        assert.equal(result.json.fileCount, 0);
+        assertUploadError(
+            await f.request(f.projectUrl, 'DELETE'),
+            409,
+            'upload_pending',
+        );
+    }
+}
+
+test(
+    'WEB-A04 wrong object size stays hidden',
+    { timeout: 20000 },
+    async (t) => {
+        const clock = recoveryClock(t);
+        await withUploadRecoveryFixture(t, async (f) => {
+            await uploadRecoveryParts(f);
+            const complete = f.storage.complete;
+            f.storage.complete = async (...args) => {
+                await complete(...args);
+                f.stored.size = recoveryBytes - 1;
+            };
+            assertUploadError(await f.complete(), 409, 'space_conflict');
+            await f.view('cleaning', []);
+            assert.equal(f.row().cleanup, 'failed');
+            assert.equal(recoveryCallCount(f, 'complete'), 1);
+            await f.projection(0, recoveryBytes);
+            await assertRecoveryGate(f, true);
+            await clock.sweep();
+            assert.equal(recoveryCallCount(f, 'abort'), 1); // Preparation only.
+            assert.equal(recoveryCallCount(f, 'remove'), 0);
+            await f.projection(0, recoveryBytes);
+            clock.expireSignature(f);
+            await clock.sweep();
+            await f.view('failed', []);
+            assert.equal(f.stored.active, false);
+            assert.equal(f.stored.size, null);
+            assert.equal(recoveryCallCount(f, 'remove'), 1);
+            await f.projection(0, 0);
+            await assertRecoveryGate(f, false);
+            const cancel = await f.request(f.uploadUrl + '/cancel', 'POST', {});
+            assert.equal(cancel.status, 200);
+            assert.equal(cancel.json.state, 'failed');
+            assertUploadError(await f.complete(), 409, 'space_conflict');
+            await f.projection(0, 0);
+        });
+    },
+);
