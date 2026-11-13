@@ -2067,3 +2067,140 @@ test(
         }
     },
 );
+
+type QuotaFixture = Awaited<ReturnType<typeof openQuotaFixture>>;
+type QuotaClock = ReturnType<typeof recoveryClock>;
+
+async function waitForQuotaState(
+    f: QuotaFixture,
+    input: QuotaInput,
+    expected: string,
+) {
+    const deadline = performance.now() + 5000;
+    while (
+        f.rows('SELECT state FROM space_uploads WHERE id=?', input.id)[0]
+            ?.state !== expected
+    ) {
+        assert(
+            performance.now() < deadline,
+            'SQLite did not reach ' + expected,
+        );
+        await delay(10);
+    }
+    return f.state(input, expected);
+}
+
+async function quotaView(f: QuotaFixture, input: QuotaInput, expected: string) {
+    const response = await f.request(f.uploadUrl(input));
+    assert.deepEqual(response.json.parts, []);
+    const { parts: _parts, ...json } = response.json;
+    return f.assertUpload({ ...response, json }, input, expected);
+}
+
+async function rejectQuota(f: QuotaFixture, input: QuotaInput) {
+    assertUploadError(await f.start(input), 409, 'space_quota');
+    f.noEffects(input);
+}
+
+async function reuseQuota(f: QuotaFixture, input: QuotaInput) {
+    const first = await f.begin(input);
+    const entry = f.object(spaceObjectKey(input.id));
+    const calls = [...entry.calls];
+    assert.deepEqual(
+        f.assertUpload(await f.start(input), input, 'uploading'),
+        first,
+    );
+    assert.deepEqual(entry.calls, calls);
+    await f.usage(0, 2 * fourGB + 1);
+}
+
+async function confirmQuotaAbort(
+    f: QuotaFixture,
+    clock: QuotaClock,
+    input: QuotaInput,
+    one: QuotaInput,
+    outcome: 'cancelled' | 'expired',
+) {
+    const key = spaceObjectKey(input.id);
+    const entry = f.object(key);
+    const row = f.state(input, 'cleaning');
+    assert.equal(row.cleanup, outcome);
+    assert(typeof row.signedUntil === 'number' && row.signedUntil > Date.now());
+    await quotaView(f, input, 'cleaning');
+    assert(entry.active);
+    assert.equal(entry.parts.size, 1);
+    assert(!entry.calls.includes('abort'));
+    await f.usage(0, tenGB);
+    await rejectQuota(f, one);
+    const barrier = recoveryBarrier();
+    f.hooks.abort = async (candidate, upload) => {
+        if (candidate === key && upload !== undefined) await barrier.pause();
+    };
+    try {
+        clock.advanceTo(row.signedUntil + 1);
+        await clock.sweep();
+        await barrier.waitForEntry();
+        assert.equal(f.state(input, 'cleaning').cleanup, outcome);
+        assert(entry.active);
+        assert.equal(entry.parts.size, 1);
+        assert(!entry.calls.includes('abort-confirmed'));
+        await f.usage(0, tenGB);
+        await rejectQuota(f, one);
+    } finally {
+        barrier.release();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    await waitForQuotaState(f, input, outcome);
+    assert.equal(entry.calls.filter((call) => call === 'abort').length, 1);
+    assert.equal(
+        entry.calls.filter((call) => call === 'abort-confirmed').length,
+        1,
+    );
+    assert.equal(entry.active, false);
+    assert.equal(entry.parts.size, 0);
+    assert.equal(entry.size, null);
+    await f.usage(0, 2 * fourGB);
+    return quotaView(f, input, outcome);
+}
+
+test(
+    'WEB-A03 cancelled quota releases after storage confirmation',
+    { timeout: 20000 },
+    async (t) => {
+        const clock = recoveryClock(t);
+        const f = await openQuotaFixture();
+        try {
+            const fill1 = f.register('fill1.bin', fourGB);
+            const fill2 = f.register('fill2.bin', fourGB);
+            const fill3 = f.register('fill3.bin', twoGB);
+            const one = f.register('one.bin', 1);
+            for (const input of [fill1, fill2, fill3]) await f.begin(input);
+            await f.sendPart(fill3, 1);
+            await f.usage(0, tenGB);
+            const cancel = () =>
+                f.request(f.uploadUrl(fill3) + '/cancel', 'POST', {});
+            const cleaning = f.assertUpload(await cancel(), fill3, 'cleaning');
+            assert.deepEqual(
+                f.assertUpload(await cancel(), fill3, 'cleaning'),
+                cleaning,
+            );
+            const cancelled = await confirmQuotaAbort(
+                f,
+                clock,
+                fill3,
+                one,
+                'cancelled',
+            );
+            const entry = f.object(spaceObjectKey(fill3.id));
+            const calls = [...entry.calls];
+            assert.deepEqual(
+                f.assertUpload(await cancel(), fill3, 'cancelled'),
+                cancelled,
+            );
+            assert.deepEqual(entry.calls, calls);
+            await reuseQuota(f, one);
+        } finally {
+            await f.dispose();
+        }
+    },
+);
