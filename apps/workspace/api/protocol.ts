@@ -1,3 +1,8 @@
+import {
+    maxSnapshotBytes,
+    maxSnapshotFiles,
+} from '../../../apps/orchestrator/execution-service/input.ts';
+
 const projectStatuses = ['importing', 'ready', 'failed'] as const;
 const runStatuses = [
     'queued',
@@ -123,7 +128,7 @@ export function projectInput(value: unknown): ProjectInput {
             '请提供项目名称和文件列表。',
         );
     }
-    if (files.length > 100) {
+    if (files.length > maxSnapshotFiles) {
         throw new RequestError(
             413,
             'too_many_files',
@@ -167,7 +172,7 @@ export function projectInput(value: unknown): ProjectInput {
             );
         }
     }
-    if (bytes > 1024 * 1024) {
+    if (bytes > maxSnapshotBytes) {
         throw new RequestError(
             413,
             'project_too_large',

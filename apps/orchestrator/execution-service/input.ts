@@ -53,9 +53,12 @@ export function filePath(path: string) {
     return parts;
 }
 
+export const maxSnapshotFiles = 100;
+export const maxSnapshotBytes = 1024 * 1024;
+
 export function textSnapshot(value: unknown): FileText[] {
     if (!Array.isArray(value)) throw invalid('Expected a files array.');
-    if (value.length > 100) throw oversized();
+    if (value.length > maxSnapshotFiles) throw oversized();
     const files: FileText[] = [];
     const paths = new Set<string>();
     const directories = new Set<string>();
@@ -74,7 +77,7 @@ export function textSnapshot(value: unknown): FileText[] {
         for (let i = 1; i < parts.length; i++)
             directories.add(parts.slice(0, i).join('/'));
         bytes += Buffer.byteLength(text);
-        if (bytes > 1024 * 1024) throw oversized();
+        if (bytes > maxSnapshotBytes) throw oversized();
         files.push({ path, text });
     }
     if ([...paths].some((path) => directories.has(path)))
