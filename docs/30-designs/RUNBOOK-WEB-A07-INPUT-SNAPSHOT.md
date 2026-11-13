@@ -1,6 +1,6 @@
 # WEB-A07 输入快照验证 RUNBOOK
 
-状态为待独立审核。起草日期为 2026-11-13（Asia/Shanghai）。工作区为 `/Volumes/storage/workspace/bento-a`，调查基线为 `5c8ffb99b2065851ee4d262e21ccc396ad089186`。MASTER 审核通过并指定分支、审核提交及开工指令后，WORKER 从 T1 执行。RUNBOOK 草稿被仓库公开白名单模式忽略，审核通过后的临时提交按 MASTER 指令仅对本 RUNBOOK 使用显式暂存，最终 PR 差异中须已删除。B 的 A6 默认先合入，A 在 T1 提交后按 T2 同步并复验。若 B 尚未执行且 MASTER 明确调整顺序，则使用 MASTER 指定的当前 main 提交作为同步基线。
+状态为 T1 验证通过，等待 T2 同步。起草日期为 2026-11-13（Asia/Shanghai）。工作区为 `/Volumes/storage/workspace/bento-a`，调查基线为 `5c8ffb99b2065851ee4d262e21ccc396ad089186`。新增用例为 `WEB-A07 focused frozen project inputs through both HTTP boundaries`，T1 已通过其 focused 验证、workspace API check、ESLint、Prettier 和 diff 检查。RUNBOOK 草稿被仓库公开白名单模式忽略，审核通过后的临时提交按 MASTER 指令仅对本 RUNBOOK 使用显式暂存，最终 PR 差异中须已删除。B 的 A6 默认先合入，A 在 T1 提交后按 T2 同步并复验。若 B 尚未执行且 MASTER 明确调整顺序，则使用 MASTER 指定的当前 main 提交作为同步基线。
 
 ## 目标与范围
 
@@ -43,33 +43,6 @@ git diff --check
 ```
 
 PASS 为基线和改动归属符合派工、2 个指定用例通过，0 失败、0 跳过。起草时在原基线用 Node.js 22.23.2 已通过。STOP 为基线或文件归属不符，或任一用例未执行或失败。
-
-### T1：锁定现有输入冻结与归属
-
-前置状态为 MASTER 已指定执行分支和审核提交并明确开工，T0 证据适用。允许修改 `apps/workspace/api/space-files.test.ts` 和本 RUNBOOK。专门核对 `apps/workspace/api/space-execution.ts`、`apps/orchestrator/execution-service/local.ts`、`apps/orchestrator/execution-service/service.ts` 与 `apps/orchestrator/execution-service/store.ts`，合计 6 文件。禁止改生产入口、已有用例、运行配置和持久化。
-
-执行：
-
-1. 在 `project deletion crosses both HTTP boundaries` 之后新增测试 `WEB-A07 focused frozen project inputs through both HTTP boundaries`，超时 20 秒。沿用该既有用例的 HTTP fixture 配置、两个登录 Cookie、`setInterval` mock、`waitFor` 的 5 秒上限与 20 ms 轮询、内存对象 Map、SQLite 临时文件及清理方式。测试使用独立目录前缀 `bento-input-snapshot-`，fixture token 为 `fixture-only-input-snapshot-token`。在 storage 替身额外定义 `empty(key)` 为把空 Buffer 写入 Map。为第一个与第二个项目分别创建 owner A 的真实空间项目，另建 owner B 的空间项目。项目创建均通过 POST /api/space/projects，提交各自 UUID 和固定名称 Fixture，断言 200。每个项目各有一个 fixture 已保存的 `README.md`，用既有测试的 SQL 与 SHA-256 base64 manifest 写入方式，文本依次为 `alpha\n`、`beta\n` 和 `foreign\n`。使用独立的 UUID。HTTP 初始化与后续链路消费这些 fixture 文件。
-2. 创建 `const host = localHost(join(dir, 'volume'))`，保存原 `snapshot` 并包裹。在第一个项目 ready 后将其执行项目 ID 设为唯一拦截目标。首次匹配目标的 `host.snapshot(binding)` 先清除拦截目标，再通知已进入闸门，并等待释放后调用原 snapshot。用两个 `Promise.withResolvers<void>()` 分别作进入与释放信号。等待进入时用现有 `waitFor` 读取由进入 Promise 置真的标志。另包裹 `host.worker`，只在 `mode === 'execute'` 时记录 `binding`、`grant.run`、`grant.session` 和原 snapshot 返回的文件数组，然后原样调用原 worker。禁止记录 grant token。使用该 host 启动真实执行服务。
-3. 首次初始化前，用 B 的 Cookie 对 A 的空间项目初始化，并用 A 的 Cookie 对第一个空间项目选择第二项目的文件和 B 的文件。三次均期望 `404 not_found`，随后 A 的空间详情仍为 `uninitialized`。三个拒绝请求和合法请求使用不同键。
-4. A 用键 `initialize-alpha` 初始化第一个项目，断言 202，轮询 ready 并保存执行项目 ID。每次初始化轮询的读取回调先调用 `t.mock.timers.tick(2000)`，再 GET 对应空间项目详情。通用 `waitFor` 不推进 mock `setInterval`。断言清单精确为原 file ID、`README.md`、`Buffer.byteLength('alpha\n')`、`available:true`。设置拦截目标，A 用键 `run-alpha` 提交 `{prompt:'first change'}`，断言 202，等待闸门进入。GET 原详情断言 200、queued、项目 ID、Run ID 与 Session ID 等于提交响应，`prompt` 等于提交值。
-5. 闸门保持期间，在第一个空间项目通过 `POST /api/space/projects/{spaceId}/uploads` 以新 UUID 提交 `{id,path:'extra.txt',size:0,checksums:[]}`，断言 200 和 `uploading`。再 `POST /api/space/uploads/{id}/complete`，断言 200 和 `saved`。读取空间详情，文件列表含原文件与新文件，初始化清单和执行项目 ID 与步骤 4 完全相同。用新键 `initialize-alpha-changed` 选择原文件和新文件，断言 `409 execution_already_bound`。同键重试原 Run，断言 200 且 ID 相同，列表只含一个 Run，详情仍 queued。B 读取原 Run 详情、diff 及尝试向 A 的执行项目提交 Run 均为 `404 not_found`。
-6. 释放闸门，轮询第一个 Run 到 succeeded。初始化第二个项目（`initialize-beta`），同样断言 202，按第 4 项在每次读取前推进 mock 定时器，断言 ready 及精确清单，文本大小对应 `beta\n`。提交 `{prompt:'second change'}`，键为 `run-beta`，断言 202，轮询 succeeded。两次捕获的 worker 输入按顺序严格等于 `[{path:'README.md',text:'alpha\n'}]` 和 `[{path:'README.md',text:'beta\n'}]`。两个 `binding.tenant` 都是 A，`binding.project` 与对应执行项目相等，`binding.session`、`grant.session` 与对应公开 Session 相等，`grant.run` 与对应公开 Run 相等。两次项目、Session、Run、sandbox、volume 各自不同。两份 diff 都 200，第一个包含上下文 ` alpha` 与新增行 `+first change`，第二个包含 ` beta` 与 `+second change`。第二份没有 `first change`，第二个完成后重读第一份 diff 字节一致。A 在第二个项目路径下读取第一个 Run，断言 `404 not_found`。
-7. 在 `finally` 首先释放闸门，再关闭 Web（未成功启动时关闭 space）、执行服务，最后删除本测试目录。使用嵌套 finally 保证前一关闭失败时仍做后一清理。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --test --test-name-pattern='WEB-A07 focused frozen project inputs through both HTTP boundaries' apps/workspace/api/space-files.test.ts
-pnpm --filter @bento/workspace-api check
-pnpm exec eslint apps/workspace/api/space-files.test.ts
-pnpm exec prettier --check apps/workspace/api/space-files.test.ts
-pnpm exec prettier --check --ignore-path /dev/null docs/30-designs/RUNBOOK-WEB-A07-INPUT-SNAPSHOT.md
-git diff --check
-```
-
-PASS 为指定用例 1 项通过，0 失败、0 跳过，API check 全部通过，lint、格式和 diff 检查通过。删除 T1 说明，保留用例名称和 T2 前置事实，按 WORKER 规则提交测试与 RUNBOOK。STOP 为任一断言失败、超时、用例未执行或需越出当前测试边界。
 
 ### T2：同步复验与证据收口
 
