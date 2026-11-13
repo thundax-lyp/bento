@@ -1271,3 +1271,105 @@ test(
         });
     },
 );
+
+function recoveryBarrier() {
+    let enter!: () => void;
+    let release!: () => void;
+    const entered = new Promise<void>((resolve) => {
+        enter = resolve;
+    });
+    const released = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    return {
+        async waitForEntry() {
+            await Promise.race([
+                entered,
+                delay(5000, undefined, { ref: false }).then(() =>
+                    assert.fail('Storage barrier was not entered'),
+                ),
+            ]);
+        },
+        async pause() {
+            enter();
+            await released;
+        },
+        release,
+    };
+}
+
+const lostRecoveryReceipt = () =>
+    new Error('Fixture lost storage completion receipt');
+
+test(
+    'WEB-A04 lost storage completion receipt replays',
+    { timeout: 20000 },
+    async (t) => {
+        await withUploadRecoveryFixture(t, async (f) => {
+            await uploadRecoveryParts(f);
+            const complete = f.storage.complete;
+            f.storage.complete = async (...args) => {
+                await complete(...args);
+                throw lostRecoveryReceipt();
+            };
+            assertUploadError(await f.complete(), 500, 'server_error');
+            await f.view('completing', []);
+            await f.projection(0, recoveryBytes);
+            await assertRecoveryGate(f, true);
+            const start = f.calls.length;
+            const first = await f.complete();
+            assert.equal(first.status, 200);
+            assert.deepEqual(
+                f.calls.slice(start).map(([name]) => name),
+                ['size'],
+            );
+            const second = await f.complete();
+            assert.equal(second.status, 200);
+            assert.deepEqual(second.json, first.json);
+            assert.equal(f.calls.length, start + 1);
+            await f.savedOnce();
+        });
+        await withUploadRecoveryFixture(t, async (f) => {
+            await uploadRecoveryParts(f);
+            const barrier = recoveryBarrier();
+            const complete = f.storage.complete;
+            f.storage.complete = async (...args) => {
+                await complete(...args);
+                await barrier.pause();
+            };
+            const controller = new AbortController();
+            const aborted = assert.rejects(f.complete(controller.signal), {
+                name: 'AbortError',
+            });
+            void aborted.catch(() => {});
+            try {
+                await barrier.waitForEntry();
+                assert.equal(f.row().state, 'completing');
+                controller.abort();
+                await aborted;
+                barrier.release();
+                const deadline = Date.now() + 5000;
+                let read = await f.request(f.uploadUrl);
+                while (read.json.state !== 'saved' && Date.now() < deadline) {
+                    await delay(20);
+                    read = await f.request(f.uploadUrl);
+                }
+                assert.equal(read.status, 200);
+                assert.equal(read.json.state, 'saved');
+                assert.equal(f.row().state, 'saved');
+                const { parts, ...upload } = read.json;
+                assert.deepEqual(parts, []);
+                const start = f.calls.length;
+                const retry = await f.complete();
+                assert.equal(retry.status, 200);
+                assert.deepEqual(retry.json, upload);
+                assert.equal(f.calls.length, start);
+                await f.savedOnce();
+            } finally {
+                controller.abort();
+                barrier.release();
+                await Promise.allSettled([aborted]);
+            }
+        });
+    },
+);

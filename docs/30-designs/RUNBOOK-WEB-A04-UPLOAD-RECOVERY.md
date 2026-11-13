@@ -65,26 +65,6 @@ node --test apps/workspace/api/space-files.test.ts
 
 PASS：工作树干净、分支正确，HEAD 文件列表只有 RUNBOOK，父提交与最新审核基线、本地跟踪与远端 SHA 一致。Node 22、仓库指定 pnpm，现有 4 项用例全通过。STOP：任何不匹配或未得到 MASTER 开工指令，记录命令输出和基线，留在 T0。T0 无提交。
 
-### T3 · 完成回执丢失后同 ID 重试
-
-前置状态：T2 PASS。允许修改 2 个文件，本 RUNBOOK、`apps/workspace/api/space-files.test.ts`。禁止修改生产或 HTTP 错误契约。
-
-执行：
-
-1. 新增 `WEB-A04 lost storage completion receipt replays`。传齐后令 fixture Complete 写入正确大小、消耗 multipart，再抛出固定 fixture 异常。断言 HTTP `500 server_error`、SQLite 和 GET 仍为 `completing`、隐藏、保持全额预占，且门禁仍在。
-2. 保存调用日志当前位置。用同 ID 再完成两次，均为 `200`，两份 Upload 响应完全相同，已保存一次。从记录位置起，恢复第一次完成仅 HEAD，第二次无存储操作。下载签名的观察请求在调用日志断言后发送。
-3. 在同一个测试内顺序调用两次 `withUploadRecoveryFixture`，第 1、2 项使用第一份 fixture，本项使用第二份独立的 SQLite、API 实例和存储状态。第二份传齐后，令 fixture Complete 写入正确对象并消耗 multipart，随后在正常返回前卡 barrier。使用带独立 AbortController 的 fetch 发起完成请求。等待 entered，确认 SQLite 为 `completing`，取消客户端请求并断言 AbortError，再 release。fixture Complete 正常返回。仅轮询上传 GET，每 20 毫秒一次，最多 5 秒，直到 `200 saved`，并断言 `parts=[]`、SQLite 为 `saved`。
-4. 记录第二份 fixture 的调用日志位置，用同一上传 ID 重试 POST complete，断言 `200` 且 Upload 等于上一步 GET 去掉 parts 后的结果。日志位置之后不得新增 HEAD 或 Complete 调用。执行「已保存一次」断言，核对唯一对象、唯一文件及 `saved=16777219/reserved=0`。
-
-验证：
-
-```bash
-node --test --test-name-pattern='WEB-A04 lost storage completion receipt replays' apps/workspace/api/space-files.test.ts
-git diff --check
-```
-
-PASS：实际执行 1 项，存储完成回执丢失与成功 HTTP 回执丢失两份独立 fixture 的断言均通过。STOP：重发合并、重复记账、半成品可见、回读超时或其他偏差按执行契约报告。提交 `Test(task-entry): 验证上传完成回执丢失后的重试`。
-
 ### T4 · 重开并回读原上传
 
 前置状态：T3 PASS。允许修改 2 个文件，本 RUNBOOK、`apps/workspace/api/space-files.test.ts`。禁止修改生产、恢复周期或 SQLite 写入。
