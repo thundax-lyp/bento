@@ -336,6 +336,8 @@ export async function taskEntryServer({
                 }
                 return reply(response, 200, 'text/plain', result.diff);
             }
+            if (!('json' in result))
+                throw new Error('Unexpected execution response');
             return json(response, result.status, result.json);
         } catch (error) {
             if (response.destroyed) return;

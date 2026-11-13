@@ -365,7 +365,7 @@ export function mySpace(
         row: Upload,
         intent: FileDeletion,
         kind: 'acquireFileDeleteHold' | 'releaseFileDeleteHold',
-    ) {
+    ): Promise<'held' | 'denied' | 'released'> {
         if (!intent.executionProjectId)
             throw new Error('Missing execution project for file deletion');
         const result = await backend(row.owner, {
@@ -375,7 +375,10 @@ export function mySpace(
         });
         if (!('json' in result) || !('state' in result.json))
             throw new Error('Missing file deletion hold receipt');
-        return result.json.state;
+        const { state } = result.json;
+        if (state !== 'held' && state !== 'denied' && state !== 'released')
+            throw new Error('Unexpected file deletion hold state');
+        return state;
     }
 
     async function checkFileDeletion(row: Upload): Promise<'held' | 'denied'> {

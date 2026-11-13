@@ -1,4 +1,11 @@
-import { RequestError, conflict, notFound, publicJson } from './protocol.ts';
+import {
+    RequestError,
+    conflict,
+    notFound,
+    projectDeletionConflicts,
+    object,
+    publicJson,
+} from './protocol.ts';
 import type { Backend, Operation } from './protocol.ts';
 
 function route(operation: Operation): string {
@@ -6,7 +13,13 @@ function route(operation: Operation): string {
     const projects = '/v1/projects';
     if (!('projectId' in operation)) return projects;
     const project = projects + '/' + encodeURIComponent(operation.projectId);
-    if (operation.kind === 'project') return project;
+    if (
+        operation.kind === 'project' ||
+        operation.kind === 'advanceProjectDeletion'
+    )
+        return project;
+    if (operation.kind === 'projectDeletionImpact')
+        return project + '/deletion';
     if ('operationId' in operation)
         return (
             project +
@@ -80,13 +93,16 @@ export function httpBackend(
             body = JSON.stringify({ prompt: operation.prompt });
             headers.set('Idempotency-Key', operation.key);
         }
+        if (operation.kind === 'advanceProjectDeletion')
+            headers.set('Idempotency-Key', operation.operationId);
         if (body !== undefined) headers.set('Content-Type', 'application/json');
 
         const signal = AbortSignal.timeout(timeoutMs);
         try {
             const response = await fetch(origin + route(operation), {
                 method:
-                    operation.kind === 'releaseFileDeleteHold'
+                    operation.kind === 'releaseFileDeleteHold' ||
+                    operation.kind === 'advanceProjectDeletion'
                         ? 'DELETE'
                         : operation.kind === 'acquireFileDeleteHold' ||
                             operation.kind === 'cancelRun' ||
@@ -100,9 +116,39 @@ export function httpBackend(
             });
             const { status } = response;
             if (!response.ok) {
+                if (
+                    status === 409 &&
+                    operation.kind === 'advanceProjectDeletion'
+                ) {
+                    const type = response.headers
+                        .get('content-type')
+                        ?.split(';')[0]
+                        ?.trim()
+                        .toLowerCase();
+                    if (type !== 'application/json') {
+                        await response.body?.cancel();
+                        throw new Error('Invalid deletion error');
+                    }
+                    const { code } = object(
+                        object(await response.json()).error,
+                    );
+                    if (
+                        typeof code !== 'string' ||
+                        !Object.hasOwn(projectDeletionConflicts, code)
+                    )
+                        throw new Error('Invalid deletion error code');
+                    const known = code as keyof typeof projectDeletionConflicts;
+                    throw new RequestError(
+                        409,
+                        known,
+                        projectDeletionConflicts[known],
+                    );
+                }
                 await response.body?.cancel();
                 throw upstreamError(status, operation);
             }
+            if (operation.kind === 'advanceProjectDeletion' && status === 204)
+                return { status: 204 };
             const type = response.headers
                 .get('content-type')
                 ?.split(';')[0]
@@ -120,14 +166,23 @@ export function httpBackend(
                 return { status, diff };
             }
             const expectedStatus =
-                (status === 201 && operation.kind === 'createProject') ||
-                (status === 202 &&
-                    (operation.kind === 'createRun' ||
-                        operation.kind === 'purgeOwner')) ||
-                (status === 200 &&
-                    (operation.kind !== 'createProject' ||
-                        operation.key !== undefined));
-            if (!expectedStatus || type !== 'application/json') {
+                operation.kind === 'advanceProjectDeletion'
+                    ? status === 202
+                    : operation.kind === 'projectDeletionImpact'
+                      ? status === 200
+                      : (status === 201 &&
+                            operation.kind === 'createProject') ||
+                        (status === 202 &&
+                            (operation.kind === 'createRun' ||
+                                operation.kind === 'purgeOwner')) ||
+                        (status === 200 &&
+                            (operation.kind !== 'createProject' ||
+                                operation.key !== undefined));
+            if (
+                (status !== 200 && status !== 201 && status !== 202) ||
+                !expectedStatus ||
+                type !== 'application/json'
+            ) {
                 await response.body?.cancel();
                 throw new Error('Invalid JSON response');
             }

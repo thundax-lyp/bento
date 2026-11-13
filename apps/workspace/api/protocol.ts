@@ -35,9 +35,24 @@ export type ProjectInput = {
 
 export type FileDeleteHold = { state: 'held' | 'denied' | 'released' };
 
+export type ProjectDeletionBlocker = 'project_importing' | 'project_busy';
+type ProjectDeletionImpact = {
+    runCount: number;
+    diffCount: number;
+    blockers: ProjectDeletionBlocker[];
+};
+export const projectDeletionConflicts = {
+    project_busy: '项目仍有未结束的任务或文件清理。',
+    project_importing: '项目正在初始化工作区。',
+    owner_closed: '账号已注销。',
+    idempotency_conflict: '项目已有不同的删除操作。',
+} as const;
+
 export type Operation =
     | { kind: 'listProjects' }
     | { kind: 'purgeOwner' }
+    | { kind: 'projectDeletionImpact'; projectId: string }
+    | { kind: 'advanceProjectDeletion'; projectId: string; operationId: string }
     | {
           kind: 'acquireFileDeleteHold' | 'releaseFileDeleteHold';
           projectId: string;
@@ -57,9 +72,12 @@ export type Result =
               | { projects: Project[] }
               | { runs: Run[] }
               | { complete: boolean }
-              | FileDeleteHold;
+              | FileDeleteHold
+              | ProjectDeletionImpact
+              | { state: 'deleting' };
       }
-    | { status: 200; diff: string };
+    | { status: 200; diff: string }
+    | { status: 204 };
 
 export type Backend = (
     ownerId: string,
@@ -242,6 +260,33 @@ function run(value: unknown, projectId: string, runId?: string): Run {
 
 export function publicJson(operation: Operation, value: unknown) {
     switch (operation.kind) {
+        case 'projectDeletionImpact': {
+            const { runCount, diffCount, blockers } = object(value);
+            if (
+                typeof runCount !== 'number' ||
+                !Number.isSafeInteger(runCount) ||
+                runCount < 0 ||
+                typeof diffCount !== 'number' ||
+                !Number.isSafeInteger(diffCount) ||
+                diffCount < 0 ||
+                !Array.isArray(blockers) ||
+                new Set(blockers).size !== blockers.length ||
+                blockers.some(
+                    (code) =>
+                        code !== 'project_busy' && code !== 'project_importing',
+                )
+            )
+                throw new Error('Invalid deletion impact');
+            return {
+                runCount,
+                diffCount,
+                blockers: blockers as ProjectDeletionBlocker[],
+            };
+        }
+        case 'advanceProjectDeletion':
+            if (object(value).state !== 'deleting')
+                throw new Error('Invalid deletion receipt');
+            return { state: 'deleting' as const };
         case 'acquireFileDeleteHold':
         case 'releaseFileDeleteHold': {
             const { state } = object(value);

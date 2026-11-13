@@ -60,26 +60,6 @@ PASS：两本地 ref 与远端 main 均为指定基线，远端为 `thundax-lyp/
 
 每步文件数均计入 RUNBOOK。下列命令均从仓库根目录执行。所有断言必须执行且退出 0，skip 或弱化断言一律 STOP。通用 STOP 报告最后 PASS 和 SHA、失败断言、文件和符号、复现命令、脱敏输出及待决条件。测试故障保留可重现 fixture 配置，清理仅测试自行创建的目录和端口。数据库或外部调用失败保持已持久化阶段，使用原标识续跑。
 
-### T3：个人端内部 HTTP 接线
-
-前置状态：两个执行内部路由和回执已实现。允许修改（7）：`apps/workspace/api/{protocol,execution-service-http,mock,file-delete-hold.test,server,space}.ts` 六个文件、RUNBOOK。禁止修改：浏览器 API、Run/取消响应、账号认证。
-
-执行：
-
-1. 给 `Operation` 增加 `{kind:'projectDeletionImpact',projectId:string}` 和 `{kind:'advanceProjectDeletion',projectId:string,operationId:string}`，在 `Backend` 的 Result 增加 `{status:204}` 独立分支并在 JSON 联合接入影响和 `{state:"deleting"}`。影响计数校验非负安全整数，blockers 只允许约定值且无重复。publicJson 只处理 200 影响和 202 deleting。错误状态、正文类型、缺字段、非法计数或 blocker 走既有 502。在 server.ts 的通用任务代理分支保留原 diff 处理，在读取 result.json 前增加 `if (!('json' in result)) throw new Error('Unexpected execution response');`，204 只在 T4 空间删除路由消费。账号 sweep 保留既有 JSON 判别。在 space.ts 的 mySpace.fileDeleteHold，保留原 JSON 和 state 判别，并显式收窄为 `held`、`denied` 或 `released` 才返回，其他值（含 `deleting`）抛 `Error('Unexpected file deletion hold state')`，返回签名固定为 `Promise<'held' | 'denied' | 'released'>`。
-2. `httpBackend` 在文件 hold 分支之前匹配这两种 route，编码项目 ID；仅删除分支从 operationId 设置 Idempotency-Key。GET 只接受 200 JSON，DELETE 只接受 202 且 JSON 为 deleting，或 204 无正文。DELETE 409 只解析 application/json 的 error.code，只有 project_busy/project_importing/owner_closed/idempotency_conflict 按固定本地文案转成 RequestError(409, code, message)，其他回执视为 502。404 仍走 notFound，绝不映射完成。
-3. `mockBackend` 给项目影响按当前 mock Run 计算；用项目和操作 ID 的 in-memory map 实现同样的回执、原 owner replay、freeze 与历史清理。mock 无外部资源，检查原回执、owner drain、active/importing/held 后同一次调用清除项目及其 imports，记录 deleted 并返回 status 204。拒绝抛对应 RequestError，已拒绝原键重放同码。保留其它 mock 路径。账号 purge 清除此账号的回执。
-4. 在 `file-delete-hold.test.ts` 添加 `project deletion backend` 测试，核对方法、项目路径、空正文、唯一 Idempotency-Key、服务 header、202/204、四种 409、404 与非法回执拒绝，验证 mock 的未知账号、原操作重放及历史隔离。
-
-验证：
-
-```bash
-pnpm --filter @bento/workspace-api typecheck
-pnpm --filter @bento/workspace-api exec node --experimental-strip-types --test file-delete-hold.test.ts cancel-run.test.ts
-```
-
-PASS：新增及现有 file hold、取消代理断言均通过。STOP：通用条件或非法执行回执能导致空间侧成功。
-
 ### T4：空间端持久清理与用户 HTTP
 
 前置状态：严格内部 HTTP 回执已提交。允许修改（5）：`apps/workspace/api/{space,space-execution,server,space-files.test}.ts` 四个文件、RUNBOOK。禁止修改：对象存储协议、额度上限、账号认证、其他上传接口的既有正常行为。
