@@ -1373,3 +1373,52 @@ test(
         });
     },
 );
+
+test(
+    'WEB-A04 pending completion survives reopen',
+    { timeout: 20000 },
+    async (t) => {
+        const clock = recoveryClock(t);
+        await withUploadRecoveryFixture(t, async (f) => {
+            await uploadRecoveryParts(f);
+            const barrier = recoveryBarrier();
+            const complete = f.storage.complete;
+            f.storage.complete = async (...args) => {
+                await complete(...args);
+                await barrier.pause();
+                throw lostRecoveryReceipt();
+            };
+            const controller = new AbortController();
+            const aborted = assert.rejects(f.complete(controller.signal), {
+                name: 'AbortError',
+            });
+            void aborted.catch(() => {});
+            try {
+                await barrier.waitForEntry();
+                controller.abort();
+                await aborted;
+            } finally {
+                controller.abort();
+                barrier.release();
+                await Promise.allSettled([aborted]);
+            }
+            await f.close();
+            assert.equal(f.row().state, 'completing');
+            const start = f.calls.length;
+            await f.reopen();
+            await f.view('completing', []);
+            await f.projection(0, recoveryBytes);
+            await clock.sweep();
+            const { parts, ...upload } = await f.view('saved', []);
+            assert.deepEqual(parts, []);
+            const retry = await f.complete();
+            assert.equal(retry.status, 200);
+            assert.deepEqual(retry.json, upload);
+            assert.deepEqual(
+                f.calls.slice(start).map(([name]) => name),
+                ['size'],
+            );
+            await f.savedOnce();
+        });
+    },
+);

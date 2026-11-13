@@ -65,24 +65,6 @@ node --test apps/workspace/api/space-files.test.ts
 
 PASS：工作树干净、分支正确，HEAD 文件列表只有 RUNBOOK，父提交与最新审核基线、本地跟踪与远端 SHA 一致。Node 22、仓库指定 pnpm，现有 4 项用例全通过。STOP：任何不匹配或未得到 MASTER 开工指令，记录命令输出和基线，留在 T0。T0 无提交。
 
-### T4 · 重开并回读原上传
-
-前置状态：T3 PASS。允许修改 2 个文件，本 RUNBOOK、`apps/workspace/api/space-files.test.ts`。禁止修改生产、恢复周期或 SQLite 写入。
-
-执行：
-
-1. 新增 `WEB-A04 pending completion survives reopen`。传齐后在 Complete 写入正确对象并消耗 multipart 后卡 barrier。用带独立 AbortController 的 fetch 发完成请求。等待 entered 后取消客户端请求并断言 AbortError，再 release。fixture Complete 抛同 T3 异常，关闭服务时等待处理结束。保持 fixture 存储和 SQLite 目录，关闭后以只读 SQLite 断言仍为 `completing`。
-2. 同 SQLite 文件重开 API，不先调用 complete。GET 仍为 `completing`，隐藏且仍全额预占。tick 30000 推进后台对账。GET 为 `saved`、`parts=[]`。再次 POST complete 回读相同 Upload（GET 去掉 parts），已保存一次。核对重开后到保存仅一次 HEAD、没有 ListParts 或再次合并。
-
-验证：
-
-```bash
-node --test --test-name-pattern='WEB-A04 pending completion survives reopen' apps/workspace/api/space-files.test.ts
-git diff --check
-```
-
-PASS：实际执行 1 项且全部通过。STOP：丢失持久状态、超时、恢复重复副作用或其他偏差按执行契约报告。提交 `Test(task-entry): 验证重开后的原上传对账`。
-
 ### T5 · 完成先进入临界区
 
 前置状态：T4 PASS。允许修改 2 个文件，本 RUNBOOK、`apps/workspace/api/space-files.test.ts`。禁止修改锁、错误契约与生产接线。
