@@ -91,35 +91,9 @@ PASS：命令均退出 0，当前 HEAD 是唯一计划提交，源码基线与�
 
 作者已于 2026-11-13（Asia/Shanghai）在 `1197cc8` 上复验。macOS arm64、Node 22.23.2、Go 1.25.3。类型检查、Go 测试和 vet 通过。Node 29 项通过，1 项预期跳过。新场景尚未实现或执行。
 
-## T1：多 Run Go 测试控制进程
-
-前置状态：T0.1 和 T0.2 均 PASS。
-
-允许修改：`apps/orchestrator/temporal_test.go`（1 文件）。本步计入 3 个文件，另核对本 RUNBOOK 和 `apps/orchestrator/temporal.go`。
-
-禁止修改：已有单 Run 丢回包 fixture、生产 Workflow、stdio 协议及调度策略。
-
-执行：
-
-1. 新增 `TestTemporalFairDispatchControlProcess(t *testing.T)`。`BENTO_TEST_FAIR_DIR` 为空时 `t.Skip`；有值时调用 `runTemporalFairDispatchControl(dir string) error`，成功用 `os.Exit(0)` 防止 Go test 把 PASS 写进 stdout，失败将原因写 stderr 并 `os.Exit(1)`。用现有 `message`、`bridge` 和与 `runTemporal` 相同的 scanner 缓冲区（初始 64 KiB，上限 8 MiB）。stdio 上每行一个 JSON；stdout 仅协议输出。
-2. `start` 只接受一次，校验 `value` 的 `address:"fixture"`、`namespace:"default"`、`taskQueue:"fair-dispatch"`、`slots:2`，回复 `{id,value:null}`。启动后的 `choose` 解码生产 `dispatchSnapshot`，只接受 2 槽，调用生产 `chooseRun`，原 ID 回复 `value` 为选择字符串。空字符串正常。
-3. `enqueue` 必须在 start 后，`value` 为非空、通过 `^[a-f0-9-]{36}$` 校验的业务 Run ID。reader goroutine 持有已发布 ID 集合，重复 ID 立即报错退出。先回复 `{id,value:null}` 再为该 Run 启一个独立的 `testsuite.WorkflowTestSuite` 环境，执行生产 `bentoRun`，超时 40 秒。testsuite logger 写 stderr。注册 Activity 名 `advanceRun`，用同一共享 `bridge` 调 `advance(ctx, id)`。每个 Workflow 的 Activity 调用计数使用独立 `atomic.Int32`，第一次校验收到本 Run ID 后调用 `b.advance`，任何 ID 不符或重试返回 `temporal.NewNonRetryableApplicationError`，错误类型固定 `FairDispatchFixture`。运行结束还须断言一次 Activity 调用，成功创建空文件 `done-<runId>`，以同目录临时文件再 rename 发布。任何 Workflow、次数或标记 I/O 失败，诊断写 stderr 后退出 1。
-4. 无 method 的入站帧是 Activity 回包。按现有 `b.pending` 加锁查找，未知 ID 立即报错。成功帧必须是 `value:null` 且无错误。每个回包 ID 仅可出现一次，由 reader 的集合检查。合法帧交给该 ID 的通道。拒绝其他 method、start 之前的请求和提前 EOF。 `close` 仅在所有已发布 Workflow 均结束、成功标记齐备时确认；用 `sync.WaitGroup` 等待已启动的 Workflow，再回 `{id,value:null}` 并结束 scanner 循环。由于 T2 在发 SIGTERM 前验证全部 `done-<runId>`，该等待不依赖 reader 再消费帧。fixture 用测试父进程的进程组超时兜底；生产 Go 关闭协议没有变化。
-
-验证：
-
-```bash
-gofmt -w apps/orchestrator/temporal_test.go
-GOPROXY=off GOSUMDB=off go -C apps/orchestrator test -run '^(TestDispatchHonorsCapacityAndTenantFIFO|TestTemporalRetryAfterCompletedRun|TestTemporalFairDispatchControlProcess)$' -count=1
-```
-
-PASS：现有 Go 策略与单 Run 测试通过，直接调用的多 Run helper 因无环境变量跳过。T2 经真实入口驱动 helper。
-
-STOP：生产帧或符号漂移、既有测试失败、或 helper 需引入生产改动。
-
 ## T2：生产入口的双槽纵向场景
 
-前置状态：T1 PASS。
+前置状态：`temporal_test.go:TestTemporalFairDispatchControlProcess` 已提交，既有 Go 策略和单 Run 丢回包用例通过，独立 helper 按设计跳过。
 
 允许修改：新增 `apps/orchestrator/temporal_fair_entry_test.go`，修改 `apps/orchestrator/execution-service/service.test.ts` 和 `public-files.json`（3 文件）。本步计入 10 个文件，另核对本 RUNBOOK、`apps/orchestrator/temporal_test.go`、`apps/orchestrator/execution-service/{start,service,store,http,local}.ts` 五个文件。
 
