@@ -25,6 +25,10 @@ services:
                 COPY apps/workspace/web/ ./apps/workspace/web/
                 RUN pnpm --filter @bento/web build
 
+                FROM dependencies AS auth-build
+                COPY apps/workspace/auth/package.json apps/workspace/auth/build.mjs apps/workspace/auth/login.html apps/workspace/auth/account.html apps/workspace/auth/style.css ./apps/workspace/auth/
+                RUN pnpm --filter @bento/workspace-auth build
+
                 FROM dependencies AS api-dependencies
                 COPY apps/workspace/api/package.json ./apps/workspace/api/
                 RUN pnpm --filter @bento/workspace-api install --prod --frozen-lockfile
@@ -41,7 +45,7 @@ services:
                 COPY --from=api-dependencies /app/apps/workspace/api/package.json ./apps/workspace/api/
                 COPY --from=api-dependencies /app/apps/workspace/api/node_modules ./apps/workspace/api/node_modules
                 COPY apps/workspace/api/*.ts ./apps/workspace/api/
-                COPY apps/workspace/auth/auth-page.ts ./apps/workspace/auth/auth-page.ts
+                COPY --from=auth-build /app/apps/workspace/auth/dist/ ./apps/workspace/auth/dist/
                 COPY apps/orchestrator/execution-service/input.ts ./apps/orchestrator/execution-service/input.ts
                 COPY --from=web-build /app/apps/workspace/web/dist/ /srv/bento/
                 COPY deploy/workspace/nginx.conf /etc/nginx/bento.conf

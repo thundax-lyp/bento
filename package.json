@@ -9,7 +9,7 @@
     },
     "scripts": {
         "check": "pnpm check:workspace && pnpm check:orchestrator && pnpm check:worker && pnpm lint && pnpm format:check",
-        "check:workspace": "pnpm --filter @bento/workspace-api check && pnpm --filter @bento/web check",
+        "check:workspace": "pnpm --filter @bento/workspace-auth build && pnpm --filter @bento/workspace-api check && pnpm --filter @bento/web check",
         "check:orchestrator": "pnpm --filter @bento/orchestrator check",
         "check:worker": "pnpm --filter @bento/worker typecheck",
         "lint": "eslint .",
@@ -30,6 +30,7 @@
         "apps/orchestrator",
         "apps/workspace/api",
         "apps/workspace/auth",
+        "!apps/workspace/auth/dist",
         "apps/worker",
         "docs/00-governance/ARCHITECTURE.md",
         "assets/architecture.svg",

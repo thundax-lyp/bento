@@ -98,6 +98,8 @@
         "apps/workspace/api/main.ts",
         "apps/workspace/api/mock.ts",
         "apps/workspace/api/oidc.ts",
+        "apps/workspace/api/oidc.test.ts",
+        "apps/workspace/api/oidc-fixture.ts",
         "apps/workspace/api/protocol.ts",
         "apps/workspace/api/server.ts",
         "apps/workspace/api/space-execution.ts",
