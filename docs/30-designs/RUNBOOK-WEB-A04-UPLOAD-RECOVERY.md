@@ -65,24 +65,6 @@ node --test apps/workspace/api/space-files.test.ts
 
 PASS：工作树干净、分支正确，HEAD 文件列表只有 RUNBOOK，父提交与最新审核基线、本地跟踪与远端 SHA 一致。Node 22、仓库指定 pnpm，现有 4 项用例全通过。STOP：任何不匹配或未得到 MASTER 开工指令，记录命令输出和基线，留在 T0。T0 无提交。
 
-### T5 · 完成先进入临界区
-
-前置状态：T4 PASS。允许修改 2 个文件，本 RUNBOOK、`apps/workspace/api/space-files.test.ts`。禁止修改锁、错误契约与生产接线。
-
-执行：
-
-1. 新增 `WEB-A04 complete wins over cancel`。传齐后令 Complete 在副作用前卡 barrier。进入后断言 `completing`、隐藏、全额预占和门禁。并发 cancel 返回 `409 space_conflict`，到此无对象、无清理调用。
-2. release 并等待完成 `200`，断言已保存一次、无清理调用、门禁消失。再次 cancel 返回 `409 space_conflict`，保持已保存一次。
-
-验证：
-
-```bash
-node --test --test-name-pattern='WEB-A04 complete wins over cancel' apps/workspace/api/space-files.test.ts
-git diff --check
-```
-
-PASS：实际执行 1 项且全部通过。STOP：竞争请求等到 release 才响应、出现清理或任何偏差时按执行契约报告。提交 `Test(task-entry): 验证完成先取得上传锁`。
-
 ### T6 · 取消先取得清理权
 
 前置状态：T5 PASS。允许修改 2 个文件，本 RUNBOOK、`apps/workspace/api/space-files.test.ts`。禁止修改锁、清理流程和项目门禁。

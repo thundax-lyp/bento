@@ -1422,3 +1422,41 @@ test(
         });
     },
 );
+
+const cancelRecovery = (f: UploadRecoveryFixture) =>
+    f.request(f.uploadUrl + '/cancel', 'POST', {});
+
+test('WEB-A04 complete wins over cancel', { timeout: 20000 }, async (t) => {
+    await withUploadRecoveryFixture(t, async (f) => {
+        await uploadRecoveryParts(f);
+        const barrier = recoveryBarrier();
+        const complete = f.storage.complete;
+        f.storage.complete = async (...args) => {
+            await barrier.pause();
+            await complete(...args);
+        };
+        const pending = f.complete();
+        void pending.catch(() => {});
+        try {
+            await barrier.waitForEntry();
+            await f.view('completing', []);
+            await f.projection(0, recoveryBytes);
+            await assertRecoveryGate(f, true);
+            assertUploadError(await cancelRecovery(f), 409, 'space_conflict');
+            assert.equal(f.stored.size, null);
+            assert.equal(recoveryCallCount(f, 'abort'), 1);
+            assert.equal(recoveryCallCount(f, 'remove'), 0);
+            barrier.release();
+            assert.equal((await pending).status, 200);
+            await f.savedOnce();
+            assert.equal(recoveryCallCount(f, 'abort'), 1);
+            assert.equal(recoveryCallCount(f, 'remove'), 0);
+            await assertRecoveryGate(f, false);
+            assertUploadError(await cancelRecovery(f), 409, 'space_conflict');
+            await f.savedOnce();
+        } finally {
+            barrier.release();
+            await Promise.allSettled([pending]);
+        }
+    });
+});
