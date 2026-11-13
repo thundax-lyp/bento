@@ -59,35 +59,14 @@ PASS：作者已核对上述 SHA，基线 Web check 通过（11 个单测），C
 
 STOP：基线、checkout、审核版本、固定端口、命令结果或共享边界不符，报告具体差异和失败输出。
 
-### T2：在原详情恢复状态读取
-
-前置状态：`/runs` 独立任务入口已提交且「任务列表找回」用例通过。允许修改：`apps/workspace/web/src/main.tsx`、`apps/workspace/web/src/api.ts`、`apps/workspace/web/src/pages.tsx`、`apps/workspace/web/src/ui.tsx`、`apps/workspace/web/e2e/task.spec.ts`、本文件。禁止修改：认证回调、取消接口、文件解析及补丁格式。
-
-执行：
-
-1. 详情 loader 先走既有 `requireSession`，检查 `project` 和 `params.runId`，返回原 `{project,run}`，移除 loader 中的 Run 请求。由 `RunDetails` 中既有 `useQuery(runQuery(account,project,runId))` 负责读取。给 `runQuery` 和 `diffQuery` 设 `staleTime: 0`、`refetchOnReconnect: 'always'`。保留 1500 ms 活跃轮询，收到 401 或 404 后停轮询。无缓存的失败可主动重读或等网络重连。
-2. `api.ts` 增加 `isUnavailableRun(error: unknown): boolean`，仅判断 `ApiError` 的 401 或 404。详情 404 渲染标题「找不到这个页面或任务。」和到 `/runs` 的「返回任务」链接，隐藏之前的详情与操作。详情 401 隐藏数据并让现有 QueryCache / Workbench 重新验证会话。
-3. `ui.tsx` 增加 `ReadFailure({message,label,pending,onRetry}: {message:string;label:string;pending:boolean;onRetry:()=>void})`，组合 `Notice` 与重试 Button。详情非 401/404 的读错误保留最后确认的原要求和摘要，显示「暂时无法读取任务状态。」及「重新读取任务」，按钮 refetch，正在 fetch 时禁用。用 React `useSyncExternalStore` 订阅 TanStack Query 的 `onlineManager`（订阅函数调用 `onlineManager.subscribe`，snapshot 返回 `onlineManager.isOnline()`）。在当前 `runQuery(account, project, runId)` 的 observer 上计算 `const detailReady = run.isSuccess && run.fetchStatus === 'idle' && online`。只有 `detailReady` 且状态是 `queued` 或 `running` 时显示对应取消按钮；只有 `detailReady` 且状态是 `succeeded` 时启用 diff 请求。预览和下载还须满足当前 diff observer 的 `diff.isSuccess && diff.fetchStatus === 'idle'`。取消成功写入缓存不改变此门控。离线或暂停时显示「连接中断，正在等待重新连接。」。首次等待显示「正在读取任务…」。保留 task record 的单份快照渲染，待核对时另显示「上一次操作结果未确认」。详情 observer 保持按当前 key 查询，禁用跨 key 的占位数据。现有取消 mutation 及精确 query key 仍保留。
-4. 增加标题含「原详情恢复」的用例。cold 503 后重读同一 URL 恢复，验证按钮、原 prompt、恢复中状态和无 diff 请求。另用 `browser.newContext()` 建立两个独立 context，两个 context 均显式传入 Playwright fixture 的 `baseURL`，以现有 route fixture 返回同账号和同 Run，首个 context `setOffline(true)` 保留已确认 prompt，另一个读到进展；模拟服务端改为 `needs_review` 后恢复第一个 context，两个页面各只有一条原 prompt 和一份待核对提示，皆无补丁请求、下载、提交。fixture 给被切断的一侧以真实网络失败，避免 route fulfill 绕过断线；可观测的失败由 `route.abort('internetdisconnected')` 配合 `setOffline` 固定。随后将同一 Run 详情 fixture 切换为 404，等待活跃详情下一次轮询，断言旧 prompt、摘要和操作都不可见。
-5. 新增标题含「原详情恢复」的同一 SPA 缓存重访回归。用可手动释放的 route gate 控制同一 Run 的详情 GET。先访问成功 Run 并确认预览和下载，记下 diff 请求数。通过「任务」导航离开，再用任务列表链接重访，等待详情 GET 进入 gate。挂起期间断言详情路由已打开、无 diff 请求增量、无预览和下载。释放为 404 后确认找不到、无预览和下载、diff 请求计数不变。再用任务列表重访同一 URL，保持 GET 挂起并重复门控断言；释放为 200 后才可看到预览和下载。再对一个缓存为 `running` 的 Run 做同一 SPA 重访：挂起期间「请求停止」不可见，释放为 200 且仍为 running 后可见。
-
-验证：
-
-```bash
-pnpm --filter @bento/web typecheck
-pnpm --filter @bento/web test:e2e task.spec.ts -g '原详情恢复|任务详情回读取消状态|登录、导入文本'
-```
-
-PASS：首次失败和断线均能回到原地址的同一 Run，重复回读不增加渲染条目；同一 SPA 内已缓存的成功详情在 GET 挂起或返回 404 时都无交付，成功回读后才开放；已缓存的运行状态在 GET 挂起时无取消操作；现有取消和原账号隔离用例保持通过。STOP：重连后无法从相同 key 读回、已有取消失效或授权内容泄露，报告请求方法、路径及脱敏状态。
-
 ### T3：单轮补丁读取、恢复和字节验证
 
-前置状态：T2 通过。允许修改：`apps/workspace/web/src/ui.tsx`、`apps/workspace/web/src/api.ts`、`apps/workspace/web/src/pages.tsx`、`apps/workspace/web/e2e/task.spec.ts`、本文件。禁止修改：`splitFileDiff`、服务端、下载契约。
+前置状态：详情 observer 的 `detailReady` 门控已提交且「原详情恢复」用例通过。允许修改：`apps/workspace/web/src/ui.tsx`、`apps/workspace/web/src/api.ts`、`apps/workspace/web/src/pages.tsx`、`apps/workspace/web/e2e/task.spec.ts`、本文件。禁止修改：`splitFileDiff`、服务端、下载契约。
 
 执行：
 
-1. 保留 T2 的 `diffQuery` 重读配置和现有响应 text、AbortSignal 消费。保留全局有限网络/5xx 自动重试。409 不开启后台轮询，由用户主动重新读取，或浏览器重连后回读。保持 `downloadUrl` 的同源 GET。
-2. 从 `RunDetails` 提取 `RunResult({account,project,runId}: {account:string;project:string;runId:string})` 到 `ui.tsx`。父组件仅在 T2 的 `detailReady` 成立且 status 为 `succeeded` 时挂载，key 使用 `JSON.stringify([account,project,runId])`。其他状态下文件变更区显示「当前没有可审阅的补丁。」。结果组件查询 `diffQuery`；初次读取或重新读取时显示「正在读取变更…」。409 显示「结果尚未可用。」及「重新读取补丁」。网络错误或 5xx 显示「暂时无法读取补丁。」及同一重试控件。401/404 隐藏内容并显示「当前没有可审阅的补丁。」；其他 4xx 显示公开错误文本和同一重试控件。仅当当前 diff query 的 `isSuccess && fetchStatus === 'idle'` 成立才显示预览和下载。成功且空串时渲染 `DiffPreview` 已有空状态和下载链接；非空时沿用逐文件和完整补丁交互。下载放在文件变更区紧接标题下，链接名继续为「下载 diff」。
+1. 保留 `diffQuery` 的 `staleTime: 0` 和 `refetchOnReconnect: 'always'`和现有响应 text、AbortSignal 消费。保留全局有限网络/5xx 自动重试。409 不开启后台轮询，由用户主动重新读取，或浏览器重连后回读。保持 `downloadUrl` 的同源 GET。
+2. 从 `RunDetails` 提取 `RunResult({account,project,runId}: {account:string;project:string;runId:string})` 到 `ui.tsx`。父组件仅在 `detailReady` 成立且 status 为 `succeeded` 时挂载，key 使用 `JSON.stringify([account,project,runId])`。其他状态下文件变更区显示「当前没有可审阅的补丁。」。结果组件查询 `diffQuery`；初次读取或重新读取时显示「正在读取变更…」。409 显示「结果尚未可用。」及「重新读取补丁」。网络错误或 5xx 显示「暂时无法读取补丁。」及同一重试控件。401/404 隐藏内容并显示「当前没有可审阅的补丁。」；其他 4xx 显示公开错误文本和同一重试控件。仅当当前 diff query 的 `isSuccess && fetchStatus === 'idle'` 成立才显示预览和下载。成功且空串时渲染 `DiffPreview` 已有空状态和下载链接；非空时沿用逐文件和完整补丁交互。下载放在文件变更区紧接标题下，链接名继续为「下载 diff」。
 3. 增加标题含「单轮交付恢复」的用例。用同一 Run fixture 先返回 409，确认无 diff 内容或下载。切换为已发布补丁并点击「重新读取补丁」，验证新增、修改、删除三类文件的按钮及点击后仅显示所选补丁块，切回「完整补丁」恢复完整文本。下载响应同时由相同 fixture bytes 提供并附附件头，断言收到的 download 文件字节与 preview 原文响应字节严格相同。第二个独立 Run 返回零字节和只读结论，核对可下载零字节，且不显示上一 Run 的路径或原要求。两个 Run fixture 都使用既有协议，不构造续聊或检查结果。
 4. 扩展现有「登录、导入文本、提交任务、刷新找回并下载修改」用例，将标题更新为「登录、导入文本、提交任务、关闭后找回并下载修改」。沿用该用例的 demo、guest 预置账号和现有注册、登录、Workspace 导入步骤。在提交前为页面安装 `/\/api\/projects\/[^/]+\/runs\/[^/?]+$/` 的一次性详情拦截，并用 `page.waitForResponse` 监听 Run 创建 POST，在该 promise 的 `.then` 中立即解析并保存响应状态和 JSON（关页后不能再读该响应 body）。在 route 回调中调用 `route.fetch()` 读取真实 mock 详情，检查 200 并读出 `{id,projectId,status}` 及原请求 URL，通过下列 `firstDetail` promise 同步交给测试主体，成功时调用 `resolveFirstDetail`，失败时调用 `rejectFirstDetail`，最后 abort 原详情请求。点击「发送任务」后直接等待 `firstDetail` 并立即 `await page.close()`，两者之间不等待 URL、状态文本、详情渲染或 POST JSON。关闭后断言首次 GET 返回 queued 或 running，核对创建 POST 返回 202 及相同的 Run ID 和项目 ID。用原 context 的 `request.get` 回读同一详情 URL，断言首个关页后响应仍为 queued 或 running；再用 `expect.poll` 重读，每次确认原页已关闭、HTTP 200、响应属于同一 Run，直到 succeeded。新页面从工作台「任务」找回相同 URL 和原要求。预览并下载同一补丁，把下载文件应用到临时目录内原始 README，通过 `execFileSync('git', ['apply', '--check', patchPath], {cwd: scratch})` 和 `execFileSync('git', ['apply', patchPath], {cwd: scratch})`，确认 README 严格等于 `# 手册\nBento 模拟任务已完成。\n`。临时目录用 `finally` 清理。保留后半段原地址刷新和 guest 越权断言，使用新页面及稳定原 Run URL。fixture 的实际推进只证明本机 mock，不作为真实模型或 OpenShell 验收。
 

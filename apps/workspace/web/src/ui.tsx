@@ -36,6 +36,27 @@ export function Notice({ message }: { message: string }) {
     );
 }
 
+export function ReadFailure({
+    message,
+    label,
+    pending,
+    onRetry,
+}: {
+    message: string;
+    label: string;
+    pending: boolean;
+    onRetry: () => void;
+}) {
+    return (
+        <div className="space-y-2">
+            <Notice message={message} />
+            <Button type="button" disabled={pending} onClick={onRetry}>
+                {label}
+            </Button>
+        </div>
+    );
+}
+
 function DiffText({ text }: { text: string }) {
     return (
         <pre

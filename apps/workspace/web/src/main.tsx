@@ -13,7 +13,7 @@ import {
     RouterProvider,
     useRouteError,
 } from 'react-router';
-import { ApiError, projectsQuery, runQuery, sessionQuery } from './api';
+import { ApiError, projectsQuery, sessionQuery } from './api';
 import {
     AccountSettings,
     Dashboard,
@@ -121,15 +121,12 @@ const router = createBrowserRouter([
             {
                 path: '/runs/:runId',
                 async loader({ params, request }) {
-                    const session = await requireSession(request);
+                    await requireSession(request);
                     const project = new URL(request.url).searchParams.get(
                         'project',
                     );
                     if (!project || !params.runId)
                         throw new Response(null, { status: 404 });
-                    await client.ensureQueryData(
-                        runQuery(session.account, project, params.runId),
-                    );
                     return { project, run: params.runId };
                 },
                 Component: RunDetails,

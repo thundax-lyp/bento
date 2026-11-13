@@ -1,5 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import {
+    onlineManager,
+    useMutation,
+    useQuery,
+    useQueryClient,
+} from '@tanstack/react-query';
+import { useState, useSyncExternalStore } from 'react';
 import type { FormEvent } from 'react';
 import {
     Link,
@@ -22,6 +27,7 @@ import {
     createRun,
     diffQuery,
     downloadUrl,
+    isUnavailableRun,
     login,
     logout,
     projectsQuery,
@@ -35,7 +41,7 @@ import type { Run, Session } from './api';
 import { loadDraft, prepareSubmission, saveDraft } from './draft';
 import type { Draft } from './draft';
 import { SpaceList } from './space';
-import { Button, DiffPreview, Notice } from './ui';
+import { Button, DiffPreview, Notice, ReadFailure } from './ui';
 
 const errorMessage = (error: unknown) =>
     error instanceof ApiError ? error.message : '暂时无法连接，请稍后重试。';
@@ -828,6 +834,10 @@ export function Workspace() {
     );
 }
 
+const subscribeOnline = (listener: () => void) =>
+    onlineManager.subscribe(listener);
+const isOnline = () => onlineManager.isOnline();
+
 export function RunDetails() {
     const account = useOutletContext<string>();
     const { project, run: runId } = useLoaderData<{
@@ -837,6 +847,8 @@ export function RunDetails() {
     const client = useQueryClient();
     const details = runQuery(account, project, runId);
     const run = useQuery(details);
+    const online = useSyncExternalStore(subscribeOnline, isOnline);
+    const detailReady = run.isSuccess && run.fetchStatus === 'idle' && online;
     const cancel = useMutation({
         mutationFn: (target: {
             account: string;
@@ -871,10 +883,30 @@ export function RunDetails() {
     const projects = useQuery(projectsQuery(account));
     const diff = useQuery({
         ...diffQuery(account, project, runId),
-        enabled: run.data?.status === 'succeeded',
+        enabled: detailReady && run.data.status === 'succeeded',
     });
     const name = projects.data?.find((item) => item.id === project)?.name;
     const status: Run['status'] | undefined = run.data?.status;
+    const diffReady =
+        detailReady &&
+        status === 'succeeded' &&
+        diff.isSuccess &&
+        diff.fetchStatus === 'idle';
+    if (isUnavailableRun(run.error)) {
+        if (run.error instanceof ApiError && run.error.status === 401) {
+            return null;
+        }
+        return (
+            <main className="mx-auto max-w-xl space-y-4 px-6 py-20">
+                <h1 className="text-2xl font-semibold">
+                    找不到这个页面或任务。
+                </h1>
+                <Link className="underline" to="/runs">
+                    返回任务
+                </Link>
+            </main>
+        );
+    }
     return (
         <main className="mx-auto max-w-6xl space-y-5 px-5 py-10">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -886,24 +918,35 @@ export function RunDetails() {
                             .join(' · ')}
                     </p>
                 </div>
-                {(status === 'queued' || status === 'running') && (
-                    <Button
-                        type="button"
-                        disabled={cancelHere && cancel.isPending}
-                        onClick={() =>
-                            cancel.mutate({ account, project, runId })
-                        }
-                    >
-                        {status === 'queued' ? '取消排队' : '请求停止'}
-                    </Button>
-                )}
-                {diff.data !== undefined && (
+                {detailReady &&
+                    (status === 'queued' || status === 'running') && (
+                        <Button
+                            type="button"
+                            disabled={cancelHere && cancel.isPending}
+                            onClick={() =>
+                                cancel.mutate({ account, project, runId })
+                            }
+                        >
+                            {status === 'queued' ? '取消排队' : '请求停止'}
+                        </Button>
+                    )}
+                {diffReady && (
                     <Button asChild>
                         <a href={downloadUrl(project, runId)}>下载 diff</a>
                     </Button>
                 )}
             </div>
-            {run.error && <Notice message={errorMessage(run.error)} />}
+            {(!online || run.fetchStatus === 'paused') && (
+                <p role="status">连接中断，正在等待重新连接。</p>
+            )}
+            {run.isError && (
+                <ReadFailure
+                    message="暂时无法读取任务状态。"
+                    label="重新读取任务"
+                    pending={run.isFetching}
+                    onRetry={() => void run.refetch()}
+                />
+            )}
             {cancelHere &&
                 cancel.error &&
                 status !== 'cancelling' &&
@@ -926,6 +969,7 @@ export function RunDetails() {
                         {run.data?.summary ??
                             (status ? runLabels[status] : '正在读取任务…')}
                     </p>
+                    {status === 'needs_review' && <p>上一次操作结果未确认</p>}
                     <Link
                         className="text-sm underline"
                         to={'/?' + new URLSearchParams({ project })}
@@ -935,18 +979,20 @@ export function RunDetails() {
                 </section>
                 <section className="min-w-0 space-y-3 rounded-xl border border-zinc-200 p-4">
                     <h2 className="font-semibold">文件变更</h2>
-                    {diff.error && (
+                    {detailReady && status === 'succeeded' && diff.error && (
                         <Notice message={errorMessage(diff.error)} />
                     )}
-                    {diff.data !== undefined ? (
+                    {diffReady ? (
                         <DiffPreview
                             key={JSON.stringify([account, project, runId])}
                             text={diff.data}
                         />
                     ) : (
-                        !diff.error && (
+                        (!detailReady ||
+                            status !== 'succeeded' ||
+                            !diff.error) && (
                             <p className="text-sm text-zinc-600">
-                                {status === 'succeeded'
+                                {detailReady && status === 'succeeded'
                                     ? '正在读取变更…'
                                     : '当前没有可审阅的补丁。'}
                             </p>
