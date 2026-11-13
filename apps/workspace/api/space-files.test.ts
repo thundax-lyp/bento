@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
+import type { TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { localHost } from '../../orchestrator/execution-service/local.ts';
 import { serveExecution } from '../../orchestrator/execution-service/service.ts';
@@ -848,3 +849,348 @@ test('project deletion crosses both HTTP boundaries', async (t) => {
         await rm(dir, { recursive: true, force: true });
     }
 });
+
+const recoveryBytes = 16777219;
+const recoveryPath = 'nested/fixture.bin';
+const recoveryDownload = 'https://fixture.invalid/download';
+
+type UploadRecoveryFixture = Awaited<
+    ReturnType<typeof openUploadRecoveryFixture>
+>;
+
+async function openUploadRecoveryFixture() {
+    const dir = await mkdtemp(join(tmpdir(), 'bento-upload-recovery-'));
+    const dbPath = join(dir, 'space.sqlite');
+    const origin = 'http://127.0.0.1:1';
+    const owner = { ownerId: 'owner-a', account: 'a', inviteSha256: '' };
+    const auth = sessionAuth(mockAccounts([owner]), false);
+    const cookie = auth
+        .startSession(
+            { headers: {} } as Parameters<typeof auth.startSession>[0],
+            owner,
+        )
+        .cookie.split(';')[0]!;
+    const backend = mockBackend();
+    const id = randomUUID();
+    const project = randomUUID();
+    const projectUrl = '/api/space/projects/' + project;
+    const uploadUrl = '/api/space/uploads/' + id;
+    const objectKey = spaceObjectKey(id);
+    const storageId = 'fixture-multipart';
+    const chunks = [Buffer.alloc(16777216, 1), Buffer.alloc(3, 2)];
+    const digest = (bytes: Buffer) =>
+        createHash('sha256').update(bytes).digest('base64');
+    const checksums = chunks.map(digest);
+    const signatures = new Map<
+        string,
+        { number: number; size: number; checksum: string }
+    >();
+    const parts = new Map<
+        number,
+        {
+            PartNumber: number;
+            Size: number;
+            ETag: string;
+            ChecksumSHA256: string;
+        }
+    >();
+    const calls: unknown[][] = [];
+    const stored = { active: false, size: null as number | null, writes: 0 };
+    const storage = spaceStorage(origin, 'fixture', 'us-east-1');
+    function record(operation: string, key: string, ...args: unknown[]) {
+        assert.equal(key, objectKey);
+        calls.push([operation, key, ...args]);
+    }
+    storage.create = async (key) => {
+        record('create', key);
+        assert.equal(stored.active, false);
+        stored.active = true;
+        return storageId;
+    };
+    storage.signPart = async (key, upload, number, size, checksum) => {
+        record('signPart', key, upload, number, size, checksum);
+        assert.equal(upload, storageId);
+        assert(stored.active);
+        assert.equal(size, chunks[number - 1]?.length);
+        assert.equal(checksum, checksums[number - 1]);
+        const url = `https://fixture.invalid/${key}?uploadId=${upload}&partNumber=${number}`;
+        signatures.set(url, { number, size, checksum });
+        return url;
+    };
+    function putPart(url: string, bytes: Buffer, checksum: string): void {
+        const signature = signatures.get(url);
+        assert(signature && stored.active);
+        assert.equal(signature.size, bytes.length);
+        assert.equal(signature.checksum, checksum);
+        assert.equal(digest(bytes), checksum);
+        parts.set(signature.number, {
+            PartNumber: signature.number,
+            Size: bytes.length,
+            ETag: `"part-${signature.number}"`,
+            ChecksumSHA256: checksum,
+        });
+    }
+    storage.parts = async (key, upload) => {
+        record('parts', key, upload);
+        assert.equal(upload, storageId);
+        return stored.active
+            ? [...parts.values()].sort((a, b) => b.PartNumber - a.PartNumber)
+            : null;
+    };
+    storage.complete = async (key, upload, completed) => {
+        record('complete', key, upload, completed);
+        assert.equal(upload, storageId);
+        assert(stored.active);
+        assert.equal(stored.writes, 0);
+        assert.deepEqual(
+            completed,
+            [1, 2].map((number) => {
+                const part = parts.get(number);
+                assert(part);
+                const { PartNumber, ETag, ChecksumSHA256 } = part;
+                return { PartNumber, ETag, ChecksumSHA256 };
+            }),
+        );
+        stored.active = false;
+        parts.clear();
+        stored.size = recoveryBytes;
+        stored.writes++;
+    };
+    storage.size = async (key) => {
+        record('size', key);
+        return stored.size;
+    };
+    storage.abort = async (key, upload) => {
+        record('abort', key, upload);
+        if (upload !== undefined) assert.equal(upload, storageId);
+        stored.active = false;
+        parts.clear();
+    };
+    storage.remove = async (key) => {
+        record('remove', key);
+        stored.size = null;
+    };
+    storage.download = async (key, name) => {
+        record('download', key, name);
+        assert.notEqual(stored.size, null);
+        return recoveryDownload;
+    };
+    storage.empty =
+        storage.read =
+        storage.preview =
+            async () => {
+                assert.fail('Unexpected storage call');
+            };
+
+    let web: Awaited<ReturnType<typeof taskEntryServer>> | undefined;
+    async function reopen() {
+        await web?.close();
+        web = undefined;
+        web = await taskEntryServer({
+            port: 0,
+            origin,
+            auth,
+            backend,
+            space: mySpace(dbPath, storage, backend),
+        });
+    }
+    async function request(
+        path: string,
+        method = 'GET',
+        input?: unknown,
+        signal?: AbortSignal,
+    ) {
+        assert(web);
+        const timeout = AbortSignal.timeout(5000);
+        const response = await fetch(web.origin + path, {
+            method,
+            headers: {
+                Cookie: cookie,
+                Origin: origin,
+                'Content-Type': 'application/json',
+            },
+            ...(input === undefined ? {} : { body: JSON.stringify(input) }),
+            redirect: 'manual',
+            signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        });
+        const text = await response.text();
+        return {
+            status: response.status,
+            location: response.headers.get('location'),
+            json: text ? JSON.parse(text) : null,
+        };
+    }
+    function row() {
+        const db = new DatabaseSync(dbPath, { readOnly: true });
+        try {
+            const rows = db
+                .prepare(
+                    'SELECT state, storageId, signedUntil, cleanup FROM space_uploads WHERE id=?',
+                )
+                .all(id);
+            assert.equal(rows.length, 1);
+            const row = rows[0];
+            assert(row);
+            assert.equal(row.storageId, storageId);
+            return row;
+        } finally {
+            db.close();
+        }
+    }
+    async function sendPart(number: number) {
+        const before = Date.now();
+        const response = await request(uploadUrl + '/part', 'POST', { number });
+        assert.equal(response.status, 200);
+        const bytes = chunks[number - 1];
+        assert(bytes);
+        putPart(response.json.url, bytes, response.json.checksum);
+        const signedUntil = row().signedUntil;
+        assert(typeof signedUntil === 'number');
+        assert(
+            signedUntil >= before + 605000 &&
+                signedUntil <= Date.now() + 605000,
+        );
+    }
+    async function view(state: string, expectedParts: number[]) {
+        const response = await request(uploadUrl);
+        assert.equal(response.status, 200);
+        assert.equal(response.json.id, id);
+        assert.equal(response.json.state, state);
+        assert.deepEqual(response.json.parts, expectedParts);
+        assert.equal(row().state, state);
+        return response.json;
+    }
+    async function projection(saved: number, reserved: number) {
+        const usage = await request('/api/space');
+        assert.equal(usage.status, 200);
+        assert.equal(usage.json.saved, saved);
+        assert.equal(usage.json.reserved, reserved);
+        const detail = await request(projectUrl);
+        assert.equal(detail.status, 200);
+        assert.deepEqual(
+            detail.json.files,
+            saved ? [{ id, path: recoveryPath, size: recoveryBytes }] : [],
+        );
+        const download = await request('/api/space/files/' + id + '/download');
+        assert.equal(download.status, saved ? 302 : 404);
+        assert.equal(download.location, saved ? recoveryDownload : null);
+        if (!saved) assert.equal(download.json.error.code, 'not_found');
+    }
+    async function savedOnce() {
+        await view('saved', []);
+        await projection(recoveryBytes, 0);
+        assert.deepEqual(stored, {
+            active: false,
+            size: recoveryBytes,
+            writes: 1,
+        });
+    }
+    const complete = (signal?: AbortSignal) =>
+        request(uploadUrl + '/complete', 'POST', {}, signal);
+    async function close() {
+        await web?.close();
+        web = undefined;
+    }
+    const dispose = async () => {
+        try {
+            await close();
+        } finally {
+            await rm(dir, { recursive: true, force: true });
+        }
+    };
+    try {
+        await reopen();
+        assert.equal(
+            (
+                await request('/api/space/projects', 'POST', {
+                    id: project,
+                    name: 'Fixture',
+                })
+            ).status,
+            200,
+        );
+        const started = await request(projectUrl + '/uploads', 'POST', {
+            id,
+            path: recoveryPath,
+            size: recoveryBytes,
+            checksums,
+        });
+        assert.equal(started.status, 200);
+        assert.equal(started.json.state, 'uploading');
+        assert.equal(started.json.id, id);
+        assert(
+            Number.isInteger(started.json.expires) &&
+                started.json.expires > Date.now(),
+        );
+        return {
+            storage,
+            stored,
+            calls,
+            parts,
+            request,
+            projectUrl,
+            uploadUrl,
+            row,
+            sendPart,
+            view,
+            projection,
+            savedOnce,
+            complete,
+            close,
+            reopen,
+            dispose,
+        };
+    } catch (error) {
+        await dispose();
+        throw error;
+    }
+}
+
+async function withUploadRecoveryFixture(
+    t: TestContext,
+    run: (fixture: UploadRecoveryFixture) => Promise<void>,
+): Promise<void> {
+    t.signal.throwIfAborted();
+    const fixture = await openUploadRecoveryFixture();
+    try {
+        await run(fixture);
+    } finally {
+        await fixture.dispose();
+    }
+}
+
+function assertUploadError(
+    response: { status: number; json: { error: { code: string } } },
+    status: number,
+    code: string,
+) {
+    assert.equal(response.status, status);
+    assert.equal(response.json.error.code, code);
+}
+
+test(
+    'WEB-A04 missing multipart parts recover',
+    { timeout: 20000 },
+    async (t) => {
+        await withUploadRecoveryFixture(t, async (f) => {
+            await f.sendPart(2);
+            await f.view('uploading', [2]);
+            await f.projection(0, recoveryBytes);
+            assertUploadError(await f.complete(), 409, 'space_conflict');
+            await f.view('uploading', [2]);
+            assert(!f.calls.some(([operation]) => operation === 'complete'));
+            await f.projection(0, recoveryBytes);
+            await f.sendPart(1);
+            const first = f.parts.get(1);
+            assert(first);
+            first.Size--;
+            await f.view('uploading', [2]);
+            assertUploadError(await f.complete(), 409, 'space_conflict');
+            assert(!f.calls.some(([operation]) => operation === 'complete'));
+            first.Size++;
+            await f.view('uploading', [1, 2]);
+            assert.equal((await f.complete()).status, 200);
+            await f.savedOnce();
+        });
+    },
+);

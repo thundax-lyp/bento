@@ -65,25 +65,6 @@ node --test apps/workspace/api/space-files.test.ts
 
 PASS：工作树干净、分支正确，HEAD 文件列表只有 RUNBOOK，父提交与最新审核基线、本地跟踪与远端 SHA 一致。Node 22、仓库指定 pnpm，现有 4 项用例全通过。STOP：任何不匹配或未得到 MASTER 开工指令，记录命令输出和基线，留在 T0。T0 无提交。
 
-### T1 · 缺块及无效分块后补传
-
-前置状态：T0 PASS。允许修改 2 个文件，本 RUNBOOK、`apps/workspace/api/space-files.test.ts`。禁止修改生产、依赖、CI 和启动文件。
-
-执行：
-
-1. 实现固定 fixture。新增测试 `WEB-A04 missing multipart parts recover`，只传第 2 块，断言上传 GET 为 `uploading` 且 `parts=[2]`、预占等于声明大小、隐藏。
-2. 试完成，断言 `409 space_conflict`、SQLite 回到 `uploading`、没有合并调用，仍隐藏和预占。只为第 1 块签名并写入，令存储回读的第 1 块 Size 少 1，断言仍只返回 `[2]`，完成仍拒绝且不调用合并。恢复第 1 块的正确 Size，GET 返回 `[1,2]`。再完成，断言 `200` 且已保存一次。
-
-验证：
-
-```bash
-node --test --test-name-pattern='WEB-A04 missing multipart parts recover' apps/workspace/api/space-files.test.ts
-pnpm --filter @bento/workspace-api typecheck
-git diff --check
-```
-
-PASS：实际执行指定的 1 项且断言全部成立。STOP：任何偏差按执行契约报告，保留未提交用例；只清理本测试目录。提交 `Test(task-entry): 验证缺块及无效分块补传`。
-
 ### T2 · 对象大小不符与清理额度
 
 前置状态：T1 PASS。允许修改 2 个文件，本 RUNBOOK、`apps/workspace/api/space-files.test.ts`。禁止修改生产、签名时限与项目门禁。
