@@ -81,38 +81,6 @@ STOP：版本、基线、测试、资源或授权不满足即回报。2026-11-13
 
 GitHub Actions 环境核验：`gh run view 43193646474 -R thundax-lyp/bento --json jobs` 显示指定基线的 `Deployment image builds`、`Repository checks` 和 `Web Chromium E2E` 成功。现有镜像 job 在 Ubuntu runner 使用 Docker Compose 构建三个服务镜像，并对 Workspace API 模块做 import smoke。workflow 触发条件是 PR 目标 `main` 或 `codex/**`、以及 push `main`，无 `workflow_dispatch`，单独 push 实施分支不能触发。T4 保留三个 job 的名称与检查，添加真实入口 smoke。可在同一个 Draft PR 上以 GitHub runner 完成等量验证，具体取证顺序见 T5。
 
-### T1：建立无运行依赖的独立认证构建
-
-前置状态：实施 T0 通过。基线仍存在 `apps/workspace/auth/auth-page.ts`。
-
-允许修改（10 文件，含 RUNBOOK）：`apps/workspace/auth/{package.json,build.mjs,login.html,account.html,style.css}`、`pnpm-workspace.yaml`、`pnpm-lock.yaml`、`.gitignore`、`public-files.json`。
-
-禁止修改：API、Docker、现有 `auth-page.ts` 和其他发布白名单条目。
-
-执行：
-
-1. 新建 package，`name` 为 `@bento/workspace-auth`，`private: true`，`type: "module"`，`scripts.build: "node build.mjs"`，无依赖。将路径加入 pnpm workspace。运行 `pnpm install --lockfile-only --offline`，只接受第二段 lockfile 的 importer 新增 `apps/workspace/auth: {}`。若生成其他差异则 STOP。
-2. 从 `auth-page.ts` 取两种渲染输出为独立 HTML。保留全部原文、title、lang、viewport、class、样式链接、链接和 form 属性。CSS 取 `authStyles` 内容。允许 Prettier 调整空白。新建 `build.mjs`，从 `node:fs/promises` 导入 `mkdir`、`copyFile`，并写入 `import { URL } from 'node:url';`，按 `import.meta.url` 定位本包，创建 `dist/`，依次复制三个同名文件，失败向上传递并退出非零。无 bundle、浏览器 JS 或外部包。每次构建覆盖三个输出。
-3. 在根 `.gitignore` 最后新增 `/apps/workspace/auth/dist/`。在 `public-files.json` 的 `files` 增加五个 auth 构建输入，保留旧实现条目直到实际删除。三个 dist 文件只在各自 checkout 与 Docker 构建层生成，允许留在本 checkout 供后续验证。构建中途失败可原地重跑并覆盖三文件。禁止暂存 dist，禁止清除其他工程产物。
-4. 只对新增文件、workspace 配置与发布清单执行 Prettier，lockfile 由 pnpm 管理。
-
-验证：
-
-```bash
-pnpm install --frozen-lockfile --offline
-pnpm --filter @bento/workspace-auth build
-for file in login.html account.html style.css; do
-    cmp "apps/workspace/auth/$file" "apps/workspace/auth/dist/$file" || exit 1
-done
-pnpm exec eslint apps/workspace/auth/build.mjs
-git check-ignore -v apps/workspace/auth/dist/{login.html,account.html,style.css}
-git diff --check
-```
-
-PASS：`build.mjs` 的 ESLint 检查退出 0，三个文件逐字节相等，三项均由新增的精确 ignore 规则命中。清单中没有依赖，lockfile 仅增加空 importer，公开白名单包含五个源输入和零个 dist 文件。
-
-STOP：构建需要新依赖、输出错位或 lockfile 有其他变化。保留现有源码供 T2 切换。
-
 ### T2：把 OIDC 页面绑定到构建产物并锁定协议回归
 
 前置状态：三项认证产物可构建。现有 OIDC 事务、会话和路由仍与基线一致。

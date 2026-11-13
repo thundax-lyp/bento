@@ -153,3 +153,5 @@
 **/.DS_Store
 /dist/
 /coverage/
+
+/apps/workspace/auth/dist/
