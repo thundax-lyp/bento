@@ -36,6 +36,8 @@ docker compose -f deploy/compose.yaml ps
 
 Compose 在数据库、Keycloak 和 Orchestrator 健康后启动 Web。使用默认回环 issuer 时，Web 会等待 NGINX 代理的 OIDC discovery 可用，再启动 API。打开 Bento 首页，使用组织邀请完成登录，检查同一账号重复登录复用稳定 `owner_id`。提交任务并通过原链接读取结果。启用文件空间时，从浏览器验证 S3 分块上传和下载。
 
+Compose 的 `auth-build` 阶段独立生成个人端认证 HTML 和 CSS。运行镜像通过 NGINX 和 Go 入口将 `/auth` 请求转发给 TypeScript task-entry，由它根据当前业务会话提供构建产物。启用 OIDC 时若启动日志提示 `Workspace auth build artifacts are unavailable`，运行 `docker compose -f deploy/compose.yaml build bento-web` 后重新启动服务。
+
 启动失败时运行 `docker compose -f deploy/compose.yaml logs --tail=100`。核对 Realm 导入、OIDC 客户端配置、容器对 issuer 的连通性，以及适配器的启动日志。用同一 Compose 项目名执行 `stop` 和 `up -d` 恢复。保留命名卷以延续账号、身份、空间及执行状态。
 
 ## OpenShell 执行宿主

@@ -7,6 +7,7 @@
 ## 应用接入
 
 - 个人端与管理端的认证前端、业务前端、API 独立构建。各端 API 从各自 Realm 验证身份并管理业务会话。Orchestrator 验证调用服务身份、操作权限与目标资源归属后才读写 Run。Worker 使用当次执行授权访问执行接口。
+- 个人端认证构建生成 `apps/workspace/auth/dist/` 下的 `login.html`、`account.html` 和 `style.css`。Compose 将这三项产物复制到运行镜像。NGINX 经 Go 入口反代 `/auth` 到 TypeScript task-entry，后者持有 OIDC 会话并据此选择 HTML。
 - 当前 Go Temporal 模块和 TypeScript 执行宿主通过私有 stdio 交接队列快照、Run ID、容量与推进请求。宿主执行状态和容量的条件写入后，才发布 Workflow。Go 子进程退出时宿主停止新增 Temporal 派发，重启后从持久状态恢复。
 - 目标 Go Orchestrator 在同一服务边界内持有账本和 Temporal 编排。Workflow 只携带 Run ID，Activity 读回权威账本并沿用同一尝试与执行代次。
 

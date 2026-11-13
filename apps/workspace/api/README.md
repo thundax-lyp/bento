@@ -18,10 +18,11 @@
 | `BENTO_ONE_TWO_BEARER`     | 执行服务的独立服务 bearer，真实模式必填                                 |
 | `BENTO_ONE_TWO_TIMEOUT_MS` | 任务入口调用执行服务的超时，默认 10000 毫秒                             |
 
-本地直接启动任务入口时，可以用环境文件配置。真实模式需同时启动 Go 入口与 MySQL。
+本地直接启动任务入口时，可以用环境文件配置。真实模式需同时启动 Go 入口与 MySQL。启用 OIDC 时，task-entry 启动前需要构建 `apps/workspace/auth/dist/` 下的 `login.html`、`account.html` 和 `style.css`。
 
 ```sh
 mkdir -p debug-workspace
+pnpm --filter @bento/workspace-auth build
 node --env-file=debug-workspace/task-entry.env apps/workspace/api/main.ts
 ```
 
