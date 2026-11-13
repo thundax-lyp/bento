@@ -36,31 +36,11 @@ node --import ./register-paths.mjs --experimental-strip-types --test --test-name
 
 PASS 为基线吻合，普通状态为空，指定草案在本阶段显示为 `!!`（仓库忽略规则覆盖临时设计文件），Node 和 pnpm 前置通过，#35 测试为 1 pass、0 fail、0 skip，MASTER 审核批准后才开始 T1。调查已在 Node 22.23.2、pnpm 12.15.0 下得到上述 #35 测试结果。STOP 为基线或断言不符、出现额外改动或审核未批准。保留现场，回报实测 SHA、文件清单或失败输出。
 
-### T1：用正常派发验证停服快照还原
-
-前置状态为 T0 通过及 MASTER 批准，工作区已按派工指示绑定任务分支。允许修改本文和 `apps/orchestrator/execution-service/service.test.ts`。专门核对 `service.ts`、`store.ts`、`local.ts`、`../openshell/single-host.ts`、`../openshell/persistence-fence.ts`、`../openshell/session-history.ts`，这些路径以测试文件所在目录为基准。禁止修改生产逻辑或 #35 测试。
-
-1. 在 #35 测试之后新增 `restores stopped execution state and continues fenced session history`。用 `mkdtemp(join(tmpdir(), 'bento-execution-state-restore-'))` 创建私有根目录，下设 `source`、`backup`、`restore`，两个服务的 localHost 根分别为各自状态目录下的 `volume`。用现有 `start/client/project/submit/until/rpc` 和固定项目文件 `readme`。第一条 Run 的 prompt/key 分别为 `restore-source` / `restore-source-key`。两侧 host 仅覆盖 worker，继承 localHost 管理及快照行为，worker 只走 RPC，返回 `completed`，不发工具请求。每侧记录调用次数，并在测试主体断言恰好一个 execute 调用。worker 断言失败让测试失败，保留原断言信息供主体检查，禁止改写成成功结果。
-2. 源 worker 验证 generation=1，保存真实 request 与 writer key，仅保存在内存。以 `create` 创建 header `{id: grant.session, version: 4, createdAt: 1700000000000, isSeeded: false}`。用批次 `00000000-0000-4000-8000-000000000001` 及两条事件 `{type:'turn/start',seq:0,time:1700000000001,data:{turn:1}}`、`{type:'turn/end',seq:1,time:1700000000002,data:{turn:1,reason:{kind:'completed'}}}`。先 `stage`，再 `append`，再同键同输入 `append`，随后 `reconcile`，最后 `flush`、`close`。这六次请求使用同一 key，stage/append 携带 batch/events，reconcile 省略 batch。成功 RPC 一律要求 HTTP 200 和 `ok === true`。断言两次 append 返回同一 `{epoch:1,batch,digest,first:0,count:2}`，digest 为 JSON.stringify(events) 的 SHA-256，reconcile 为 `{outcome:'already-committed',receipt}`。等待详情 GET 为 200/succeeded，保存完整 JSON 为 `sourceDetail`。向源侧 Run 集合以相同 prompt/key 重放 POST，断言 200、ID 等于 `sourceDetail.id` 且 status=succeeded，保存完整 JSON 为 `sourceReplay`，随后 await 源服务 close。
-3. 源服务关闭后，在其持续关闭期间，按 `business.sqlite`、`authority.sqlite`、`history.sqlite` 顺序，以 `backup(new DatabaseSync(sourceFile, {readOnly:true}), archiveFile)` 逐库写到新 backup 目录，每个句柄在 finally 关闭。各备份只读执行 `PRAGMA integrity_check` 得 `ok`，`PRAGMA foreign_key_check` 得空数组。备份侧查询 `projects` 和 `runs` 唯一行，验证项目五元组等于源 request.binding、Run 的 projectId/sessionId 与绑定相同、Run ID 与 HTTP 一致、status=succeeded、receipt=1。授权侧 `execution_sessions` 唯一行绑定相同且 `generation=2,state='READY',run=NULL,capability=NULL,expires=NULL`。历史侧 `sessions` 唯一行 id/header 一致且 `epoch=1,owner='bento:revoked',handle=NULL,next=2,revision=1,inherited=0,materialized=1`，`events` 按 seq 排序与源事件深比较，`batch_receipts` 唯一行的 id 和回执字段一致，`batch_intents` 为空。
-4. 创建全新 restore 目录，使用 `COPYFILE_EXCL` 只复制三个备份文件到状态目录，逐文件核对 SHA-256。源合成卷中读取 `volume/<project>/volume/README.md`，断言字节为 `# Fixture\n`，在还原侧同相对位置排他创建同一文件并核对字节。禁止复制控制器锁、WAL、SHM、运行标志及任何真实卷。在完成复制和断言前禁止启动还原服务。
-5. 正常启动还原实例。以原项目 ID 读取原 Run，要求 200 且 JSON 深比较等于 `sourceDetail`。向 Run 集合以第一条 prompt/key 重放 POST，要求 200 且 JSON 深比较等于 `sourceReplay`。随后通过 HTTP 提交新 Run，prompt/key 为 `restore-next` / `restore-next-key`，要求 202 且 Run ID 不同。还原 worker 核对新绑定和源 binding 深比较相等、新 grant 指向第二条 Run、generation=2；用 `{...request,grant:old.grant}` 向还原侧当前入口发送 `append/flush/close`，带源 key，append 带源 batch/events，分别要求 403。再用新 grant 的 `stat` 验证 header、`eventCount:2,revision:'1',formatStatus:'current'`，以 `open {access:'write'}` 取 key，`read {key}` 得 `{eventState:'detached',events}` 且 events 等于源事件。
-6. 用新 key 运行步骤 2 的同一 RPC 顺序，批次改为 `00000000-0000-4000-8000-000000000002`，两条事件沿用同样结构，seq 为 2/3，time 为 1700000000003/1700000000004，turn 均为 2。期望新回执 epoch=2、first=2、count=2，digest 使用本批次。等第二条 Run 为 200/succeeded，列表恰含这两条 Run，关闭还原实例。用只读 SQL 核对两条 Run 均有 receipt=1，授权行升到 generation=3 且仍为 READY、空 run/capability/expires；历史 epoch=2、owner 已撤销、handle NULL、next=4、revision=2，事件为按顺序的两个原始批次，无 intent，两个回执行分别与各自 RPC 返回值一致。重新计算三份备份哈希并要求与启动前一致，输出库名和 SHA-256。所有服务、数据库句柄和临时目录均由 finally 关闭或删除，关闭失败仍须尝试清理。
-
-```bash
-node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='^restores stopped execution state and continues fenced session history$' apps/orchestrator/execution-service/service.test.ts
-pnpm --filter @bento/orchestrator typecheck
-pnpm exec prettier --check apps/orchestrator/execution-service/service.test.ts
-git diff --check
-```
-
-PASS 为定向执行 1 pass、0 fail、0 skip，三份哈希和全部运行断言成立，其他命令退出 0。删去已完成的 T1 并按 WORKER 规则提交。STOP 为任何断言、关闭或清理失败，或需修改生产代码才能通过。报告最后通过步骤、相关 symbol、复现命令和脱敏输出。若进程被强杀，核实进程已退出后仅删除本次记录的 `bento-execution-state-restore-*` 目录，重试时使用全新目录。
-
 ### T2：同步 A 的主线结果并收口证据
 
-前置状态为 T1 测试已经提交，且 MASTER 已确认 A 的 WEB-A02 合并进入 main 并同步至 B 的任务分支。T1 可独立执行，T2 等待合并顺序。允许修改本文、`deploy/README.md`、`docs/40-readiness/CURRENT-READINESS.md`。专门核对测试文件、`README.md`、`public-files.json`。禁止覆盖 A 的条目或迁移本文到长期目录。
+前置状态为分支已提交测试 `restores stopped execution state and continues fenced session history`，其定向测试、Orchestrator 类型检查、格式及差异检查通过，且 MASTER 已确认 A 的 WEB-A02 合并进入 main 并同步至 B 的任务分支。允许修改本文、`deploy/README.md`、`docs/40-readiness/CURRENT-READINESS.md`。专门核对测试文件、`README.md`、`public-files.json`。禁止覆盖 A 的条目或迁移本文到长期目录。
 
-1. 先执行定向双测，确认 2 pass、0 fail、0 skip，记录实际日期、T1 代码 SHA、Node 版本和覆盖边界。核对这两项测试都由现有 Orchestrator 测试套件执行。
+1. 先执行定向双测，确认 2 pass、0 fail、0 skip，记录实际日期、新增三库演练测试的提交 SHA、Node 版本和覆盖边界。核对这两项测试都由现有 Orchestrator 测试套件执行。
 
 ```bash
 node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='^restores (the completed Run business ledger from an isolated backup|stopped execution state and continues fenced session history)$' apps/orchestrator/execution-service/service.test.ts
