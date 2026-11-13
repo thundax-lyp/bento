@@ -33,6 +33,8 @@
 
 Node.js 22.19+ 的 22.x 或 24+，pnpm 12.15.0，Go 1.25.3+。
 
+TypeScript 使用 `@/` 引用仓库根目录下的源码，导入保留显式 `.ts` 路径。直接用 Node 启动仓库的 TypeScript 入口时，从仓库根目录传入 `--import ./register-paths.mjs`。
+
 ```sh
 pnpm install
 pnpm check

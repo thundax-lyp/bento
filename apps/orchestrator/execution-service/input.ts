@@ -3,7 +3,7 @@ import {
     maxSnapshotFiles,
     snapshotPathParts,
     wellFormed,
-} from '../../../shared/text-snapshot.ts';
+} from '@/shared/text-snapshot.ts';
 import type { FileText } from './types.ts';
 
 export class RequestError extends Error {

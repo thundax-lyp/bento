@@ -1,7 +1,7 @@
 import type { Authority } from './authority.ts';
 
-import type { Grant as WorkerGrant } from '../../worker/protocol.ts';
-export type { Grant as WorkerGrant } from '../../worker/protocol.ts';
+import type { Grant as WorkerGrant } from '@/apps/worker/protocol.ts';
+export type { Grant as WorkerGrant } from '@/apps/worker/protocol.ts';
 
 type Binding = ReturnType<Authority['authorize']>;
 

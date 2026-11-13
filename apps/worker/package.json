@@ -3,7 +3,7 @@
     "private": true,
     "type": "module",
     "scripts": {
-        "start": "node run-worker.ts",
+        "start": "node --import ../../register-paths.mjs run-worker.ts",
         "typecheck": "tsc --noEmit"
     },
     "dependencies": {

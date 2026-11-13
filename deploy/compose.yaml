@@ -20,6 +20,7 @@ services:
 
                 FROM dependencies AS web-build
                 ENV VITE_BENTO_KEYCLOAK_AUTH=1
+                COPY tsconfig.json ./
                 COPY apps/workspace/web/package.json ./apps/workspace/web/
                 RUN pnpm --filter bento --filter @bento/web install --frozen-lockfile
                 COPY apps/workspace/web/ ./apps/workspace/web/
@@ -46,6 +47,7 @@ services:
                 COPY --from=api-dependencies /app/apps/workspace/api/node_modules ./apps/workspace/api/node_modules
                 COPY apps/workspace/api/*.ts ./apps/workspace/api/
                 COPY --from=auth-build /app/apps/workspace/auth/dist/ ./apps/workspace/auth/dist/
+                COPY register-paths.mjs ./
                 COPY shared/text-snapshot.ts ./shared/
                 COPY --from=web-build /app/apps/workspace/web/dist/ /srv/bento/
                 COPY deploy/workspace/nginx.conf /etc/nginx/bento.conf
@@ -122,7 +124,13 @@ services:
             BENTO_BIND_HOST: 0.0.0.0
             BENTO_PORT: '8788'
             BENTO_SERVICE_BEARER: ${BENTO_EXECUTION_BEARER:?Set BENTO_EXECUTION_BEARER}
-        command: [node, apps/orchestrator/execution-service/start.ts]
+        command:
+            [
+                node,
+                --import,
+                /app/register-paths.mjs,
+                apps/orchestrator/execution-service/start.ts,
+            ]
         volumes:
             - bento-execution-data:/data
             - type: bind

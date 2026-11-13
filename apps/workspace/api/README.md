@@ -23,7 +23,7 @@
 ```sh
 mkdir -p debug-workspace
 pnpm --filter @bento/workspace-auth build
-node --env-file=debug-workspace/task-entry.env apps/workspace/api/main.ts
+node --import ./register-paths.mjs --env-file=debug-workspace/task-entry.env apps/workspace/api/main.ts
 ```
 
 关闭页面再打开时，任务列表会从服务端重新加载。提交结果暂未确认时，浏览器只存账号及项目范围内的提交键与描述摘要。用原任务描述重试会沿用该键。空 diff 可以预览状态并下载为空文件。

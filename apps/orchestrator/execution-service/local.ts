@@ -12,7 +12,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { filePath, textSnapshot } from './input.ts';
-import { reserveOperation } from '../../worker/protocol.ts';
+import { reserveOperation } from '@/apps/worker/protocol.ts';
 import type {
     Binding,
     ExecutionHost,

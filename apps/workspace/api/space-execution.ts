@@ -4,7 +4,7 @@ import {
     snapshotPathParts,
     maxSnapshotBytes,
     maxSnapshotFiles,
-} from '../../../shared/text-snapshot.ts';
+} from '@/shared/text-snapshot.ts';
 import { notFound, object, RequestError } from './protocol.ts';
 import type { Backend, ProjectInput } from './protocol.ts';
 import { spaceObjectKey } from './space-storage.ts';

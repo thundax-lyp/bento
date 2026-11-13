@@ -17,12 +17,12 @@ import { SingleHostExecution } from '../openshell/single-host.ts';
 import { executionHttp } from './http.ts';
 import { dockerOpenShellPurge } from './docker-openshell-purge.ts';
 import { localHost } from './local.ts';
-import { completedTurn } from '../../worker/dsh-worker.ts';
+import { completedTurn } from '@/apps/worker/dsh-worker.ts';
 import { Store } from './store.ts';
 import { serveExecution, snapshotSha256 } from './service.ts';
 import type { ExecutionHost, FileText, WorkerRequest } from './types.ts';
 import { processWorker } from './worker.ts';
-import { reserveOperation } from '../../worker/protocol.ts';
+import { reserveOperation } from '@/apps/worker/protocol.ts';
 import { prewarmedWorker } from './warm-worker.ts';
 
 const testToken = 'fixture-only-bento-service-bearer';
@@ -229,12 +229,7 @@ async function crashController(state: string) {
         sdk: fixtureSdk,
         worker: processWorker({
             command: process.execPath,
-            args: [
-                '--experimental-strip-types',
-                testFile,
-                '--effect-worker',
-                state,
-            ],
+            args: [...process.execArgv, testFile, '--effect-worker', state],
         }),
         async stop(binding) {
             await base.stop(binding);
@@ -642,6 +637,7 @@ if (process.argv[2] === '--effect-worker') {
             '#!/bin/sh\nexec ' +
                 [
                     process.execPath,
+                    ...process.execArgv,
                     testFile,
                     '--project-delete-control-fixture',
                     join(state, 'purges'),
@@ -1788,7 +1784,11 @@ if (process.argv[2] === '--effect-worker') {
         );
         const controller = spawn(
             process.execPath,
-            [fileURLToPath(new URL('./start.ts', import.meta.url)), '--local'],
+            [
+                ...process.execArgv,
+                fileURLToPath(new URL('./start.ts', import.meta.url)),
+                '--local',
+            ],
             {
                 env: {
                     ...process.env,
@@ -2002,12 +2002,7 @@ if (process.argv[2] === '--effect-worker') {
         const state = await mkdtemp(join(tmpdir(), 'bento-recovery-test-'));
         const controller = spawn(
             process.execPath,
-            [
-                '--experimental-strip-types',
-                testFile,
-                '--crash-controller',
-                state,
-            ],
+            [...process.execArgv, testFile, '--crash-controller', state],
             { stdio: ['ignore', 'pipe', 'ignore'] },
         );
         const exited = new Promise<void>((resolve) =>

@@ -1,5 +1,6 @@
 {
     "files": [
+        "register-paths.mjs",
         "shared/text-snapshot.ts",
         ".agents/skills/bento-codex-comment-fix/SKILL.md",
         ".agents/skills/bento-codex-comment-fix/agents/openai.yaml",

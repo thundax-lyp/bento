@@ -1,7 +1,4 @@
-import {
-    maxSnapshotBytes,
-    maxSnapshotFiles,
-} from '../../../shared/text-snapshot.ts';
+import { maxSnapshotBytes, maxSnapshotFiles } from '@/shared/text-snapshot.ts';
 
 const projectStatuses = ['importing', 'ready', 'failed'] as const;
 const runStatuses = [
