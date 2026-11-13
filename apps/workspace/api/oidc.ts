@@ -1,10 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as oidc from 'openid-client';
 import type { mysqlAccounts } from './account-store.ts';
 import type { sessionAuth } from './auth.ts';
-import { authPage, authStyles } from '../auth/auth-page.ts';
 import { notFound, RequestError } from './protocol.ts';
+
+export class WorkspaceAuthArtifactsError extends Error {}
 
 const prefix = '/api/oidc/';
 const transactionAge = 300;
@@ -53,6 +55,16 @@ export async function keycloakAuth({
     ) {
         throw new Error('Invalid Keycloak settings');
     }
+    const [loginHtml, accountHtml, styleCss] = await Promise.all([
+        readFile(new URL('../auth/dist/login.html', import.meta.url), 'utf8'),
+        readFile(new URL('../auth/dist/account.html', import.meta.url), 'utf8'),
+        readFile(new URL('../auth/dist/style.css', import.meta.url), 'utf8'),
+    ]).catch((cause: unknown) => {
+        throw new WorkspaceAuthArtifactsError(
+            'Workspace auth build artifacts are unavailable',
+            { cause },
+        );
+    });
     const config = await oidc.discovery(
         provider,
         clientId,
@@ -127,7 +139,7 @@ export async function keycloakAuth({
         const path = url.pathname;
         if (request.method === 'GET' && path === '/auth/style.css') {
             response.setHeader('Content-Type', 'text/css; charset=utf-8');
-            response.end(authStyles);
+            response.end(styleCss);
             return;
         }
         if (request.method === 'GET' && path === '/auth') {
@@ -146,7 +158,7 @@ export async function keycloakAuth({
                     provider.origin,
             );
             response.setHeader('Content-Type', 'text/html; charset=utf-8');
-            response.end(authPage(signedIn));
+            response.end(signedIn ? accountHtml : loginHtml);
             return;
         }
         if (request.method === 'POST' && path === prefix + 'logout') {

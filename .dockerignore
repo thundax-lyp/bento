@@ -14,10 +14,16 @@
 apps/workspace/web/src/**/*.test.ts
 apps/workspace/web/src/**/*.test.tsx
 !apps/workspace/auth/
-!apps/workspace/auth/auth-page.ts
+!apps/workspace/auth/package.json
+!apps/workspace/auth/build.mjs
+!apps/workspace/auth/login.html
+!apps/workspace/auth/account.html
+!apps/workspace/auth/style.css
 !apps/workspace/api/
 !apps/workspace/api/package.json
 !apps/workspace/api/*.ts
+apps/workspace/api/oidc.test.ts
+apps/workspace/api/oidc-fixture.ts
 !apps/orchestrator/
 !apps/orchestrator/execution-service/
 !apps/orchestrator/execution-service/input.ts
@@ -27,8 +33,6 @@ apps/workspace/web/src/**/*.test.tsx
 !deploy/workspace/start.sh
 !apps/workspace/api/go/
 !apps/workspace/api/go/*.go
-!apps/workspace/api/go/auth.html
-!apps/workspace/api/go/auth.css
 !apps/workspace/api/go/go.mod
 !apps/workspace/api/go/go.sum
 apps/workspace/api/go/*_test.go

@@ -1,6 +1,6 @@
 import { mockAccounts, mysqlAccounts } from './account-store.ts';
 import { demoAccounts, sessionAuth } from './auth.ts';
-import { keycloakAuth } from './oidc.ts';
+import { keycloakAuth, WorkspaceAuthArtifactsError } from './oidc.ts';
 import { mockBackend } from './mock.ts';
 import { taskEntryServer } from './server.ts';
 import { httpBackend } from './execution-service-http.ts';
@@ -161,7 +161,10 @@ async function main() {
 
 try {
     await main();
-} catch {
+} catch (error) {
+    if (error instanceof WorkspaceAuthArtifactsError) {
+        console.error('Workspace auth build artifacts are unavailable');
+    }
     console.error(
         'Invalid Bento task entry configuration or listener unavailable. See apps/workspace/api/README.md.',
     );

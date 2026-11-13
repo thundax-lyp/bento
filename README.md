@@ -14,7 +14,7 @@
 
 | 目录                                                                                    | 当前职责                                                               |
 | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| [`apps/workspace/auth`](apps/workspace/auth/auth-page.ts)                               | 个人端 `/auth` 页面，由个人端 API 渲染                                 |
+| [`apps/workspace/auth`](apps/workspace/auth/package.json)                               | 个人端独立构建的认证页面，由个人端 API 提供                            |
 | [`apps/workspace/web`](apps/workspace/web/README.md)                                    | 个人端 `/` 工作区，包含本地启动和浏览器验收命令                        |
 | [`apps/workspace/api`](apps/workspace/api/README.md)                                    | 个人端 HTTP API，Go 提供入口和 MySQL 账号仓储，TypeScript 处理业务请求 |
 | [`apps/orchestrator`](apps/orchestrator/go.mod)                                         | Go Temporal 编排模块                                                   |
@@ -38,6 +38,8 @@ pnpm install
 pnpm check
 pnpm format
 ```
+
+认证前端可独立执行 `pnpm --filter @bento/workspace-auth build`。
 
 可按工程运行 `pnpm check:workspace`（个人端认证、API 和 Web）、`pnpm check:orchestrator`（Run 编排与执行宿主）或 `pnpm check:worker`（独立 Worker）。
 

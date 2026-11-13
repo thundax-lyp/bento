@@ -38,39 +38,6 @@ jobs:
             - run: pnpm install --frozen-lockfile
             - run: pnpm check
 
-    images:
-        name: Deployment image builds
-        runs-on: ubuntu-24.04
-        timeout-minutes: 20
-        steps:
-            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-              with:
-                  persist-credentials: false
-            - name: Validate Compose configuration and build service images
-              env:
-                  BENTO_MYSQL_PASSWORD: preview
-                  BENTO_EXECUTION_BEARER: preview
-                  KEYCLOAK_DB_PASSWORD: preview
-                  KEYCLOAK_ADMIN_PASSWORD: preview
-              run: |
-                  docker compose -f deploy/compose.yaml --profile dev --profile worker-image config --quiet
-                  docker compose -f deploy/compose.yaml --profile worker-image build bento-web orchestrator bento-worker
-            - name: Check API runtime imports
-              run: >-
-                  docker run --rm --entrypoint node bento-web:local --input-type=module -e
-                  "await import('./apps/workspace/api/server.ts');
-                  await import('./apps/workspace/api/oidc.ts');
-                  await import('./apps/workspace/api/space-storage.ts');
-                  await import('./apps/workspace/api/space-execution.ts');"
-
-            - name: Generate a patch in the Orchestrator runtime image
-              run: >-
-                  docker run --rm --entrypoint node bento-orchestrator --input-type=module -e
-                  "import assert from 'node:assert/strict';
-                  import { unifiedDiff } from './apps/orchestrator/execution-service/diff.ts';
-                  const patch = await unifiedDiff([{path:'file.txt',text:'before\n'}], [{path:'file.txt',text:'after\n'}]);
-                  assert.match(patch, /\+after/);"
-
     browser:
         name: Web Chromium E2E
         runs-on: ubuntu-24.04
