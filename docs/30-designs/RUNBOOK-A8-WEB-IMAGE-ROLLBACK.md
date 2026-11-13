@@ -1,6 +1,6 @@
 # A8 Web 镜像回滚演练
 
-状态：T1 恢复修订，待独立复审，2026-11-13（Asia/Shanghai）。工作边界为 bento-b 基线 `1803ad643fde18a470ae6d08cb4d891b94e285c2`。本草稿仅供审阅。执行需 MASTER 放行。A6 与本任务共享 Readiness，更新前由 MASTER 协调基线和合入顺序。
+状态：T1 传输包恢复修订，待独立复审，2026-11-13（Asia/Shanghai）。工作边界为 bento-b 基线 `1803ad643fde18a470ae6d08cb4d891b94e285c2`。本草稿仅供审阅。执行需 MASTER 放行。A6 与本任务共享 Readiness，更新前由 MASTER 协调基线和合入顺序。
 
 ## 目标与边界
 
@@ -10,7 +10,7 @@
 
 ## 提交边界与启动入口
 
-当前 `rev` 为 #39、#40 合入后的源码基线。从 `5c8ffb9` 到该提交，变更限于 `apps/orchestrator/execution-service/service.test.ts`、`apps/orchestrator/temporal_test.go`、`apps/workspace/api/space-files.test.ts` 和 Readiness。Orchestrator 测试在 Web 构建输入之外，`space-files.test.ts` 不进入当前 Docker 构建上下文。Compose 内联 Dockerfile、NGINX、服务入口、健康探针、Go 模块清单和 pnpm 锁文件均无变更。Readiness 新增 A6、WEB-04 证据，收口时保留这两项。正式审核须同时固定源码 `rev`、独立计划提交和本文 blob。执行分支从获审源码基线建立，原获审计划提交为 `69ca464e1910eab2e550afdaddb50cc5fa8c2a27`，其子提交仅修订本文。执行过程中无代码提交。收口提交只包含部署手册、Readiness 及本文删除。任何额外路径都 STOP。
+当前 `rev` 为 #39、#40 合入后的源码基线。从 `5c8ffb9` 到该提交，变更限于 `apps/orchestrator/execution-service/service.test.ts`、`apps/orchestrator/temporal_test.go`、`apps/workspace/api/space-files.test.ts` 和 Readiness。Orchestrator 测试在 Web 构建输入之外，`space-files.test.ts` 不进入当前 Docker 构建上下文。Compose 内联 Dockerfile、NGINX、服务入口、健康探针、Go 模块清单和 pnpm 锁文件均无变更。Readiness 新增 A6、WEB-04 证据，收口时保留这两项。正式审核须同时固定源码 `rev`、独立计划提交和本文 blob。执行分支从获审源码基线建立，原获审计划提交为 `69ca464e1910eab2e550afdaddb50cc5fa8c2a27`，其子提交 `30d5aa656c1881bf7d62b6062b07669f6f67392a` 固定离线构建，本次提交在其后仅修订本文。执行过程中无代码提交。收口提交只包含部署手册、Readiness 及本文删除。任何额外路径都 STOP。
 
 本地准备失败即 STOP，保留私有临时目录和脱敏失败阶段，远端保持原状。由获审计划提交所在的干净分支，在本地仓库根目录运行下列命令。这里的 `plan` 必须与 MASTER 放行的计划提交相同。固定 launcher 由获审计划中的五个 Bash 区块原样拼接。随后使用既有受控 SSH 入口，以 `bash --noprofile --norc -s -- "$bundle_sha"` 从标准输入执行 launcher。执行期间保留同一个 Bash 进程和锁。T0 记录启动后，第二条受控连接上传归档到私有目录，先写 `inputs.tar.part`，完成后在同一目录原子改名为 `inputs.tar`。launcher 最多等待 120 秒。SSH 必须使用既有受控身份和已验证主机密钥。
 
@@ -21,8 +21,9 @@ plan=$(git rev-parse HEAD)
 path=docs/30-designs/RUNBOOK-A8-WEB-IMAGE-ROLLBACK.md
 test -z "$(git status --porcelain)"
 git merge-base --is-ancestor "$rev" "$plan"
-test "$(git rev-parse "$plan^")" = 69ca464e1910eab2e550afdaddb50cc5fa8c2a27
-test "$(git rev-parse "$plan^^")" = "$rev"
+test "$(git rev-parse "$plan^")" = 30d5aa656c1881bf7d62b6062b07669f6f67392a
+test "$(git rev-parse "$plan^^")" = 69ca464e1910eab2e550afdaddb50cc5fa8c2a27
+test "$(git rev-parse "$plan^^^")" = "$rev"
 test "$(git diff-tree --no-commit-id --name-only -r "$plan")" = "$path"
 git rev-parse "$plan:$path"
 local_root=$(mktemp -d)
@@ -45,7 +46,10 @@ git show "$rev:apps/workspace/api/go/go.mod" | cmp - "$local_root/source/apps/wo
 (
     cd "$local_root"
     shasum -a 256 source.tar bento-web-api > transfer.sha256
-    tar -cf inputs.tar source.tar bento-web-api transfer.sha256
+    COPYFILE_DISABLE=1 tar --format=ustar -cf inputs.tar source.tar bento-web-api transfer.sha256
+    members=$(tar -tf inputs.tar)
+    test "$members" = "$(printf 'source.tar\nbento-web-api\ntransfer.sha256')"
+    shasum -a 256 -c transfer.sha256
 )
 bundle_sha=$(shasum -a 256 "$local_root/inputs.tar" | awk '{print $1}')
 printf 'bundle_sha=%s\n' "$bundle_sha"
@@ -68,13 +72,13 @@ printf '%s\n' "$local_root"
 | mysql:8.4 | bced325a4ab7aec848f4688371c7433351dcb5dba26fbcc29c67727d898ae5cb |
 | node:22-bookworm-slim | b774d993885c47eca14db241ba8cc7e5789235142f76e4a2a6a65ec350a1bac0 |
 
-放行后在远端专用 Bash 会话运行以下命令，直到 T4 才退出。T0 文件范围仅为固定锁文件、私有目录与 `operations.log`。固定 flock 文件必须留存，所有演练执行者通过同一文件加锁。首轮结束后已确认固定锁释放。第二轮须通过同一锁文件重新加锁。任何冲突、漂移或 SSH 身份验证失败均 STOP。每步在命令失败时立即退出，记录最后完成阶段及脱敏失败原因。禁止修改或读取共享项目配置与数据，禁止系统级 Docker 清理，禁止远端写入直到审核放行。
+放行后在远端专用 Bash 会话运行以下命令，直到 T4 才退出。T0 文件范围仅为固定锁文件、私有目录与 `operations.log`。固定 flock 文件必须留存，所有演练执行者通过同一文件加锁。前两轮结束后均已确认固定锁释放。第三轮须通过同一锁文件重新加锁。任何冲突、漂移或 SSH 身份验证失败均 STOP。每步在命令失败时立即退出，记录最后完成阶段及脱敏失败原因。禁止修改或读取共享项目配置与数据，禁止系统级 Docker 清理，禁止远端写入直到审核放行。
 
 ```bash
 set -euo pipefail
 p=bento-b-a8-rollback
 rev=1803ad643fde18a470ae6d08cb4d891b94e285c2
-root="$HOME/$p-r2"
+root="$HOME/$p-r3"
 bundle_sha=${1:?}
 [[ "$bundle_sha" =~ ^[a-f0-9]{64}$ ]]
 base="$p-web:base"
@@ -231,11 +235,11 @@ printf "%s\n" "T0 PASS: upload source archive"
 
 ## T1：生成隔离输入并构建镜像
 
-首轮在 `go mod download` 访问公开代理时超时。保留首轮私有目录及日志，第二轮使用 `~/bento-b-a8-rollback-r2` 与原项目名和同一锁。获准后在锁内重验项目、卷、网络、端口和镜像标签。若新目录已存在即 STOP。
+首轮在 `go mod download` 访问公开代理时超时。第二轮传输包 SHA-256 一致，macOS tar 添加的三个 `._*` 元数据成员触发解包前的成员断言。保留首轮和第二轮私有目录及日志，第三轮使用 `~/bento-b-a8-rollback-r3` 与原项目名和同一锁。获准后在锁内重验项目、卷、网络、端口和镜像标签。若新目录已存在即 STOP。
 
 文件范围为私有目录中的 `inputs.tar.part`、`inputs.tar`、`source.tar`、`bento-web-api`、`transfer.sha256`、`source/`（含构建用二进制副本与上下文规则）、两份 Dockerfile、`fault.conf`、`fault-context/`、两份构建日志与 `input.sha256`。
 
-允许写入仅限远端 `~/bento-b-a8-rollback-r2`、本演练固定锁文件、两个镜像标签、构建缓存和无网络且自动删除的权限探针容器。通过受控 SSH 认证上传源码归档。归档由上述本地命令从获审源码生成。T0 创建私有目录后，通过第二条 SSH 连接按启动入口上传 `inputs.tar`，原执行 Bash 持续持锁。禁止上传本地未跟踪文件或部署配置。运行以下命令。保留构建日志在该私有目录，公开证据仅记录失败阶段和脱敏原因。
+允许写入仅限远端 `~/bento-b-a8-rollback-r3`、本演练固定锁文件、两个镜像标签、构建缓存和无网络且自动删除的权限探针容器。通过受控 SSH 认证上传源码归档。归档由上述本地命令从获审源码生成。T0 创建私有目录后，通过第二条 SSH 连接按启动入口上传 `inputs.tar`，原执行 Bash 持续持锁。禁止上传本地未跟踪文件或部署配置。运行以下命令。保留构建日志在该私有目录，公开证据仅记录失败阶段和脱敏原因。
 
 ```bash
 cd "$root"
