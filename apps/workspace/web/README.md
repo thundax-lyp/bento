@@ -5,7 +5,7 @@
 从仓库根目录执行 `pnpm install`，然后在两个终端分别运行：
 
 ```sh
-BENTO_ONE_MODE=mock BENTO_ONE_PORT=4186 BENTO_ONE_ORIGIN=http://127.0.0.1:4185 node apps/workspace/api/main.ts
+BENTO_ONE_MODE=mock BENTO_ONE_PORT=4186 BENTO_ONE_ORIGIN=http://127.0.0.1:4185 node --import ./register-paths.mjs apps/workspace/api/main.ts
 ```
 
 ```sh

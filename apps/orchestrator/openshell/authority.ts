@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 
-import type { Binding } from '../../worker/protocol.ts';
+import type { Binding } from '@/apps/worker/protocol.ts';
 type Session = Binding & {
     generation: number;
     state: string;

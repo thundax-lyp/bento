@@ -2,13 +2,13 @@ import type {
     Binding,
     WorkerRequest,
     WorkerResult,
-} from '../../worker/protocol.ts';
+} from '@/apps/worker/protocol.ts';
 export type {
     Binding,
     Grant,
     WorkerRequest,
     WorkerResult,
-} from '../../worker/protocol.ts';
+} from '@/apps/worker/protocol.ts';
 import type {
     SingleHostExecution,
     SingleHostSandbox,

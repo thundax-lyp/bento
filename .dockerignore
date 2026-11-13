@@ -1,5 +1,7 @@
 **
 !package.json
+!register-paths.mjs
+!tsconfig.json
 !pnpm-lock.yaml
 !pnpm-workspace.yaml
 !apps/
@@ -24,9 +26,6 @@ apps/workspace/web/src/**/*.test.tsx
 !apps/workspace/api/*.ts
 apps/workspace/api/oidc.test.ts
 apps/workspace/api/oidc-fixture.ts
-!apps/orchestrator/
-!apps/orchestrator/execution-service/
-!apps/orchestrator/execution-service/input.ts
 !deploy/
 !deploy/workspace/
 !deploy/workspace/nginx.conf
@@ -36,3 +35,5 @@ apps/workspace/api/oidc-fixture.ts
 !apps/workspace/api/go/go.mod
 !apps/workspace/api/go/go.sum
 apps/workspace/api/go/*_test.go
+!shared/
+!shared/text-snapshot.ts

@@ -1,3 +1,9 @@
+import {
+    maxSnapshotBytes,
+    maxSnapshotFiles,
+    snapshotPathParts,
+    wellFormed,
+} from '@/shared/text-snapshot.ts';
 import type { FileText } from './types.ts';
 
 export class RequestError extends Error {
@@ -30,32 +36,15 @@ export function object(value: unknown): Record<string, unknown> {
     return value as Record<string, unknown>;
 }
 
-export function wellFormed(text: string) {
-    return Buffer.from(text).toString('utf8') === text;
-}
-
 export function filePath(path: string) {
-    const parts = path.split('/');
-    if (
-        !wellFormed(path) ||
-        Buffer.byteLength(path) > 4096 ||
-        /[\\\p{Cc}]/u.test(path) ||
-        parts.some(
-            (part) =>
-                !part ||
-                part === '.' ||
-                part === '..' ||
-                part.toLowerCase() === '.git' ||
-                Buffer.byteLength(part) > 255,
-        )
-    )
-        throw invalid('Invalid relative file path.');
+    const parts = snapshotPathParts(path);
+    if (!parts) throw invalid('Invalid relative file path.');
     return parts;
 }
 
 export function textSnapshot(value: unknown): FileText[] {
     if (!Array.isArray(value)) throw invalid('Expected a files array.');
-    if (value.length > 100) throw oversized();
+    if (value.length > maxSnapshotFiles) throw oversized();
     const files: FileText[] = [];
     const paths = new Set<string>();
     const directories = new Set<string>();
@@ -74,7 +63,7 @@ export function textSnapshot(value: unknown): FileText[] {
         for (let i = 1; i < parts.length; i++)
             directories.add(parts.slice(0, i).join('/'));
         bytes += Buffer.byteLength(text);
-        if (bytes > 1024 * 1024) throw oversized();
+        if (bytes > maxSnapshotBytes) throw oversized();
         files.push({ path, text });
     }
     if ([...paths].some((path) => directories.has(path)))

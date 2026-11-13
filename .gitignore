@@ -83,6 +83,7 @@
 !/pnpm-lock.yaml
 !/pnpm-workspace.yaml
 !/tsconfig.json
+!/register-paths.mjs
 !/public-files.json
 !/apps/
 /apps/*
@@ -157,3 +158,6 @@
 /coverage/
 
 /apps/workspace/auth/dist/
+
+!/shared/
+!/shared/text-snapshot.ts

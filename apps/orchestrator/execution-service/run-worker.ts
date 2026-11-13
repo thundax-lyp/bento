@@ -1,1 +1,1 @@
-import '../../worker/run-worker.ts';
+import '@/apps/worker/run-worker.ts';

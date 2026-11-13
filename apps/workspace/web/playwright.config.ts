@@ -11,7 +11,8 @@ export default defineConfig({
     projects: [{ name: 'chromium', use: devices['Desktop Chrome'] }],
     webServer: [
         {
-            command: 'node apps/workspace/api/main.ts',
+            command:
+                'node --import ./register-paths.mjs apps/workspace/api/main.ts',
             cwd: root,
             url: apiOrigin + '/api/session',
             env: {

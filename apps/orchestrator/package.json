@@ -4,7 +4,7 @@
     "type": "module",
     "scripts": {
         "typecheck": "tsc --noEmit",
-        "test": "node --experimental-strip-types --test execution-service/service.test.ts openshell/*.test.ts",
+        "test": "node --import ../../register-paths.mjs --experimental-strip-types --test execution-service/service.test.ts openshell/*.test.ts",
         "check": "pnpm typecheck && pnpm test && go test ./... && go vet ./..."
     },
     "dependencies": {

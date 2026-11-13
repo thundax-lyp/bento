@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { filePath } from '../../../apps/orchestrator/execution-service/input.ts';
+import {
+    snapshotPathParts,
+    maxSnapshotBytes,
+    maxSnapshotFiles,
+} from '@/shared/text-snapshot.ts';
 import { notFound, object, RequestError } from './protocol.ts';
 import type { Backend, ProjectInput } from './protocol.ts';
 import { spaceObjectKey } from './space-storage.ts';
@@ -21,7 +25,6 @@ type Init = {
     snapshot: string | null;
     issues: string | null;
 };
-const maxBytes = 1024 * 1024;
 
 export function spaceExecution(
     db: DatabaseSync,
@@ -147,7 +150,7 @@ export function spaceExecution(
                 'invalid_execution_input',
                 '请选择不重复的项目文件。',
             );
-        if (fileIds.length > 100)
+        if (fileIds.length > maxSnapshotFiles)
             throw new RequestError(
                 413,
                 'execution_input_too_large',
@@ -187,7 +190,10 @@ export function spaceExecution(
             if (!file) throw notFound();
             return file;
         });
-        if (selected.reduce((sum, file) => sum + file.size, 0) > maxBytes)
+        if (
+            selected.reduce((sum, file) => sum + file.size, 0) >
+            maxSnapshotBytes
+        )
             throw new RequestError(
                 413,
                 'execution_input_too_large',
@@ -215,9 +221,7 @@ export function spaceExecution(
         for (const { fileId, path, size, manifest } of JSON.parse(
             row.inputs,
         ) as Input[]) {
-            try {
-                filePath(path);
-            } catch {
+            if (!snapshotPathParts(path)) {
                 issues.push({ fileId, path, code: 'invalid_path' });
                 continue;
             }

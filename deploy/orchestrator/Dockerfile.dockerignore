@@ -1,5 +1,6 @@
 **
 !package.json
+!register-paths.mjs
 !pnpm-lock.yaml
 !pnpm-workspace.yaml
 !apps/
@@ -15,3 +16,5 @@
 !apps/worker/
 !apps/worker/package.json
 !apps/worker/*.ts
+!shared/
+!shared/text-snapshot.ts
