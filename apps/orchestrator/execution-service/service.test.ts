@@ -633,6 +633,114 @@ if (process.argv[2] === '--effect-worker') {
         }
     });
 
+    const temporalBinary = process.env.BENTO_TEST_TEMPORAL_BINARY;
+    test(
+        'Temporal Activity retries a completed Run without repeating its effect',
+        { timeout: 25_000, skip: !temporalBinary },
+        async () => {
+            assert(temporalBinary);
+            const state = await mkdtemp(
+                join(tmpdir(), 'bento-temporal-retry-'),
+            );
+            const controlEnv = process.env.BENTO_GO_CONTROL;
+            const reportEnv = process.env.BENTO_TEST_TEMPORAL_REPORT;
+            const reportPath = join(state, 'report.json');
+            let service: Awaited<ReturnType<typeof serveExecution>> | undefined;
+            try {
+                const wrapper = join(state, 'control');
+                const quote = (value: string) =>
+                    "'" + value.replaceAll("'", "'\"'\"'") + "'";
+                await writeFile(
+                    wrapper,
+                    '#!/bin/sh\nexec ' +
+                        [
+                            temporalBinary,
+                            '-test.run=^TestTemporalRetryControlProcess$',
+                        ]
+                            .map(quote)
+                            .join(' ') +
+                        '\n',
+                    { mode: 0o700 },
+                );
+                process.env.BENTO_GO_CONTROL = wrapper;
+                process.env.BENTO_TEST_TEMPORAL_REPORT = reportPath;
+                const base = localHost(join(state, 'volume'));
+                let workerCalls = 0;
+                service = await serveExecution({
+                    state,
+                    host: {
+                        ...base,
+                        async worker(request, signal) {
+                            workerCalls++;
+                            return base.worker(request, signal);
+                        },
+                    },
+                    token: testToken,
+                    retryMs: 20,
+                    workerTimeoutMs: 15_000,
+                    temporal: { address: 'fixture', taskQueue: 'fixture' },
+                });
+                const api = client(service.url);
+                const target = await project(api);
+                const run = await submit(api, target, 'retry effect', 'retry');
+                const runId = run.split('/').at(-1);
+                const deadline = performance.now() + 12_000;
+                let report: unknown;
+                for (;;) {
+                    try {
+                        report = JSON.parse(await readFile(reportPath, 'utf8'));
+                        break;
+                    } catch (error) {
+                        if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+                            throw error;
+                        if (performance.now() >= deadline)
+                            throw new Error(
+                                `Timed out after 12 seconds waiting for Temporal report for Run ${runId}`,
+                                { cause: error },
+                            );
+                        await delay(20);
+                    }
+                }
+                assert.deepEqual(report, {
+                    runId,
+                    replyIds: ['go-1', 'go-2'],
+                });
+                const detail = await api(run);
+                assert.equal(detail.status, 200);
+                assert.equal(detail.json().status, 'succeeded');
+                const diff = await api(run + '/diff');
+                assert.equal(diff.status, 200);
+                assert.equal(diff.text.match(/^\+retry effect$/gm)?.length, 1);
+                assert.equal(
+                    await readFile(
+                        join(
+                            state,
+                            'volume',
+                            target.slice(1),
+                            'volume',
+                            'README.md',
+                        ),
+                        'utf8',
+                    ),
+                    '# Fixture\nretry effect\n',
+                );
+                assert.equal(workerCalls, 1);
+            } finally {
+                try {
+                    await service?.close();
+                } finally {
+                    if (controlEnv === undefined)
+                        delete process.env.BENTO_GO_CONTROL;
+                    else process.env.BENTO_GO_CONTROL = controlEnv;
+                    if (reportEnv === undefined)
+                        delete process.env.BENTO_TEST_TEMPORAL_REPORT;
+                    else process.env.BENTO_TEST_TEMPORAL_REPORT = reportEnv;
+                    await rm(state, { recursive: true, force: true });
+                }
+            }
+        },
+    );
+
     test('project deletion Temporal purge receipts', async () => {
         const state = await mkdtemp(join(tmpdir(), 'bento-project-temporal-'));
         const env = process.env.BENTO_GO_CONTROL;
