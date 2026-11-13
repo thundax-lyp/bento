@@ -30,6 +30,8 @@
 
 初稿基线为 `b55171a`，Node v22.23.2、pnpm 12.15.0，聚焦 14/14 和 `pnpm check` 均通过。修订时，本地 HEAD、跟踪分支和远端 main 均为 `20714e6`。#32 未修改 Workspace API 及其测试文件，既有聚焦结果仍适用于相同测试版本；`pnpm check` 的初稿结果仅对应初稿基线。当前只形成一份草稿；T0 的审核版本、任务分支和提交门禁尚未执行。
 
+已通过 T1：T0 在 20714e6 基线通过，T1 精确额度及 A04 共 7 项通过，API typecheck 通过。
+
 ## 执行步骤
 
 ### T0：核定开工边界
@@ -58,28 +60,9 @@ pnpm check
 
 PASS：工作树干净，分支和基线如上，仅 RUNBOOK 差异，聚焦 14/14，统一检查全过。STOP：任一不符；缺工具或依赖报告实际失败，不自动安装或改锁文件。
 
-### T1：精确上限、请求重放与账号隔离
-
-前置状态：T0 PASS。允许修改：`apps/workspace/api/space-files.test.ts`（加本 RUNBOOK 共核对 2 个）。禁止修改：生产代码、锁文件、A04 的输入及断言。
-
-执行：
-
-1. 按上文提取 fixture 并新增唯一测试 `WEB-A03 exact limits and owner isolation`。A 按顺序准备 `a.bin:4000000000,b.bin:4000000000,c.bin:2000000000`；在空账号先尝试 `oversize.bin:4000000001`，断言 413。每个 start 为 200 uploading；逐文件、逐块通过 HTTP part 并登记元数据，再 complete。核对上传 DTO 与 SQLite，额度按以下 (saved,reserved) 逐项推进：`(0,4000000000) → (4000000000,0) → (4000000000,4000000000) → (8000000000,0) → (8000000000,2000000000) → (10000000000,0)`。检查各已保存文件出现在项目详情、对象大小准确、各仅一写。
-2. 在 a 首次 start 后立即重放相同请求并比较整个 DTO，且变更 path 为 `different.bin` 重放得到 409 space_conflict。在满额后再重放 a 的原 start 与 complete，均返回同一 saved DTO，不触发存储调用。A 的 `one.bin:1` 新 ID 返回 409 space_quota，A 用量不变。
-3. B 在 A 满额时自己的 `b-owner.bin:1` start 成功，B 用量 `(0,1)`，列表只有自己的项目和记录；A 仍为 `(10000000000,0)` 且无 B 的记录。B 对 A project 用新的 `foreign.bin:1` start、在 B 项目重放 A 的 a 原 start、GET A 的 a 上传、POST a 的 part(1)/complete/cancel、GET a 下载、DELETE a 文件，逐项均为 404 not_found，不改变两边账本或触发任何存储调用。
-
-验证：
-
-```bash
-node --test --test-name-pattern='WEB-A03 exact|WEB-A04' apps/workspace/api/space-files.test.ts
-pnpm --filter @bento/workspace-api typecheck
-```
-
-PASS：7 项实际执行并通过，及上述账本/存储断言。单步提交 `Test(task-entry): 验证空间精确额度和账号隔离`。STOP：任何差异；不修改 HTTP/存储行为。
-
 ### T2：并发预占
 
-前置状态：T1 PASS。允许修改：`apps/workspace/api/space-files.test.ts`（含 RUNBOOK 共 2 个）。禁止修改：T1、A04 断言和生产代码。
+前置状态：上一提交已完成 T1，T0 在 20714e6 基线通过，T1 精确额度及 A04 共 7 项通过，API typecheck 通过。允许修改：`apps/workspace/api/space-files.test.ts`（含 RUNBOOK 共 2 个）。禁止修改：T1、A04 断言和生产代码。
 
 执行：新增 `WEB-A03 concurrent reserves cannot oversubscribe`。A 用 `seed.bin:4000000000` start+part+complete 得 `(4000000000,0)`，再以 `pending.bin:2000000000` start 不签名得 `(4000000000,2000000000)`。创建 `race-a.bin`、`race-b.bin` 各 4 GB。对这两个 key 的首次 prepare abort 用同一个 `recoveryBarrier` 暂停（其他 key 不暂停）。同时发出两条 HTTP start，不先 await 单条；等屏障进入，再用 `Promise.race` 等其中第一条响应，必须是败者 409 space_quota，胜者此时仍卡在存储，SQLite state=preparing 且用量 `(4000000000,6000000000)`。败者无行无调用。finally 放行并用 `Promise.allSettled` 收尾；正常路径断言最终响应集合恰为一条 200 uploading、一条 409 space_quota（不指定获胜 ID），只有胜者 create 一次、用量不变。相同胜者请求重放得到同一 DTO；败者原请求重放仍 409。
 
