@@ -36,6 +36,8 @@
 
 已通过 T3：取消确认后复用额度聚焦用例通过。
 
+已通过 T4：过期确认后复用额度聚焦用例通过。
+
 ## 执行步骤
 
 ### T0：核定开工边界
@@ -64,23 +66,9 @@ pnpm check
 
 PASS：工作树干净，分支和基线如上，仅 RUNBOOK 差异，聚焦 14/14，统一检查全过。STOP：任一不符；缺工具或依赖报告实际失败，不自动安装或改锁文件。
 
-### T4：过期后复用额度
-
-前置状态：上一提交已完成 T3，取消确认后复用额度聚焦用例通过。允许修改：`apps/workspace/api/space-files.test.ts`（含 RUNBOOK 共 2 个）。禁止修改：已验场景和生产代码。
-
-执行：新增 `WEB-A03 expired quota releases after storage confirmation`。在初始时刻先 start `expired.bin:2000000000`；advanceTo(该记录 expires-60000) 后先 `renewSession('a')`（账号会话自身也是 24 小时），再 start `fill1.bin:4000000000,fill2.bin:4000000000`，并给 expired 的 part 1 签名、登记。用量 `(0,10000000000)`。advanceTo(expired.expires) 并 sweep，GET 与 SQLite 为 cleaning（cleanup=expired），parts=[]；无带 ID abort，fixture 仍 active 且有一块，one.bin:1 start 409。part(expired,1) 返回 409 space_conflict；再以同一 expired start 请求读取 cleaning DTO。调用 T3 已通过的带 ID abort 屏障断言，输入 expired、one 和终态 expired。签名到期后进入屏障时仍 cleaning、满额、分块仍在，one 仍 409；放行后等待 expired，确认 abort 一次、无分块和对象，预占降至 8 GB。重放 expired 的原 start 得相同 expired DTO 且无新存储调用；one 原请求及重放均返回同一 uploading DTO，用量 `(0,8000000001)`。
-
-验证：
-
-```bash
-node --test --test-name-pattern='WEB-A03 expired' apps/workspace/api/space-files.test.ts
-```
-
-PASS：1 项实际执行并通过。单步提交 `Test(task-entry): 验证过期清理后复用额度`。STOP：过期时间、状态、签名/额度门禁或确认断言不符。
-
 ### T5：删除后复用额度
 
-前置状态：T4 PASS。允许修改：`apps/workspace/api/space-files.test.ts`（含 RUNBOOK 共 2 个）。禁止修改：已验场景、执行门禁和生产代码。
+前置状态：上一提交已完成 T4，过期确认后复用额度聚焦用例通过。允许修改：`apps/workspace/api/space-files.test.ts`（含 RUNBOOK 共 2 个）。禁止修改：已验场景、执行门禁和生产代码。
 
 执行：新增 `WEB-A03 deleted quota releases after storage confirmation`。A start、签名、登记并完成 `delete.bin:2000000000`，再 start `fill1.bin:4000000000,fill2.bin:4000000000`；用量 `(2000000000,8000000000)`。安装仅阻塞 delete 的 remove 前置屏障。DELETE 两次均为 202 deleting，确认 SQLite 仍计入 saved，有一条 deletion intent，下载 404，项目详情不列文件，one.bin:1 start 409。sweep 进入 remove 屏障后重复检查同一用量、intent、fixture 对象大小仍 2 GB，one 原请求仍 409。放行后等 SQLite deleted，intent 无行、无残留分块/对象、仅一次 remove-confirmed；GET space 不列该 ID，DELETE 两次均 204 且不再次调用存储，用量 `(0,8000000000)`。用原 one 请求 start 并重放，均返回同一 uploading DTO，用量 `(0,8000000001)`。
 

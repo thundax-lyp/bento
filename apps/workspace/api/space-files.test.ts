@@ -2204,3 +2204,62 @@ test(
         }
     },
 );
+
+test(
+    'WEB-A03 expired quota releases after storage confirmation',
+    { timeout: 20000 },
+    async (t) => {
+        const clock = recoveryClock(t);
+        const f = await openQuotaFixture();
+        try {
+            const expired = f.register('expired.bin', twoGB);
+            const fill1 = f.register('fill1.bin', fourGB);
+            const fill2 = f.register('fill2.bin', fourGB);
+            const one = f.register('one.bin', 1);
+            const upload = await f.begin(expired);
+            clock.advanceTo(upload.expires - 60_000);
+            f.renewSession('a');
+            await f.begin(fill1);
+            await f.begin(fill2);
+            await f.sendPart(expired, 1);
+            await f.usage(0, tenGB);
+            clock.advanceTo(upload.expires);
+            await clock.sweep();
+            const cleaning = await quotaView(f, expired, 'cleaning');
+            assert.equal(f.state(expired, 'cleaning').cleanup, 'expired');
+            const entry = f.object(spaceObjectKey(expired.id));
+            assert(entry.active);
+            assert.equal(entry.parts.size, 1);
+            assert(!entry.calls.includes('abort'));
+            await rejectQuota(f, one);
+            assertUploadError(
+                await f.request(f.uploadUrl(expired) + '/part', 'POST', {
+                    number: 1,
+                }),
+                409,
+                'space_conflict',
+            );
+            assert.deepEqual(
+                f.assertUpload(await f.start(expired), expired, 'cleaning'),
+                cleaning,
+            );
+            const terminal = await confirmQuotaAbort(
+                f,
+                clock,
+                expired,
+                one,
+                'expired',
+            );
+            for (const input of [fill1, fill2]) f.state(input, 'uploading');
+            const calls = [...entry.calls];
+            assert.deepEqual(
+                f.assertUpload(await f.start(expired), expired, 'expired'),
+                terminal,
+            );
+            assert.deepEqual(entry.calls, calls);
+            await reuseQuota(f, one);
+        } finally {
+            await f.dispose();
+        }
+    },
+);
