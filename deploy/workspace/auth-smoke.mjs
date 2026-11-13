@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import console from 'node:console';
-import { access, readFile } from 'node:fs/promises';
+import { access, mkdtemp, open, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import process from 'node:process';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
@@ -18,35 +20,53 @@ const subject = 'fixture-subject';
 const fixture = await startOidcFixture();
 let entry;
 
-function startEntry() {
-    const child = spawn('/usr/bin/tini', ['--', '/usr/local/bin/bento-web'], {
-        env: {
-            ...process.env,
-            BENTO_ONE_MODE: 'mock',
-            BENTO_AUTH_MODE: 'keycloak',
-            BENTO_ONE_ORIGIN: origin,
-            BENTO_OIDC_ISSUER: fixture.issuer,
-            BENTO_OIDC_CLIENT_ID: oidcFixtureClient.clientId,
-            BENTO_OIDC_CLIENT_SECRET: oidcFixtureClient.clientSecret,
-            BENTO_OIDC_ORGANIZATION: oidcFixtureClient.organization,
-        },
-        stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8').on('data', (chunk) => {
-        stdout += chunk;
-    });
-    child.stderr.setEncoding('utf8').on('data', (chunk) => {
-        stderr += chunk;
-    });
-    const result = new Promise((resolve, reject) => {
-        child.once('error', reject);
-        child.once('close', (code, signal) =>
-            resolve({ code, signal, stdout, stderr }),
+async function startEntry() {
+    const directory = await mkdtemp(join(tmpdir(), 'bento-auth-entry-'));
+    const stdoutPath = join(directory, 'stdout.log');
+    const stderrPath = join(directory, 'stderr.log');
+    let stdoutFile;
+    let stderrFile;
+    try {
+        stdoutFile = await open(stdoutPath, 'a', 0o600);
+        stderrFile = await open(stderrPath, 'a', 0o600);
+        const child = spawn(
+            '/usr/bin/tini',
+            ['--', '/usr/local/bin/bento-web'],
+            {
+                env: {
+                    ...process.env,
+                    BENTO_ONE_MODE: 'mock',
+                    BENTO_AUTH_MODE: 'keycloak',
+                    BENTO_ONE_ORIGIN: origin,
+                    BENTO_OIDC_ISSUER: fixture.issuer,
+                    BENTO_OIDC_CLIENT_ID: oidcFixtureClient.clientId,
+                    BENTO_OIDC_CLIENT_SECRET: oidcFixtureClient.clientSecret,
+                    BENTO_OIDC_ORGANIZATION: oidcFixtureClient.organization,
+                },
+                stdio: ['ignore', stdoutFile.fd, stderrFile.fd],
+            },
         );
-    });
-    return { child, result };
+        const result = new Promise((resolve, reject) => {
+            child.once('error', reject);
+            child.once('close', (code, signal) => resolve({ code, signal }));
+        })
+            .then(async ({ code, signal }) => {
+                const [stdout, stderr] = await Promise.all([
+                    readFile(stdoutPath, 'utf8'),
+                    readFile(stderrPath, 'utf8'),
+                ]);
+                return { code, signal, stdout, stderr };
+            })
+            .finally(() => rm(directory, { recursive: true, force: true }));
+        // The readiness or shutdown path consumes the settled result.
+        void result.catch(() => {});
+        return { child, result };
+    } catch (error) {
+        await rm(directory, { recursive: true, force: true });
+        throw error;
+    } finally {
+        await Promise.all([stdoutFile?.close(), stderrFile?.close()]);
+    }
 }
 
 function request(path, options) {
@@ -68,6 +88,10 @@ function startupDiagnostics({ code, signal, stdout, stderr }) {
         [/(?:nginx:.*(?:\[emerg\]|test failed)|\[emerg\])/, 'nginx-fatal'],
         [/(?:nginx:|\[emerg\]).*Permission denied/, 'nginx-permission-denied'],
         [/(?:nginx:|\[emerg\]).*Address already in use/, 'nginx-bind-in-use'],
+        [
+            /(?:\/dev\/stdout|\/dev\/stderr).*No such device or address/,
+            'nginx-stdio-reopen-failed',
+        ],
         [
             /incomplete MySQL account configuration/,
             'go-mysql-config-incomplete',
@@ -326,7 +350,7 @@ async function checkRuntime() {
     );
     const pending = await authorize(request('/api/oidc/start'), 'pending');
     await stopEntry();
-    entry = startEntry();
+    entry = await startEntry();
     await waitReady();
     await status(session(beforeRestart), 401, 'Session lost on restart');
     await status(callback(pending), 401, 'Transaction lost on restart');
@@ -356,7 +380,7 @@ async function checkRuntime() {
     );
     await status(session(afterRestart), 401, 'Revoked closure cookie');
     await stopEntry();
-    entry = startEntry();
+    entry = await startEntry();
     await waitReady();
     const closed = await authorize(request('/api/oidc/start'), 'closed');
     await status(callback(closed), 401, 'Closed identity denied after restart');
@@ -364,7 +388,7 @@ async function checkRuntime() {
 }
 
 try {
-    entry = startEntry();
+    entry = await startEntry();
     if (missing) {
         const result = await waitExit();
         assert.ok(Number.isInteger(result.code) && result.code !== 0);

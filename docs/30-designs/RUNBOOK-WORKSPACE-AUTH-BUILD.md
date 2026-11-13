@@ -89,31 +89,15 @@ GitHub Actions 环境核验：`gh run view 43193646474 -R thundax-lyp/bento --js
 
 禁止修改：浏览器业务用例、既有检查名称、镜像、生产启动脚本、账号实现、等待时间、断言和测试环境。
 
-现场证据：PR #28，HEAD `f61202be25627f58cae2573613073b9bd69953c8`，Actions run `43352246039`、镜像 job `131645840617`。三个镜像的构建及 API import 成功。新增 smoke 在 `waitReady` 的首轮正常启动阶段报 `Image entrypoint exited before readiness`。Orchestrator patch 步骤随后被跳过。Repository checks 与 Web Chromium E2E 均成功。失败日志没有被启动器捕获的子进程输出，无法确定是 NGINX、Go 账号仓储、TypeScript 入口还是信号退出。复现命令是该 runner 的 `bash deploy/workspace/auth-smoke.sh`。
+现场证据：PR #28 初次在 `f61202be25627f58cae2573613073b9bd69953c8` 的镜像 smoke 失败。诊断提交 `ffa7846386a7e72f9e374ebf12fa17deb22bf826` 的 Actions run `43352912592`、job `131648008295` 再次失败，日志为 `Image entrypoint exited before readiness: exit=1, signal=none, markers=nginx-config-parsed,nginx-fatal`。同 HEAD 的 Repository checks 和 Web Chromium E2E 成功。三个镜像构建和 API import 成功，Orchestrator patch 检查被跳过。
+
+`deploy/workspace/start.sh` 在启动 NGINX、Go 和 TypeScript 子进程前执行 `nginx -t`。当前 smoke 用 Node `spawn` 的 `pipe` 捕获 stdout/stderr，NGINX 配置则通过路径重新打开 `/dev/stdout` 与 `/dev/stderr`。工作假设是 Linux 下重开 Node 的 socket-backed stdio 失败。本机 Darwin 上 Node 子进程 `fstatSync(1)` 确认 `isSocket() === true`、`isFIFO() === false`，但 `openSync("/dev/stdout", "a")` 成功。本机结果只确认 Node 传递的 fd 类型。Linux CI 日志确认 NGINX 配置测试阶段失败，尚无具体 errno。本次以两个普通临时文件代替 Node 管道，并增加精确错误标签。正例、重启和负例全部通过后才完成 T5。
 
 执行：
 
-1. 在 `deploy/workspace/auth-smoke.mjs` 新增 `function startupDiagnostics({ code, signal, stdout, stderr })`。返回由数字退出码（null 显示 `none`）、信号（null 显示 `none`）及固定标签拼成的字符串。按以下顺序匹配合并后的输出，每项只输出标签，不输出原始日志、配置、路径、请求数据、token 或凭据。
-
-    | 匹配 | 输出标签 |
-    | --- | --- |
-    | `nginx: the configuration file` 且含 `syntax is ok` | `nginx-config-parsed` |
-    | `nginx: configuration file` 且含 `test is successful` | `nginx-config-test-ok` |
-    | NGINX 行含 `[emerg]` 或 `test failed` | `nginx-fatal` |
-    | NGINX 行含 `Permission denied` | `nginx-permission-denied` |
-    | NGINX 行含 `Address already in use` | `nginx-bind-in-use` |
-    | `incomplete MySQL account configuration` | `go-mysql-config-incomplete` |
-    | `invalid MySQL account configuration` | `go-mysql-config-invalid` |
-    | `could not initialize MySQL accounts` | `go-mysql-initialize-failed` |
-    | 行同时含 `listen tcp`、`bind:` 和 `address already in use` | `go-bind-in-use` |
-    | `Workspace auth build artifacts are unavailable` | `auth-artifacts-unavailable` |
-    | `Invalid Bento task entry configuration or listener unavailable.` | `task-entry-startup-failed` |
-    | `Bento task entry (mock) listening on` | `task-entry-listening` |
-    | `ERR_MODULE_NOT_FOUND` | `node-module-not-found` |
-    | `Bento local OIDC discovery did not become ready.` | `oidc-discovery-not-ready` |
-
-2. `waitReady` 发现进程已退出时，调用现有 `waitExit()` 等待 stdio 关闭并保留 `Image entrypoint exited before readiness`，在错误消息后拼接 `startupDiagnostics` 的结果。若诊断没有匹配任何固定标签则输出 `no-startup-marker`。保留正常启动、缺产物非零退出及专属诊断的所有既有断言。此次修订只获取诊断。出现失败后按公共恢复规则处理，由作者和独立复审根据新的诊断确认下一项修复。
-3. 运行下列本地静态与聚合验证。若上一轮 Chromium 已通过且与本次的差异只含 RUNBOOK 和镜像 smoke 诊断，记录本地 7 项 Chromium 证据来自 `f61202be25627f58cae2573613073b9bd69953c8`，当前 HEAD 的远端 Chromium 仍须通过。本地镜像诊断修改单独提交，保留 T5 步骤用于失败恢复。推送到同一个 Draft PR #28，核对分支、目标和新 HEAD。镜像 smoke 通过后，在 T6 前置状态记录已通过的 SHA 和 Actions run 链接，删除 T5 并提交。
+1. 仅在 `deploy/workspace/auth-smoke.mjs` 修改日志捕获。导入 `mkdtemp, open, readFile, rm` 自 `node:fs/promises`，`tmpdir` 自 `node:os`，`join` 自 `node:path`。改 `startEntry` 为 async，每次调用使用 `mkdtemp(join(tmpdir(), 'bento-auth-entry-'))`，在该目录独立以 `'a'`、`0o600` 打开 `stdout.log` 和 `stderr.log`。将 `spawn` 的 stdio 固定为 `['ignore', stdoutFile.fd, stderrFile.fd]`，保留原命令和环境。注册既有 error/close 监听后关闭父进程中的两个文件句柄。子进程退出后再读两个 UTF-8 日志并返回原 `{code,signal,stdout,stderr}`，最后删除本次临时目录。文件创建、打开或 spawn 失败时也关闭已打开句柄并清理本次目录。所有三处 `entry = startEntry()` 改为 `entry = await startEntry()`。不打印原始日志。
+2. 保留诊断表、错误前缀和所有启动断言，在 `startupDiagnostics` 的 NGINX 标签后补充 `nginx-stdio-reopen-failed`，只在同一行含 `/dev/stdout` 或 `/dev/stderr` 且含 `No such device or address` 时输出标签。缺产物的负例继续从捕获的 stderr 校验完整固定诊断行和非零数字退出码。保留 NGINX 配置、生产启动脚本、镜像、等待时间和原测试请求。
+3. 执行下列静态与聚合验证。继续引用 `f61202be25627f58cae2573613073b9bd69953c8` 的本地 7 项 Chromium 证据，当前 HEAD 的远端 Chromium 必须通过。修复提交保留 T5，推送同一个 Draft PR #28。若同 HEAD 的镜像 job 失败，保留现场和全部断言，回报退出阶段及标签再复审。镜像 smoke 通过后，在 T6 前置状态记录通过的 SHA 与 Actions 链接，删除 T5 并提交。
 
 验证：
 
