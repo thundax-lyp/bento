@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
 
 const account = 'upload-demo';
@@ -23,12 +26,20 @@ function gate(): { wait: Promise<void>; release: () => void } {
 async function fixture(
     page: Page,
     options: {
+        captureParts?: boolean;
         pauseFirstPut?: Promise<void>;
         pauseFirstComplete?: Promise<void>;
         pauseResumePut?: Promise<void>;
         signedOutAt?: 'sign' | 'cache';
     },
 ) {
+    const parts = new Map<string, Map<number, Buffer>>();
+    const objects = new Map<string, Buffer>();
+    function expectPartNumber(number: number, size: number) {
+        expect(Number.isInteger(number)).toBe(true);
+        expect(number).toBeGreaterThanOrEqual(1);
+        expect(number).toBeLessThanOrEqual(Math.ceil(size / 2));
+    }
     const writes: string[] = [];
     const reads: string[] = [];
     const files = new Map<
@@ -101,6 +112,27 @@ async function fixture(
             files.set(id, file);
             return route.fulfill({ json: file });
         }
+        const attachment =
+            /^\/api\/space\/files\/([^/]+)\/(preview|download)$/.exec(pathname);
+        if (options.captureParts && method === 'GET' && attachment) {
+            const fileId = attachment[1]!;
+            const file = files.get(fileId);
+            const body = objects.get(fileId);
+            expect(file?.project).toBe(project.id);
+            expect(file?.state).toBe('saved');
+            expect(body).toBeDefined();
+            return route.fulfill({
+                body: body!,
+                ...(attachment[2] === 'download'
+                    ? {
+                          headers: {
+                              'content-disposition':
+                                  'attachment; filename="note.txt"',
+                          },
+                      }
+                    : {}),
+            });
+        }
         const id = pathname
             .split('/')
             .at(pathname.startsWith('/fixture-upload/') ? 2 : 4);
@@ -125,7 +157,8 @@ async function fixture(
                 )
                     return route.fulfill({ status: 401, json: {} });
                 const { number } = request.postDataJSON() as { number: number };
-                expect(number).toBe(id === resumeId ? 2 : 1);
+                if (options.captureParts) expectPartNumber(number, file.size);
+                else expect(number).toBe(id === resumeId ? 2 : 1);
                 return route.fulfill({
                     json: {
                         url: '/fixture-upload/' + id + '/' + number,
@@ -134,6 +167,16 @@ async function fixture(
                 });
             }
             if (method === 'PUT') {
+                if (options.captureParts) {
+                    const number = Number(pathname.split('/').at(-1));
+                    expectPartNumber(number, file.size);
+                    const body = request.postDataBuffer();
+                    expect(body).not.toBeNull();
+                    const uploaded =
+                        parts.get(file.id) ?? new Map<number, Buffer>();
+                    uploaded.set(number, body!);
+                    parts.set(file.id, uploaded);
+                }
                 if (file.path === 'first.txt') await options.pauseFirstPut;
                 if (id === resumeId && failResume) {
                     await options.pauseResumePut;
@@ -144,6 +187,21 @@ async function fixture(
             }
             if (method === 'POST' && pathname.endsWith('/complete')) {
                 if (file.path === 'first.txt') await options.pauseFirstComplete;
+                if (options.captureParts) {
+                    const chunks: Buffer[] = [];
+                    for (
+                        let number = 1;
+                        number <= Math.ceil(file.size / 2);
+                        number++
+                    ) {
+                        const part = parts.get(file.id)?.get(number);
+                        expect(part, 'missing part ' + number).toBeDefined();
+                        chunks.push(part!);
+                    }
+                    const body = Buffer.concat(chunks);
+                    expect(body.length).toBe(file.size);
+                    objects.set(file.id, body);
+                }
                 file.state = 'saved';
                 return route.fulfill({ json: file });
             }
@@ -296,4 +354,53 @@ test('缓存上传探测鉴权失效后停止批次', async ({ page }) => {
     ]);
     expect(reads).toEqual(['/api/space/uploads/cached-upload']);
     expect(writes).toEqual([]);
+});
+
+test('上传目录后按层级查看并下载原文件', async ({ page }) => {
+    await fixture(page, { captureParts: true });
+    const temp = await mkdtemp(join(tmpdir(), 'bento-upload-directory-'));
+    const folder = join(temp, 'fixture');
+    const note = Buffer.from('你好\n');
+    try {
+        await mkdir(join(folder, 'nested'), { recursive: true });
+        await writeFile(join(folder, 'nested', 'note.txt'), note);
+        await writeFile(join(folder, 'root.txt'), 'root\n');
+        await page.goto('/space/' + project.id);
+        await page.getByLabel('文件夹', { exact: true }).setInputFiles(folder);
+        await page.getByRole('button', { name: '确认上传' }).click();
+        const results = page.getByRole('list', { name: '上传结果' });
+        await expect(results).toContainText('fixture/nested/note.txt · 已保存');
+        await expect(results).toContainText('fixture/root.txt · 已保存');
+        await page.reload();
+
+        const tree = page.getByRole('list', { name: '已保存文件' });
+        const root = tree.getByRole('list', { name: 'fixture', exact: true });
+        const nested = root.getByRole('list', { name: 'nested', exact: true });
+        const nestedRow = nested.getByRole('listitem');
+        await expect(nestedRow).toHaveCount(1);
+        await expect(
+            nestedRow.getByRole('checkbox', {
+                name: 'fixture/nested/note.txt',
+            }),
+        ).toBeVisible();
+        await expect(nestedRow).toContainText('7 字节');
+        await expect(
+            nested.getByRole('checkbox', { name: 'fixture/root.txt' }),
+        ).toHaveCount(0);
+        const rootRow = root.locator(':scope > li').filter({
+            has: page.getByRole('checkbox', { name: 'fixture/root.txt' }),
+        });
+        await expect(rootRow).toContainText('5 字节');
+
+        await nestedRow.getByRole('button', { name: '预览文本' }).click();
+        await expect(
+            page.getByRole('region', { name: '文本预览' }).locator('pre'),
+        ).toHaveJSProperty('textContent', note.toString());
+        const downloadPromise = page.waitForEvent('download');
+        await nestedRow.getByRole('link', { name: '下载文件' }).click();
+        const download = await downloadPromise;
+        expect(await readFile(await download.path())).toEqual(note);
+    } finally {
+        await rm(temp, { recursive: true, force: true });
+    }
 });
