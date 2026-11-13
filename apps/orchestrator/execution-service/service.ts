@@ -9,7 +9,7 @@ import { SingleHostExecution } from '../openshell/single-host.ts';
 import { unifiedDiff } from './diff.ts';
 import { executionHttp } from './http.ts';
 import { conflict, textSnapshot } from './input.ts';
-import { projectBinding, Store } from './store.ts';
+import { projectBinding, Store, type ProjectDeletionReceipt } from './store.ts';
 import type { TemporalRunOptions, temporalRuns } from './temporal.ts';
 import type {
     Binding,
@@ -82,6 +82,7 @@ export async function serveExecution(options: Options) {
     let importing = false;
     let closeWarmWorker: (() => Promise<void>) | undefined;
     let scheduler: Awaited<ReturnType<typeof temporalRuns>> | undefined;
+    const projectPurges = new Map<string, Promise<ProjectDeletionReceipt>>();
     const purges = new Map<string, Promise<boolean>>();
 
     async function close() {
@@ -94,7 +95,10 @@ export async function serveExecution(options: Options) {
         );
         for (const socket of sockets) socket.destroy();
         await active;
-        await Promise.allSettled(purges.values());
+        await Promise.allSettled([
+            ...purges.values(),
+            ...projectPurges.values(),
+        ]);
         await scheduler?.close();
         await closeWarmWorker?.();
         await Promise.all(closed);
@@ -609,7 +613,11 @@ export async function serveExecution(options: Options) {
                 async (runId) => {
                     stop.signal.throwIfAborted();
                     const run = db.findRun(runId);
-                    if (run.status === 'cancelled') return;
+                    if (
+                        run.status === 'cancelled' ||
+                        db.isProjectDeleting(run.projectId)
+                    )
+                        return;
                     if (importing || [...assigned.values()].includes(runId))
                         throw new Error('Execution host is occupied');
                     const slot = assigned.has(0) ? 1 : 0;
@@ -715,11 +723,57 @@ export async function serveExecution(options: Options) {
             }, delay);
         }
 
+        async function advanceProjectDeletion(
+            owner: string,
+            projectId: string,
+            operationId: string,
+        ): Promise<ProjectDeletionReceipt> {
+            stop.signal.throwIfAborted();
+            const receipt = db.beginProjectDeletion(
+                owner,
+                projectId,
+                operationId,
+            );
+            if (receipt.state !== 'deleting') return receipt;
+            const existing = projectPurges.get(projectId);
+            if (existing) return existing;
+            const runs = db.projectRunIds(projectId);
+            if (
+                (scheduler && active) ||
+                runs.some((run) => [...assigned.values()].includes(run))
+            )
+                return receipt;
+            const task = (async (): Promise<ProjectDeletionReceipt> => {
+                try {
+                    if (scheduler)
+                        for (const run of runs)
+                            if (!(await scheduler.purgeClosed(run)))
+                                return receipt;
+                    if (!host.purge) return receipt;
+                    const binding = db.projectDeletionBinding(
+                        owner,
+                        projectId,
+                        operationId,
+                    );
+                    await execution.purge(binding, host.purge.bind(host));
+                    db.purgeProject(binding, operationId);
+                    return { state: 'deleted' };
+                } catch {
+                    // Retry from the same durable receipt after an unconfirmed cleanup.
+                    return receipt;
+                }
+            })().finally(() => projectPurges.delete(projectId));
+            projectPurges.set(projectId, task);
+            return task;
+        }
+
         function purgeOwner(owner: string) {
             const existing = purges.get(owner);
             if (existing) return existing;
             stop.signal.throwIfAborted();
             db.drainOwner(owner);
+            if (db.hasProjectDeletionInProgress(owner))
+                return Promise.resolve(false);
             const task = (async () => {
                 if ((scheduler && active) || !db.ownerDrained(owner))
                     return false;
@@ -744,6 +798,7 @@ export async function serveExecution(options: Options) {
                     await execution.purge(binding, host.purge.bind(host));
                     db.purgeProject(binding);
                 }
+                db.clearProjectDeletionReceipts(owner);
                 return true;
             })().finally(() => purges.delete(owner));
             purges.set(owner, task);
@@ -751,7 +806,14 @@ export async function serveExecution(options: Options) {
         }
 
         const url = await listen(
-            executionHttp(db, token, wake, purgeOwner, requestCancellation),
+            executionHttp(
+                db,
+                token,
+                wake,
+                purgeOwner,
+                requestCancellation,
+                advanceProjectDeletion,
+            ),
             options.port,
             options.bindHost,
         );

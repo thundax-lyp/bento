@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import type { CompletedPart } from '@aws-sdk/client-s3';
 import { notFound, object, RequestError } from './protocol.ts';
-import type { Backend } from './protocol.ts';
+import type { Backend, ProjectDeletionBlocker } from './protocol.ts';
 import {
     partUrlSeconds,
     spaceObjectKey,
@@ -47,6 +47,38 @@ type FileDeletion = {
     phase: 'checking' | 'deleting' | 'releasing';
 };
 
+type DeletionBlocker = 'upload_pending' | ProjectDeletionBlocker;
+type ProjectDeletion = {
+    spaceId: string;
+    owner: string;
+    operationId: string;
+    executionProjectId: string | null;
+    phase: 'checking' | 'cleaning' | 'deleted';
+};
+const deletionBlockers: DeletionBlocker[] = [
+    'upload_pending',
+    'project_importing',
+    'project_busy',
+];
+const uploadPending = "('preparing','uploading','completing','cleaning')";
+
+function projectBlocked(code: DeletionBlocker) {
+    const messages = {
+        upload_pending: '请先取消并清理未完成的上传。',
+        project_importing: '请等待工作区初始化结束。',
+        project_busy: '项目仍有未结束的任务或正在清理。',
+    };
+    return new RequestError(409, code, messages[code]);
+}
+
+function projectDeletionUnconfirmed() {
+    return new RequestError(
+        503,
+        'project_delete_unconfirmed',
+        '暂无法确认项目删除进度，请重试。',
+    );
+}
+
 function id(value: unknown): string {
     if (
         typeof value !== 'string' ||
@@ -88,6 +120,13 @@ export function mySpace(
         CREATE TABLE IF NOT EXISTS space_projects (
             id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL
         ) STRICT;
+        CREATE TABLE IF NOT EXISTS space_project_deletions (
+            spaceId TEXT PRIMARY KEY, owner TEXT NOT NULL, operationId TEXT NOT NULL UNIQUE,
+            executionProjectId TEXT, phase TEXT NOT NULL CHECK(phase IN ('checking','cleaning','deleted')),
+            lastError TEXT CHECK(lastError IN ('execution_unconfirmed','storage_unconfirmed'))
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS space_draining_owners (owner TEXT PRIMARY KEY) STRICT;
+        CREATE TABLE IF NOT EXISTS space_retired_upload_ids (id TEXT PRIMARY KEY) STRICT;
         CREATE TABLE IF NOT EXISTS space_uploads (
             id TEXT PRIMARY KEY, project TEXT NOT NULL, owner TEXT NOT NULL,
             path TEXT NOT NULL, size INTEGER NOT NULL, manifest TEXT NOT NULL,
@@ -102,10 +141,261 @@ export function mySpace(
         CREATE INDEX IF NOT EXISTS space_owner ON space_uploads(owner, state);
         CREATE INDEX IF NOT EXISTS space_project ON space_uploads(project, state);
     `);
-    const execution = spaceExecution(db, backend, storage.read);
+    const execution = spaceExecution(
+        db,
+        backend,
+        storage.read,
+        requireWritableProject,
+    );
+    const projectAdvances = new Map<
+        string,
+        Promise<{ deleteStatus: 202 | 204 }>
+    >();
     const active = new Set<string>();
     let sweeping: Promise<void> | undefined;
     let closing = false;
+
+    function projectDeletion(owner: string, spaceId: string) {
+        return db
+            .prepare(
+                'SELECT * FROM space_project_deletions WHERE owner=? AND spaceId=?',
+            )
+            .get(owner, spaceId) as ProjectDeletion | undefined;
+    }
+
+    function requireWritableProject(owner: string, spaceId: string): void {
+        if (
+            projectDeletion(owner, spaceId) ||
+            db
+                .prepare('SELECT 1 FROM space_draining_owners WHERE owner=?')
+                .get(owner)
+        )
+            throw projectBlocked('project_busy');
+    }
+
+    function requireReadableProject(owner: string, spaceId: string): void {
+        if (projectDeletion(owner, spaceId)) throw notFound();
+    }
+
+    function spaceImpact(owner: string, spaceId: string) {
+        const binding = execution.projectDeletionInput(owner, spaceId);
+        const counts = db
+            .prepare(
+                `
+            SELECT count(CASE WHEN state IN ('saved','deleting') THEN 1 END) AS fileCount,
+                   count(CASE WHEN state IN ${uploadPending} THEN 1 END) AS uploadCount
+            FROM space_uploads WHERE owner=? AND project=?
+        `,
+            )
+            .get(owner, spaceId) as { fileCount: number; uploadCount: number };
+        return { ...binding, ...counts };
+    }
+
+    async function projectDeletionImpact(owner: string, spaceId: string) {
+        const { importing, projectId, fileCount, uploadCount } = spaceImpact(
+            owner,
+            spaceId,
+        );
+        const blockers = new Set<DeletionBlocker>();
+        if (uploadCount) blockers.add('upload_pending');
+        if (importing) blockers.add('project_importing');
+        let runCount = 0;
+        let diffCount = 0;
+        if (
+            projectId &&
+            projectDeletion(owner, spaceId)?.phase !== 'cleaning'
+        ) {
+            try {
+                const result = await backend(owner, {
+                    kind: 'projectDeletionImpact',
+                    projectId,
+                });
+                if (!('json' in result) || !('blockers' in result.json))
+                    throw new Error('Missing execution impact');
+                ({ runCount, diffCount } = result.json);
+                for (const code of result.json.blockers) blockers.add(code);
+            } catch {
+                const phase = projectDeletion(owner, spaceId)?.phase;
+                if (phase === 'deleted') throw notFound();
+                if (phase !== 'cleaning') throw projectDeletionUnconfirmed();
+            }
+        }
+        if (projectDeletion(owner, spaceId)?.phase === 'deleted')
+            throw notFound();
+        return {
+            fileCount,
+            uploadCount,
+            runCount,
+            diffCount,
+            blockers: deletionBlockers.filter((code) => blockers.has(code)),
+        };
+    }
+
+    function beginProjectCleaning(owner: string, spaceId: string) {
+        db.prepare(
+            "UPDATE space_project_deletions SET phase='cleaning', lastError=NULL WHERE owner=? AND spaceId=?",
+        ).run(owner, spaceId);
+        db.prepare(
+            "UPDATE space_uploads SET state='deleting' WHERE owner=? AND project=? AND state='saved'",
+        ).run(owner, spaceId);
+    }
+
+    async function cleanProject(owner: string, spaceId: string) {
+        const rows = db
+            .prepare(
+                "SELECT * FROM space_uploads WHERE owner=? AND project=? AND state='deleting' ORDER BY rowid",
+            )
+            .all(owner, spaceId) as Upload[];
+        for (const row of rows) {
+            if ((await storage.size(key(row))) !== null)
+                await storage.remove(key(row));
+            if ((await storage.size(key(row))) !== null)
+                throw new Error('Object cleanup pending');
+            setState(row, 'deleted');
+        }
+        commitDeletionChange(() => {
+            db.prepare(
+                'INSERT OR IGNORE INTO space_retired_upload_ids SELECT id FROM space_uploads WHERE owner=? AND project=?',
+            ).run(owner, spaceId);
+            db.prepare(
+                'DELETE FROM space_uploads WHERE owner=? AND project=?',
+            ).run(owner, spaceId);
+            db.prepare(
+                'DELETE FROM space_execution WHERE owner=? AND spaceId=?',
+            ).run(owner, spaceId);
+            db.prepare('DELETE FROM space_projects WHERE owner=? AND id=?').run(
+                owner,
+                spaceId,
+            );
+            db.prepare(
+                "UPDATE space_project_deletions SET phase='deleted',lastError=NULL WHERE owner=? AND spaceId=?",
+            ).run(owner, spaceId);
+        });
+    }
+
+    function advanceProjectDeletion(
+        owner: string,
+        spaceId: string,
+    ): Promise<{ deleteStatus: 202 | 204 }> {
+        const intent = projectDeletion(owner, spaceId);
+        if (!intent) throw notFound();
+        if (intent.phase === 'deleted')
+            return Promise.resolve({ deleteStatus: 204 });
+        const existing = projectAdvances.get(spaceId);
+        if (existing) return existing;
+        const task = (async (): Promise<{ deleteStatus: 202 | 204 }> => {
+            if (intent.phase === 'checking') {
+                try {
+                    if (!intent.executionProjectId)
+                        throw new Error('Missing execution project');
+                    const result = await backend(owner, {
+                        kind: 'advanceProjectDeletion',
+                        projectId: intent.executionProjectId,
+                        operationId: intent.operationId,
+                    });
+                    if (
+                        result.status === 202 &&
+                        'json' in result &&
+                        'state' in result.json &&
+                        result.json.state === 'deleting'
+                    ) {
+                        db.prepare(
+                            'UPDATE space_project_deletions SET lastError=NULL WHERE owner=? AND spaceId=?',
+                        ).run(owner, spaceId);
+                        return { deleteStatus: 202 };
+                    }
+                    if (result.status !== 204)
+                        throw new Error('Invalid execution receipt');
+                } catch (error) {
+                    if (
+                        error instanceof RequestError &&
+                        error.status === 409 &&
+                        (error.code === 'project_busy' ||
+                            error.code === 'project_importing' ||
+                            error.code === 'owner_closed')
+                    ) {
+                        commitDeletionChange(() => {
+                            db.prepare(
+                                'DELETE FROM space_project_deletions WHERE owner=? AND spaceId=?',
+                            ).run(owner, spaceId);
+                        });
+                        throw projectBlocked(
+                            error.code === 'project_importing'
+                                ? 'project_importing'
+                                : 'project_busy',
+                        );
+                    }
+                    db.prepare(
+                        "UPDATE space_project_deletions SET lastError='execution_unconfirmed' WHERE owner=? AND spaceId=?",
+                    ).run(owner, spaceId);
+                    throw projectDeletionUnconfirmed();
+                }
+                commitDeletionChange(() =>
+                    beginProjectCleaning(owner, spaceId),
+                );
+            }
+            try {
+                await cleanProject(owner, spaceId);
+                return { deleteStatus: 204 };
+            } catch {
+                db.prepare(
+                    "UPDATE space_project_deletions SET lastError='storage_unconfirmed' WHERE owner=? AND spaceId=?",
+                ).run(owner, spaceId);
+                return { deleteStatus: 202 };
+            }
+        })().finally(() => projectAdvances.delete(spaceId));
+        projectAdvances.set(spaceId, task);
+        return task;
+    }
+
+    function deleteProject(owner: string, spaceId: string) {
+        commitDeletionChange(() => {
+            if (projectDeletion(owner, spaceId)) return;
+            const { importing, projectId, uploadCount } = spaceImpact(
+                owner,
+                spaceId,
+            );
+            requireWritableProject(owner, spaceId);
+            if (uploadCount) throw projectBlocked('upload_pending');
+            if (importing) throw projectBlocked('project_importing');
+            if (
+                db
+                    .prepare(
+                        `
+                SELECT 1 FROM space_file_deletions d JOIN space_uploads u ON u.id=d.fileId
+                WHERE u.owner=? AND u.project=?
+            `,
+                    )
+                    .get(owner, spaceId)
+            )
+                throw projectDeletionUnconfirmed();
+            db.prepare(
+                'INSERT INTO space_project_deletions VALUES (?,?,?,?,?,NULL)',
+            ).run(
+                spaceId,
+                owner,
+                randomUUID(),
+                projectId,
+                projectId ? 'checking' : 'cleaning',
+            );
+            if (!projectId) beginProjectCleaning(owner, spaceId);
+        });
+        return advanceProjectDeletion(owner, spaceId);
+    }
+
+    function drain(owner: string) {
+        db.prepare(
+            'INSERT OR IGNORE INTO space_draining_owners VALUES (?)',
+        ).run(owner);
+        return (
+            execution.drain(owner) &&
+            !db
+                .prepare(
+                    "SELECT 1 FROM space_project_deletions WHERE owner=? AND phase<>'deleted'",
+                )
+                .get(owner)
+        );
+    }
 
     function upload(owner: string, uploadId: string): Upload {
         const row = db
@@ -171,6 +461,15 @@ export function mySpace(
                         'SELECT id FROM space_projects WHERE id = ? AND owner = ?',
                     )
                     .get(project, owner)
+            )
+                throw notFound();
+            requireWritableProject(owner, project);
+            if (
+                db
+                    .prepare(
+                        'SELECT 1 FROM space_retired_upload_ids WHERE id=?',
+                    )
+                    .get(uploadId)
             )
                 throw notFound();
             const existing = db
@@ -365,7 +664,7 @@ export function mySpace(
         row: Upload,
         intent: FileDeletion,
         kind: 'acquireFileDeleteHold' | 'releaseFileDeleteHold',
-    ) {
+    ): Promise<'held' | 'denied' | 'released'> {
         if (!intent.executionProjectId)
             throw new Error('Missing execution project for file deletion');
         const result = await backend(row.owner, {
@@ -375,7 +674,10 @@ export function mySpace(
         });
         if (!('json' in result) || !('state' in result.json))
             throw new Error('Missing file deletion hold receipt');
-        return result.json.state;
+        const { state } = result.json;
+        if (state !== 'held' && state !== 'denied' && state !== 'released')
+            throw new Error('Unexpected file deletion hold state');
+        return state;
     }
 
     async function checkFileDeletion(row: Upload): Promise<'held' | 'denied'> {
@@ -435,6 +737,7 @@ export function mySpace(
 
     async function deleteFile(owner: string, fileId: string) {
         const row = upload(owner, fileId);
+        requireWritableProject(owner, row.project);
         if (row.state === 'deleted') return { deleteStatus: 204 } as const;
         if (row.state === 'deleting') return { deleteStatus: 202 } as const;
         if (row.state !== 'saved') throw notFound();
@@ -510,6 +813,15 @@ export function mySpace(
                 // Keep the original intent and retry its last durable phase.
             });
         }
+        const projects = db
+            .prepare(
+                "SELECT * FROM space_project_deletions WHERE phase<>'deleted' ORDER BY rowid",
+            )
+            .all() as ProjectDeletion[];
+        for (const { owner, spaceId } of projects) {
+            if (closing) return;
+            await advanceProjectDeletion(owner, spaceId).catch(() => undefined);
+        }
     }
     const timer = setInterval(() => {
         if (closing || sweeping) return;
@@ -530,7 +842,9 @@ export function mySpace(
         if (path === '/api/space' && method === 'GET') {
             const projects = db
                 .prepare(
-                    'SELECT id, name FROM space_projects WHERE owner = ? ORDER BY rowid DESC',
+                    `SELECT p.id, p.name, CASE WHEN d.phase IS NOT NULL THEN 'deleting' END AS state
+                     FROM space_projects p LEFT JOIN space_project_deletions d ON d.spaceId=p.id
+                     WHERE p.owner=? ORDER BY p.rowid DESC`,
                 )
                 .all(owner);
             const uploads = db
@@ -549,7 +863,11 @@ export function mySpace(
                     reserved += row.size;
             }
             return {
-                projects,
+                projects: projects.map(({ id, name, state }) => ({
+                    id,
+                    name,
+                    ...(state ? { state: 'deleting' as const } : {}),
+                })),
                 uploads: uploads.map(view),
                 quota,
                 fileLimit,
@@ -565,6 +883,22 @@ export function mySpace(
                 typeof input.name === 'string' ? input.name.trim() : '';
             if (!name || name.length > 120 || /\p{Cc}/u.test(name))
                 throw invalid('项目名称无效。');
+            if (
+                db
+                    .prepare(
+                        'SELECT 1 FROM space_draining_owners WHERE owner=?',
+                    )
+                    .get(owner)
+            )
+                throw projectBlocked('project_busy');
+            if (
+                db
+                    .prepare(
+                        "SELECT 1 FROM space_project_deletions WHERE spaceId=? AND phase='deleted'",
+                    )
+                    .get(projectId)
+            )
+                throw notFound();
             db.prepare(
                 'INSERT OR IGNORE INTO space_projects VALUES (?, ?, ?)',
             ).run(projectId, owner, name);
@@ -582,8 +916,21 @@ export function mySpace(
         const [, , , group, rawId, action, ...rest] = path.split('/');
         if (rest.length) throw notFound();
         const resource = id(rawId);
-        if (group === 'projects' && action === undefined && method === 'GET')
-            return execution.detail(owner, resource);
+        if (group === 'projects' && action === undefined && method === 'GET') {
+            const detail = execution.detail(owner, resource);
+            return projectDeletion(owner, resource)
+                ? {
+                      ...detail,
+                      state: 'deleting',
+                      files: [],
+                      execution: { state: 'uninitialized' },
+                  }
+                : detail;
+        }
+        if (group === 'projects' && action === 'deletion' && method === 'GET')
+            return projectDeletionImpact(owner, resource);
+        if (group === 'projects' && action === undefined && method === 'DELETE')
+            return deleteProject(owner, resource);
         if (
             group === 'projects' &&
             action === 'execution' &&
@@ -616,6 +963,7 @@ export function mySpace(
             method === 'GET'
         ) {
             const row = upload(owner, resource);
+            requireReadableProject(owner, row.project);
             if (row.state !== 'saved') throw notFound();
             if (action === 'preview' && row.size > previewLimit)
                 throw new RequestError(
@@ -630,12 +978,14 @@ export function mySpace(
                           key(row),
                           row.path.split('/').at(-1)!,
                       );
+            requireReadableProject(owner, row.project);
             if (upload(owner, resource).state !== 'saved') throw notFound();
             return { redirect };
         }
         if (group !== 'uploads') throw notFound();
         if (!action && method === 'GET') {
             const row = upload(owner, resource);
+            requireReadableProject(owner, row.project);
             return {
                 ...view(row),
                 parts:
@@ -649,6 +999,7 @@ export function mySpace(
         if (method !== 'POST') throw notFound();
         return locked(resource, async () => {
             let row = upload(owner, resource);
+            requireWritableProject(owner, row.project);
             if (action === 'complete') return view(await finish(row));
             if (action === 'cancel') {
                 if (['saved', 'completing'].includes(row.state))
@@ -696,8 +1047,9 @@ export function mySpace(
     return {
         origin: storage.origin,
         route,
-        drain: execution.drain,
+        drain,
         async purge(owner: string) {
+            if (!drain(owner)) return false;
             const rows = db
                 .prepare('SELECT * FROM space_uploads WHERE owner = ?')
                 .all(owner) as Upload[];
@@ -715,9 +1067,16 @@ export function mySpace(
                         );
                     if ((await storage.size(key(row))) !== null)
                         await storage.remove(key(row));
-                    db.prepare(
-                        'DELETE FROM space_uploads WHERE id = ? AND owner = ?',
-                    ).run(row.id, owner);
+                    if ((await storage.size(key(row))) !== null)
+                        throw new Error('Object cleanup pending');
+                    commitDeletionChange(() => {
+                        db.prepare(
+                            'INSERT OR IGNORE INTO space_retired_upload_ids VALUES (?)',
+                        ).run(row.id);
+                        db.prepare(
+                            'DELETE FROM space_uploads WHERE id=? AND owner=?',
+                        ).run(row.id, owner);
+                    });
                 });
             }
             db.exec('BEGIN IMMEDIATE');
@@ -728,6 +1087,9 @@ export function mySpace(
                 db.prepare('DELETE FROM space_projects WHERE owner = ?').run(
                     owner,
                 );
+                db.prepare(
+                    'DELETE FROM space_project_deletions WHERE owner=?',
+                ).run(owner);
                 db.exec('COMMIT');
             } catch (error) {
                 db.exec('ROLLBACK');
@@ -738,7 +1100,11 @@ export function mySpace(
         async close() {
             closing = true;
             clearInterval(timer);
-            await Promise.all([sweeping, execution.close()]);
+            await Promise.allSettled([
+                sweeping,
+                execution.close(),
+                ...projectAdvances.values(),
+            ]);
             db.close();
         },
     };

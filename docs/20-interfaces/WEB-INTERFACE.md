@@ -63,7 +63,7 @@
 | `POST /api/space/uploads/{uploadId}/cancel`   | `{}`                          | `200 Upload`，返回当前清理结果                                         |
 | `GET /api/space/files/{fileId}/download`      | 无                            | `302 Location`，指向原文件附件                                         |
 
-- `projects[]` 的元素为 `{id, name}`。名称去首尾空白后长度为 1–120，禁止控制字符。复用同一创建 ID 时，名称必须一致。
+- `projects[]` 的元素为 `{id, name}`。清理期间附加 `state:"deleting"`。名称去首尾空白后长度为 1–120，禁止控制字符。复用同一创建 ID 时，名称必须一致。
 - `Upload = {id, project, path, size, state, expires}`。其中 `project` 为 `spaceId`。文件树由 `state = saved` 的记录按 `path` 生成。路径使用相对路径和 `/`，最长 1024 个 UTF-16 码元。拒绝空段、点段、反斜杠、控制字符、重复路径及文件与目录冲突。
 - `quota = 10_000_000_000`，`fileLimit = 4_000_000_000`。可用额度为 `quota - saved - reserved`。`partSize` 由服务器返回，当前为 16 MiB。单文件大小允许为 0。
 - `checksums` 按分块编号顺序列出 Base64 编码的 SHA-256，每块一个。分块数为 `ceil(size / partSize)`，空文件提交空数组，无需请求分块签名。同一上传 ID 重试须使用相同项目、路径、大小和摘要清单。
@@ -84,15 +84,16 @@
 | -------------------------------------------- | ---- | --------------------------------------------------------------------------------------------------------- |
 | `GET /api/space/projects/{spaceId}`          | 无   | `200 {id,name,execution,files}`。文件元素为 `{id,path,size}`，仅列已保存且可访问的文件。已实现。          |
 | `GET /api/space/files/{fileId}/preview`      | 无   | `302 Location`，跳转私有对象的短期读地址，浏览器以严格 UTF-8 解码并仅作纯文本渲染。最多 256 KiB。已实现。 |
-| `GET /api/space/projects/{spaceId}/deletion` | 无   | `200 {fileCount,uploadCount,runCount,diffCount,blockers}`。用于确认提示。                                 |
+| `GET /api/space/projects/{spaceId}/deletion` | 无   | `200 {fileCount,uploadCount,runCount,diffCount,blockers}`。用于确认提示。已实现。                         |
 | `DELETE /api/space/files/{fileId}`           | 无   | `202 {state:"deleting"}` 或无正文 `204`。已实现。                                                         |
-| `DELETE /api/space/projects/{spaceId}`       | 无   | `202 {state:"deleting"}` 或 `204` 已完成。                                                                |
+| `DELETE /api/space/projects/{spaceId}`       | 无   | `202 {state:"deleting"}` 或无正文 `204` 已完成。已实现。                                                  |
 
 - `blockers` 为稳定错误码数组，包含 `project_busy`、`upload_pending` 或 `project_importing`，没有阻塞时为空。其中 `uploadCount` 为尚未清理的上传数，`diffCount` 统计已发布补丁，包括零字节补丁。预检查仅为提示。真正删除时重新检查。
+- 项目 DELETE 仅接受同源、已授权请求。未清理上传、初始化和未终结 Run 分别返回 `409 upload_pending`、`409 project_importing` 和 `409 project_busy`。执行门禁未确认或单文件清理尚未结束时返回 `503 project_delete_unconfirmed`，可用原项目 ID 重试。清理中的项目详情附加 `state:"deleting"`，文件和执行入口从详情隐藏。项目完成后，详情与影响预检查返回 `404 not_found`，原账号可继续用 DELETE 回读 `204`。
 - 删除进入 `deleting` 后停止给待删资源签发新的访问地址。重复同一删除可查询原进度，已完成对原账号返回 `204`。项目删除包含其上传与文件、绑定的执行项目、历史任务和补丁。单个空间文件的删除保留历史任务和补丁。
 - 单文件删除仅接受同源、已授权请求。初始化引用返回 `409 project_importing`，有未结束 Run 使用来源时返回 `409 project_busy`。门禁结果未确认返回 `503 file_delete_unconfirmed`，可用原文件 ID 重试。越权、资源不存在和不可删除的上传状态同为 `404 not_found`。
 - 空间列表以 `deleting` 显示清理进度，清理期间计入已保存用量。确认对象不可读并释放关联门禁后，记录从空间列表移除，额度只回收一次。原账号用同文件 ID 重试返回 `204`。
-- 只有原账号的 `saved` 文件可预览，越权、未保存或不存在统一返回 `404 not_found`。预览地址有效 300 秒。元数据超限返回 `413 preview_too_large`，浏览器也检查实际读取字节。超限或无法严格解码为 UTF-8 时显示原因并保留原附件下载。
+- 已清理上传的 ID 在空间中全局保留为不计费的记录，禁止再次用于上传。只有原账号的 `saved` 文件可预览，越权、未保存或不存在统一返回 `404 not_found`。预览地址有效 300 秒。元数据超限返回 `413 preview_too_large`，浏览器也检查实际读取字节。超限或无法严格解码为 UTF-8 时显示原因并保留原附件下载。
 
 ## 执行输入与任务 · WEB-04 / WEB-06
 
@@ -128,13 +129,16 @@
 
 ### 私有执行接口与目标扩展
 
-| 方法与路径                                                                 | 契约                                                                                                                                                          |
-| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `POST /v1/projects`                                                        | 新增可选 `Idempotency-Key`。启用时按 owner 和提交键绑定输入，首次 `201 Project`，同键同输入重试 `200 Project`，同键异内容 `409`。旧调用保留原行为。已实现。   |
-| `POST /v1/projects/{projectId}/runs/{runId}/cancel`                        | 无正文。受信服务身份和 owner 校验。成功及重复返回 `200 Run`，状态冲突为 `409 run_not_cancellable`。                                                           |
-| `GET /v1/projects/{projectId}/runs/{runId}`                                | 只在详情返回已持久化的 `prompt`。任务列表保持现有形态。已实现。                                                                                               |
-| `POST / DELETE /v1/projects/{projectId}/file-deletion-holds/{operationId}` | 仅服务身份与项目 owner 可用，无请求体。原键返回 `200 {state}`，state 为 `held`、`denied` 或 `released`。取得门禁与 Run 入队互斥。释放后同键不可重取。已实现。 |
-| `DELETE /v1/projects/{projectId}`                                          | 在执行服务原子检查未结束任务并关停新写入。清理中 `202 {state:"deleting"}`，清理完 `204`。同 owner 重试可查询原删除结果。目标接口。                            |
+| 方法与路径                                                                 | 契约                                                                                                                                                                                |
+| -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /v1/projects`                                                        | 新增可选 `Idempotency-Key`。启用时按 owner 和提交键绑定输入，首次 `201 Project`，同键同输入重试 `200 Project`，同键异内容 `409`。旧调用保留原行为。已实现。                         |
+| `POST /v1/projects/{projectId}/runs/{runId}/cancel`                        | 无正文。受信服务身份和 owner 校验。成功及重复返回 `200 Run`，状态冲突为 `409 run_not_cancellable`。                                                                                 |
+| `GET /v1/projects/{projectId}/runs/{runId}`                                | 只在详情返回已持久化的 `prompt`。任务列表保持现有形态。已实现。                                                                                                                     |
+| `POST / DELETE /v1/projects/{projectId}/file-deletion-holds/{operationId}` | 仅服务身份与项目 owner 可用，无请求体。原键返回 `200 {state}`，state 为 `held`、`denied` 或 `released`。取得门禁与 Run 入队互斥。释放后同键不可重取。已实现。                       |
+| `GET /v1/projects/{projectId}/deletion`                                    | 仅服务身份与项目 owner 可用。返回 `200 {runCount,diffCount,blockers}`，阻断码限 `project_importing` 和 `project_busy`。                                                             |
+| `DELETE /v1/projects/{projectId}`                                          | 无正文，服务身份、owner 和单一 `Idempotency-Key` 校验。在执行服务原子检查未结束任务并冻结新写入。清理中 `202 {state:"deleting"}`，清理完无正文 `204`。同 owner 按原键重试。已实现。 |
+
+执行项目删除键为个人端 API 持久化的 UUID v4。已受理后改用其他键返回 `409 idempotency_conflict`。账号正在清理时，新操作返回 `409 owner_closed`，已有回执仍可回读至账号清理完成。导入和未终结 Run（含取消中、待核对）分别返回 `409 project_importing` 和 `409 project_busy`。
 
 ## 错误语义与兼容
 

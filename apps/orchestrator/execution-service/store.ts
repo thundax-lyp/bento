@@ -57,6 +57,11 @@ const runView = ({
 const now = () => new Date().toISOString();
 type FileDeleteHold = { state: 'held' | 'denied' | 'released' };
 
+export type ProjectDeletionBlocker = 'project_importing' | 'project_busy';
+export type ProjectDeletionReceipt =
+    | { state: 'denied'; code: ProjectDeletionBlocker }
+    | { state: 'deleting' | 'deleted' };
+
 const pending = "('queued','running','recovering','cancelling','needs_review')";
 
 export function projectBinding(project: Project): Binding {
@@ -88,6 +93,15 @@ export class Store {
             );
             CREATE INDEX IF NOT EXISTS projects_owner ON projects(owner);
             CREATE TABLE IF NOT EXISTS draining_owners (owner TEXT PRIMARY KEY);
+            CREATE TABLE IF NOT EXISTS project_deletions (
+                projectId TEXT NOT NULL, operationId TEXT NOT NULL,
+                owner TEXT NOT NULL, state TEXT NOT NULL, code TEXT,
+                PRIMARY KEY(projectId, operationId),
+                CHECK ((state='denied' AND code IS NOT NULL AND code IN ('project_importing','project_busy'))
+                    OR (state IN ('deleting','deleted') AND code IS NULL))
+            ) STRICT;
+            CREATE UNIQUE INDEX IF NOT EXISTS project_deletion_accepted
+                ON project_deletions(projectId) WHERE state IN ('deleting','deleted');
             CREATE TABLE IF NOT EXISTS project_requests (
                 owner TEXT NOT NULL, key TEXT NOT NULL, digest TEXT NOT NULL,
                 projectId TEXT NOT NULL REFERENCES projects(id), PRIMARY KEY(owner,key)
@@ -164,10 +178,29 @@ export class Store {
             .map((row) => row.id as string);
     }
 
-    purgeProject(binding: Binding) {
+    purgeProject(binding: Binding, operationId?: string) {
         this.db.exec('BEGIN IMMEDIATE');
         try {
-            this.ownedProject(binding.tenant, binding.project);
+            const actual = operationId
+                ? this.projectDeletionBinding(
+                      binding.tenant,
+                      binding.project,
+                      operationId,
+                  )
+                : projectBinding(
+                      this.ownedProject(binding.tenant, binding.project),
+                  );
+            if (
+                actual.session !== binding.session ||
+                actual.sandbox !== binding.sandbox ||
+                actual.volume !== binding.volume
+            )
+                throw missing();
+            if (!operationId && this.isProjectDeleting(binding.project))
+                throw conflict(
+                    'project_busy',
+                    'Project deletion is in progress.',
+                );
             for (const table of [
                 'run_dispatches',
                 'run_reviews',
@@ -189,11 +222,131 @@ export class Store {
             this.db
                 .prepare('DELETE FROM projects WHERE id = ? AND owner = ?')
                 .run(binding.project, binding.tenant);
+            if (operationId)
+                this.db
+                    .prepare(
+                        "UPDATE project_deletions SET state='deleted' WHERE projectId=? AND operationId=?",
+                    )
+                    .run(binding.project, operationId);
             this.db.exec('COMMIT');
         } catch (error) {
             this.db.exec('ROLLBACK');
             throw error;
         }
+    }
+
+    isProjectDeleting(projectId: string): boolean {
+        return !!this.db
+            .prepare(
+                "SELECT 1 FROM project_deletions WHERE projectId=? AND state='deleting'",
+            )
+            .get(projectId);
+    }
+
+    private projectDeletionBlockers(
+        project: Project,
+    ): ProjectDeletionBlocker[] {
+        const blockers: ProjectDeletionBlocker[] = [];
+        if (project.status === 'importing') blockers.push('project_importing');
+        if (
+            this.db
+                .prepare(
+                    `SELECT 1 FROM runs WHERE projectId=? AND status IN ${pending}`,
+                )
+                .get(project.id) ||
+            this.db
+                .prepare(
+                    "SELECT 1 FROM file_delete_holds WHERE projectId=? AND state='held'",
+                )
+                .get(project.id)
+        )
+            blockers.push('project_busy');
+        return blockers;
+    }
+
+    projectDeletionImpact(owner: string, projectId: string) {
+        const project = this.ownedProject(owner, projectId);
+        const { runCount, diffCount } = this.db
+            .prepare(
+                "SELECT count(*) AS runCount, count(CASE WHEN status='succeeded' AND diff IS NOT NULL THEN 1 END) AS diffCount FROM runs WHERE projectId=?",
+            )
+            .get(projectId) as { runCount: number; diffCount: number };
+        return {
+            runCount,
+            diffCount,
+            blockers: this.projectDeletionBlockers(project),
+        };
+    }
+
+    beginProjectDeletion(
+        owner: string,
+        projectId: string,
+        operationId: string,
+    ): ProjectDeletionReceipt {
+        return this.write(() => {
+            const prior = this.db
+                .prepare(
+                    'SELECT owner,state,code FROM project_deletions WHERE projectId=? AND operationId=?',
+                )
+                .get(projectId, operationId) as
+                (ProjectDeletionReceipt & { owner: string }) | undefined;
+            if (prior) {
+                if (prior.owner !== owner) throw missing();
+                return prior.state === 'denied'
+                    ? { state: prior.state, code: prior.code }
+                    : { state: prior.state };
+            }
+            const accepted = this.db
+                .prepare(
+                    "SELECT owner FROM project_deletions WHERE projectId=? AND state IN ('deleting','deleted')",
+                )
+                .get(projectId);
+            if (accepted) {
+                if (accepted.owner !== owner) throw missing();
+                throw conflict(
+                    'idempotency_conflict',
+                    'Project already has a different deletion operation.',
+                );
+            }
+            const project = this.ownedProject(owner, projectId);
+            this.requireOpenOwner(owner);
+            const [code] = this.projectDeletionBlockers(project);
+            const state = code ? 'denied' : 'deleting';
+            this.db
+                .prepare('INSERT INTO project_deletions VALUES (?,?,?,?,?)')
+                .run(projectId, operationId, owner, state, code ?? null);
+            return code ? { state: 'denied', code } : { state: 'deleting' };
+        });
+    }
+
+    projectDeletionBinding(
+        owner: string,
+        projectId: string,
+        operationId: string,
+    ): Binding {
+        if (
+            !this.db
+                .prepare(
+                    "SELECT 1 FROM project_deletions WHERE owner=? AND projectId=? AND operationId=? AND state='deleting'",
+                )
+                .get(owner, projectId, operationId)
+        )
+            throw missing();
+        return projectBinding(this.ownedProject(owner, projectId));
+    }
+
+    hasProjectDeletionInProgress(owner: string): boolean {
+        return !!this.db
+            .prepare(
+                "SELECT 1 FROM project_deletions WHERE owner=? AND state='deleting'",
+            )
+            .get(owner);
+    }
+
+    clearProjectDeletionReceipts(owner: string): void {
+        this.db
+            .prepare('DELETE FROM project_deletions WHERE owner=?')
+            .run(owner);
     }
 
     createProject(
@@ -218,6 +371,8 @@ export class Store {
                 )
                 .get(owner, key) as
                 { digest: string; projectId: string } | undefined;
+            if (prior && this.isProjectDeleting(prior.projectId))
+                throw missing();
             if (prior && prior.digest !== digest)
                 throw conflict(
                     'idempotency_conflict',
@@ -277,13 +432,17 @@ export class Store {
     }
 
     project(owner: string, id: string) {
-        return projectView(this.ownedProject(owner, id));
+        const project = this.ownedProject(owner, id);
+        if (this.isProjectDeleting(id)) throw missing();
+        return projectView(project);
     }
 
     projects(owner: string) {
         return (
             this.db
-                .prepare('SELECT * FROM projects WHERE owner=? ORDER BY rowid')
+                .prepare(
+                    "SELECT p.* FROM projects p WHERE owner=? AND NOT EXISTS (SELECT 1 FROM project_deletions d WHERE d.projectId=p.id AND d.state='deleting') ORDER BY p.rowid",
+                )
                 .all(owner) as Project[]
         ).map(projectView);
     }
@@ -312,6 +471,7 @@ export class Store {
                     'SELECT state FROM file_delete_holds WHERE projectId=? AND operationId=?',
                 )
                 .get(projectId, operationId) as FileDeleteHold | undefined;
+            if (this.isProjectDeleting(projectId)) throw missing();
             if (prior) return prior;
             this.requireOpenOwner(owner);
             const busy = this.db
@@ -349,6 +509,12 @@ export class Store {
         });
     }
 
+    requireRunProject(owner: string, projectId: string): void {
+        this.ownedProject(owner, projectId);
+        if (this.isProjectDeleting(projectId))
+            throw conflict('project_busy', 'Project deletion is in progress.');
+    }
+
     addRun(owner: string, projectId: string, key: string, prompt: string) {
         return this.write(() => this.enqueueRun(owner, projectId, key, prompt));
     }
@@ -359,6 +525,7 @@ export class Store {
         key: string,
         prompt: string,
     ) {
+        this.requireRunProject(owner, projectId);
         this.requireOpenOwner(owner);
         const project = this.ownedProject(owner, projectId);
         const previous = this.db
@@ -433,7 +600,7 @@ export class Store {
     }
 
     private ownedRun(owner: string, project: string, id: string) {
-        this.ownedProject(owner, project);
+        this.project(owner, project);
         const row = this.db
             .prepare('SELECT * FROM runs WHERE id=? AND projectId=?')
             .get(id, project);
@@ -442,7 +609,7 @@ export class Store {
     }
 
     runs(owner: string, project: string) {
-        this.ownedProject(owner, project);
+        this.project(owner, project);
         return (
             this.db
                 .prepare('SELECT * FROM runs WHERE projectId=? ORDER BY rowid')

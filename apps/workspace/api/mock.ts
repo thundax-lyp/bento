@@ -1,6 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { conflict, notFound } from './protocol.ts';
-import type { Backend, FileDeleteHold, Project, Run } from './protocol.ts';
+import {
+    conflict,
+    notFound,
+    RequestError,
+    projectDeletionConflicts,
+} from './protocol.ts';
+import type {
+    Backend,
+    FileDeleteHold,
+    Project,
+    ProjectDeletionBlocker,
+    Run,
+} from './protocol.ts';
 
 type MockProject = {
     ownerId: string;
@@ -70,6 +81,16 @@ function patch(files: Map<string, string>): string {
 export function mockBackend(): Backend {
     const projects = new Map<string, MockProject>();
     const imports = new Map<string, { input: string; project: Project }>();
+    const deletions = new Map<
+        string,
+        Map<
+            string,
+            {
+                owner: string;
+                code?: ProjectDeletionBlocker;
+            }
+        >
+    >();
     const draining = new Set<string>();
     const queue: Job[] = [];
     let busy = false;
@@ -122,6 +143,27 @@ export function mockBackend(): Backend {
         }, 2100).unref();
     }
 
+    function deletionBlockers(project: MockProject): ProjectDeletionBlocker[] {
+        const blockers: ProjectDeletionBlocker[] = [];
+        if (project.project.status === 'importing')
+            blockers.push('project_importing');
+        if (
+            [...project.deletionHolds.values()].includes('held') ||
+            [...project.runs.values()].some(
+                ({ run }) =>
+                    !['succeeded', 'failed', 'cancelled'].includes(run.status),
+            )
+        )
+            blockers.push('project_busy');
+        return blockers;
+    }
+
+    function rejectDeletion(
+        code: keyof typeof projectDeletionConflicts,
+    ): never {
+        throw new RequestError(409, code, projectDeletionConflicts[code]);
+    }
+
     return async (ownerId, operation) => {
         if (operation.kind === 'purgeOwner') {
             draining.add(ownerId);
@@ -144,6 +186,13 @@ export function mockBackend(): Backend {
             for (const item of owned) projects.delete(item.project.id);
             for (const [key, item] of imports)
                 if (!projects.has(item.project.id)) imports.delete(key);
+            for (const [projectId, receipts] of deletions)
+                if (
+                    [...receipts.values()].some(
+                        (receipt) => receipt.owner === ownerId,
+                    )
+                )
+                    deletions.delete(projectId);
             return { status: 200, json: { complete: true } };
         }
         if (
@@ -191,8 +240,51 @@ export function mockBackend(): Backend {
             return { status: 201, json: project };
         }
 
+        if (operation.kind === 'advanceProjectDeletion') {
+            const { projectId, operationId } = operation;
+            const receipts = deletions.get(projectId) ?? new Map();
+            const prior = receipts.get(operationId);
+            if (prior) {
+                if (prior.owner !== ownerId) throw notFound();
+                if (prior.code) rejectDeletion(prior.code);
+                return { status: 204 };
+            }
+            const accepted = [...receipts.values()].find(
+                (receipt) => !receipt.code,
+            );
+            if (accepted) {
+                if (accepted.owner !== ownerId) throw notFound();
+                rejectDeletion('idempotency_conflict');
+            }
+            const project = projects.get(projectId);
+            if (!project || project.ownerId !== ownerId) throw notFound();
+            if (draining.has(ownerId)) rejectDeletion('owner_closed');
+            const [code] = deletionBlockers(project);
+            receipts.set(operationId, {
+                owner: ownerId,
+                ...(code ? { code } : {}),
+            });
+            deletions.set(projectId, receipts);
+            if (code) rejectDeletion(code);
+            projects.delete(projectId);
+            for (const [key, item] of imports)
+                if (item.project.id === projectId) imports.delete(key);
+            return { status: 204 };
+        }
+
         const project = projects.get(operation.projectId);
         if (!project || project.ownerId !== ownerId) throw notFound();
+        if (operation.kind === 'projectDeletionImpact')
+            return {
+                status: 200,
+                json: {
+                    runCount: project.runs.size,
+                    diffCount: [...project.runs.values()].filter(
+                        ({ run }) => run.status === 'succeeded',
+                    ).length,
+                    blockers: deletionBlockers(project),
+                },
+            };
         if (operation.kind === 'releaseFileDeleteHold') {
             project.deletionHolds.set(operation.operationId, 'released');
             return { status: 200, json: { state: 'released' } };

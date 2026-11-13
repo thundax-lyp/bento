@@ -12,11 +12,14 @@ import {
     RequestError,
     runInput,
 } from './input.ts';
-import type { Store } from './store.ts';
+import type { ProjectDeletionReceipt, Store } from './store.ts';
 
 const digest = (value: string) => createHash('sha256').update(value).digest();
 const maxProjectBody = 6 * 1024 * 1024 + 3 * 1024 * 1024;
 const maxRunBody = 128 * 1024;
+
+const uuidV4 =
+    /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/;
 
 function send(res: ServerResponse, status: number, body: string, type: string) {
     res.writeHead(status, {
@@ -61,6 +64,11 @@ export function executionHttp(
     wake: () => void,
     purgeOwner: (owner: string) => Promise<boolean>,
     requestCancellation: Store['cancelQueuedRun'],
+    advanceProjectDeletion: (
+        owner: string,
+        projectId: string,
+        operationId: string,
+    ) => Promise<ProjectDeletionReceipt>,
 ) {
     const authorization = digest('Bearer ' + token);
     const server = createServer(async (req, res) => {
@@ -138,6 +146,16 @@ export function executionHttp(
                 throw missing();
             }
 
+            const impact = /^\/v1\/projects\/([^/]+)\/deletion$/.exec(
+                pathname ?? '',
+            );
+            if (impact?.[1] && req.method === 'GET')
+                return json(
+                    res,
+                    200,
+                    store.projectDeletionImpact(owner, impact[1]),
+                );
+
             const route =
                 /^\/v1\/projects\/([^/]+)(?:\/(runs)(?:\/([^/]+)(\/(diff|cancel))?)?)?$/.exec(
                     pathname ?? '',
@@ -145,6 +163,27 @@ export function executionHttp(
             if (!route) throw missing();
             const [, projectId, runs, runId, , action] = route;
             if (!projectId) throw missing();
+            if (!runs && req.method === 'DELETE') {
+                const keys = req.headersDistinct['idempotency-key'];
+                const key = keys?.[0];
+                if (keys?.length !== 1 || !key || !uuidV4.test(key))
+                    throw invalid('Invalid Idempotency-Key.');
+                const receipt = await advanceProjectDeletion(
+                    owner,
+                    projectId,
+                    key,
+                );
+                if (receipt.state === 'denied')
+                    throw new RequestError(
+                        409,
+                        receipt.code,
+                        'Project deletion is blocked.',
+                    );
+                if (receipt.state === 'deleting')
+                    return json(res, 202, { state: 'deleting' });
+                res.writeHead(204, { 'cache-control': 'no-store' }).end();
+                return;
+            }
             if (!runs && req.method === 'GET')
                 return json(res, 200, store.project(owner, projectId));
             if (runs && !runId) {
@@ -153,7 +192,7 @@ export function executionHttp(
                         runs: store.runs(owner, projectId),
                     });
                 if (req.method === 'POST') {
-                    store.project(owner, projectId);
+                    store.requireRunProject(owner, projectId);
                     const key = req.headers['idempotency-key'];
                     const input = runInput(
                         await body(req, maxRunBody),
