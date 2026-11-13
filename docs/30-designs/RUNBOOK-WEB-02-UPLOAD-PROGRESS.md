@@ -61,25 +61,9 @@ PASS 为基线已核对，工作区无未授权改动，执行分支在获审基
 
 各步骤涉及文件数含本 RUNBOOK。T0 专门核对 8 个文件，T1 修改 4 个，T2 修改 2 个，T3 修改或新增 3 个，T4 修改或删除 3 个。T3 专门核对既有 `playwright.config.ts` 与 `upload-intake.spec.ts`，含这两项共涉及 5 个文件。
 
-### T2 批次行与逐项结论
-
-前置状态为上一提交的结构化传输事件已通过 Web 类型检查和 space-api.test.ts 8 项测试。允许修改 `apps/workspace/web/src/space.tsx` 和本 RUNBOOK。禁止修改服务端文件列表、现有选择规则、账户鉴权及恢复入口。
-
-1. 使用上述 `UploadRow` 与 `uploadRows` 替换 `progress`。在 `send` 的原 guard 后、调用 mutation 前初始化行。定义组件内 `updateUploadRow(path: string, status: string, parts?: UploadRow['parts']): void`，用函数式 setter 按路径 map。传入分块时覆盖计数，缺省时保留此前计数。
-2. 移除 mutation 的临时 results 和返回值。当前项进入 ID 查找前写「正在准备上传…」。在传输回调把 `checking` 映射到「正在校验文件…」，`transferring` 映射到「上传中」及对应计数，`completing` 映射到「正在确认上传结果…」。传输成功后立即写「已保存」，再做现有缓存清理。
-3. 401 判定使用现有 `ApiError`。缓存 ID 的探测 GET 遇到 401 时抛回本项 catch，其他探测失败仍返回 undefined。当前项 401 写「登录已过期，请重新登录。」，余项写「未开始，请重新登录后重选文件。」并沿用短路。非 401 写「本次上传未确认：」加现有 `message(error)`，继续处理后续项。保留 `onSuccess` 清除选择、`onSettled` 刷新及现有全局异常 Notice。真正失去页面访问权时沿用会话层路由，禁止跨登录恢复本地展示。
-4. 在原进度与结果处渲染唯一的 `ul`，`aria-label="上传结果"`，`aria-live="polite"`。行使用 `li key={path}`，显示「路径 · 状态」，当 `parts` 存在时追加「 · 已确认 X / Y 块」。列表从确认时可见，直到下一批或组件卸载。原清单和原已保存文件区域继续使用原入口与数据。
-
-```bash
-pnpm --filter @bento/web check
-git diff --check
-```
-
-PASS 为类型、lint、格式、单测、构建均退出 0，无测试跳过，页面保留既有「文件名 · 已保存」文本供原 Chromium 用例定位。STOP 为需要调整鉴权路由、重写恢复入口或检查失败。保留本步现场，无服务端状态需回滚。
-
 ### T3 Chromium 分批与恢复验收
 
-前置状态为逐文件列表和原上传入口通过 Web 检查，MASTER 分配 4319/4320 窗口。允许新增 `apps/workspace/web/e2e/upload-progress.spec.ts` 并修改根目录 `public-files.json` 与本 RUNBOOK。禁止修改既有测试、端口、生产文件及真实环境。采用既有 Playwright 配置和同源 route fixture。各测试拥有独立上下文，禁止固定睡眠。用测试文件内的 `function gate(): { wait: Promise<void>; release: () => void }` 构造门闩，先以空函数初始化 `release`，再用 `new Promise<void>` 的同步 executor 将其赋为 resolve。分别挂起指定 PUT 或完成回执，在断言后释放，`finally` 也释放全部门闩。
+前置状态为上一提交的逐文件列表和原上传入口通过 pnpm --filter @bento/web check（11 项单测），MASTER 分配 4319/4320 窗口。允许新增 `apps/workspace/web/e2e/upload-progress.spec.ts` 并修改根目录 `public-files.json` 与本 RUNBOOK。禁止修改既有测试、端口、生产文件及真实环境。采用既有 Playwright 配置和同源 route fixture。各测试拥有独立上下文，禁止固定睡眠。用测试文件内的 `function gate(): { wait: Promise<void>; release: () => void }` 构造门闩，先以空函数初始化 `release`，再用 `new Promise<void>` 的同步 executor 将其赋为 resolve。分别挂起指定 PUT 或完成回执，在断言后释放，`finally` 也释放全部门闩。
 
 1. 定义测试「批次逐项显示已确认分块和续传结果」。使用 `partSize: 2`、额度和文件上限各 100 字节、空执行状态、同一项目、有效模拟会话。依次选择 `first.txt`（2 字节）、`resume.txt`（4 字节）、`last.txt`（2 字节）。初始空间有同路径同大小的 `resume.txt` 原 `uploading` 记录。确认前断言无写请求。挂起首项 PUT，断言首项 0/1，后两项等待。放行 PUT 并挂起首项完成，断言首项确认中且保留 1/1。放行首项完成。第二项注册必须复用原 ID，状态查询返回 `parts: [1]`，挂起第 2 块 PUT。断言首项已保存、第二项 1/2、第三项等待，且第二项唯一签名编号为 2。第 2 块 PUT 返回 500，断言第二项保留 1/2 且本次未确认，并且从未请求其完成。第三项走成功请求，断言三行按清单顺序保留，首尾已保存。模拟刷新后的空间列表返回首尾 `saved` 和第二项原 `uploading`。仅重选第二项，断言清单为「待校验续传」，确认后仅注册原 ID、查询、签第 2 块、PUT、完成，行列表替换为第二项且最终显示已保存。
 2. 定义测试「上传鉴权失效后保留当前批次逐项结论」。选择 `first.txt`、`expired.txt`、`skipped.txt`，均为 2 字节，开始时空间为空。首项成功。第二项在 API 分块签名返回 401，后续空间及 session GET 维持 fixture 可读，以观测重新登录提示直到页面仍可访问。断言第一项已保存，第二项保留 0/1 并提示登录过期，第三项明确未开始。断言仅注册前两项，第二项无 PUT 及完成请求，第三项无写请求。PUT 使用同源 fixture URL，签名和状态响应只使用测试数据。
