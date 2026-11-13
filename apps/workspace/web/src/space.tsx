@@ -56,8 +56,8 @@ export function SpaceList() {
         <section className="space-y-3 rounded-xl border border-zinc-200 p-5">
             <h2 className="text-lg font-semibold">云端空间</h2>
             <p className="text-sm text-zinc-600">
-                已用 {((saved + reserved) / 1e9).toFixed(2)} / {quota / 1e9}{' '}
-                GB，包含上传预占。
+                已用 {((saved + reserved) / 1e6).toFixed(2)} / {quota / 1e6}{' '}
+                MB，包含上传预占。
             </p>
             <ul className="divide-y divide-zinc-200">
                 {projects.map((project) => (
@@ -177,7 +177,8 @@ function planUpload(choices: UploadChoice[], config: Space, project: string) {
             path.split('/').some((segment) => ['', '.', '..'].includes(segment))
         )
             reason = '文件路径无效。';
-        else if (file.size > config.fileLimit) reason = '单文件最多 4 GB。';
+        else if (file.size > config.fileLimit)
+            reason = `单文件最多 ${config.fileLimit / 1e6} MB。`;
         return { ...choice, reason };
     });
     const paths = new Map<string, number>();
@@ -692,8 +693,8 @@ function CloudProject({ account, id }: { account: string; id: string }) {
             >
                 <h2 className="font-semibold">上传文件</h2>
                 <p className="text-sm text-zinc-600">
-                    将文件拖到这里，或使用选择入口。单文件最大 4
-                    GB，中断后可重选原文件续传。
+                    将文件拖到这里，或使用选择入口。单文件最大{' '}
+                    {config.fileLimit / 1e6} MB，中断后可重选原文件续传。
                 </p>
                 <label>
                     文件{' '}

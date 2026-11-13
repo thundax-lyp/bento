@@ -10,8 +10,8 @@ import {
 } from './space-storage.ts';
 import { spaceExecution } from './space-execution.ts';
 
-const quota = 10_000_000_000;
-const fileLimit = 4_000_000_000;
+const quota = 200_000_000;
+const fileLimit = 100_000_000;
 const previewLimit = 256 * 1024;
 const partSize = 16 * 1024 * 1024;
 const lifetime = 24 * 60 * 60 * 1000;
@@ -439,7 +439,7 @@ export function mySpace(
         if (typeof size !== 'number' || !Number.isSafeInteger(size) || size < 0)
             throw invalid('文件大小无效。');
         if (size > fileLimit)
-            throw new RequestError(413, 'file_limit', '单文件最多 4 GB。');
+            throw new RequestError(413, 'file_limit', '单文件最多 100 MB。');
         if (
             !Array.isArray(checksums) ||
             checksums.length !== Math.ceil(size / partSize) ||
@@ -514,7 +514,7 @@ export function mySpace(
                     throw new RequestError(
                         409,
                         'space_quota',
-                        '账号空间不足，已保存和上传预占合计最多 10 GB。',
+                        '账号空间不足，已保存和上传预占合计最多 200 MB。',
                     );
                 db.prepare(
                     `

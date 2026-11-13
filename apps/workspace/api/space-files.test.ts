@@ -1562,9 +1562,9 @@ test('WEB-A04 cancel wins over complete', { timeout: 20000 }, async (t) => {
 });
 
 const quotaPartSize = 16_777_216;
-const fourGB = 4_000_000_000;
-const twoGB = 2_000_000_000;
-const tenGB = 10_000_000_000;
+const fileLimit = 100_000_000;
+const halfFile = 50_000_000;
+const accountQuota = 200_000_000;
 
 type QuotaInput = {
     id: string;
@@ -1848,8 +1848,8 @@ async function openQuotaFixture() {
         );
         assert.equal(response.status, 200);
         const view = response.json;
-        assert.equal(view.quota, tenGB);
-        assert.equal(view.fileLimit, fourGB);
+        assert.equal(view.quota, accountQuota);
+        assert.equal(view.fileLimit, fileLimit);
         assert.equal(view.partSize, quotaPartSize);
         assert.equal(view.saved, saved);
         assert.equal(view.reserved, reserved);
@@ -1870,7 +1870,7 @@ async function openQuotaFixture() {
             total(['preparing', 'uploading', 'completing', 'cleaning']),
             reserved,
         );
-        assert(saved + reserved <= tenGB);
+        assert(saved + reserved <= accountQuota);
         return view;
     }
     function noEffects(input: QuotaInput) {
@@ -1922,17 +1922,16 @@ test(
     async () => {
         const f = await openQuotaFixture();
         try {
-            const a = f.register('a.bin', fourGB);
-            const b = f.register('b.bin', fourGB);
-            const c = f.register('c.bin', twoGB);
-            const oversize = f.register('oversize.bin', fourGB + 1);
+            const a = f.register('a.bin', fileLimit);
+            const b = f.register('b.bin', fileLimit);
+            const oversize = f.register('oversize.bin', fileLimit + 1);
             const one = f.register('one.bin', 1);
             const other = f.register('b-owner.bin', 1);
             const foreign = f.register('foreign.bin', 1);
             assertUploadError(await f.start(oversize), 413, 'file_limit');
             f.noEffects(oversize);
             const first = await f.begin(a);
-            await f.usage(0, fourGB);
+            await f.usage(0, fileLimit);
             const objectA = f.object(spaceObjectKey(a.id));
             const startCalls = [...objectA.calls];
             assert.deepEqual(
@@ -1945,22 +1944,19 @@ test(
                 'space_conflict',
             );
             assert.deepEqual(objectA.calls, startCalls);
-            await f.usage(0, fourGB);
+            await f.usage(0, fileLimit);
             const saved = await f.save(a);
-            await f.usage(fourGB, 0);
+            await f.usage(fileLimit, 0);
             await f.begin(b);
-            await f.usage(fourGB, fourGB);
+            await f.usage(fileLimit, fileLimit);
             await f.save(b);
-            await f.usage(2 * fourGB, 0);
-            await f.begin(c);
-            await f.usage(2 * fourGB, twoGB);
-            await f.save(c);
-            await f.usage(tenGB, 0);
+            await f.usage(2 * fileLimit, 0);
+            await f.usage(accountQuota, 0);
             const detail = await f.request(f.projectUrl('a'));
             assert.equal(detail.status, 200);
             assert.deepEqual(
                 detail.json.files,
-                [a, b, c]
+                [a, b]
                     .sort((left, right) => left.id.localeCompare(right.id))
                     .map(({ id, path, size }) => ({ id, path, size })),
             );
@@ -1976,7 +1972,7 @@ test(
             assert.deepEqual(objectA.calls, savedCalls);
             assertUploadError(await f.start(one), 409, 'space_quota');
             f.noEffects(one);
-            await f.usage(tenGB, 0);
+            await f.usage(accountQuota, 0);
             const otherUpload = await f.begin(other, 'b');
             assertUploadError(
                 await f.start(foreign, 'b', 'a'),
@@ -2005,15 +2001,15 @@ test(
                 { id: f.projects.b, name: 'Quota B' },
             ]);
             assert.deepEqual(viewB.uploads, [otherUpload]);
-            const viewA = await f.usage(tenGB, 0);
+            const viewA = await f.usage(accountQuota, 0);
             assert.deepEqual(viewA.projects, [
                 { id: f.projects.a, name: 'Quota A' },
             ]);
             assert.deepEqual(
                 viewA.uploads.map((entry: { id: string }) => entry.id),
-                [c.id, b.id, a.id],
+                [b.id, a.id],
             );
-            for (const input of [a, b, c]) f.state(input, 'saved');
+            for (const input of [a, b]) f.state(input, 'saved');
         } finally {
             await f.dispose();
         }
@@ -2026,15 +2022,15 @@ test(
     async () => {
         const f = await openQuotaFixture();
         try {
-            const seed = f.register('seed.bin', fourGB);
-            const pending = f.register('pending.bin', twoGB);
-            const a = f.register('race-a.bin', fourGB);
-            const b = f.register('race-b.bin', fourGB);
+            const seed = f.register('seed.bin', fileLimit);
+            const pending = f.register('pending.bin', halfFile);
+            const a = f.register('race-a.bin', halfFile);
+            const b = f.register('race-b.bin', halfFile);
             await f.begin(seed);
             await f.save(seed);
-            await f.usage(fourGB, 0);
+            await f.usage(fileLimit, 0);
             await f.begin(pending);
-            await f.usage(fourGB, twoGB);
+            await f.usage(fileLimit, halfFile);
             const barrier = recoveryBarrier();
             f.hooks.abort = async (key, upload) => {
                 if (
@@ -2058,7 +2054,7 @@ test(
                 winner = loser === a ? b : a;
                 f.noEffects(loser);
                 f.state(winner, 'preparing');
-                await f.usage(fourGB, fourGB + twoGB);
+                await f.usage(fileLimit, 2 * halfFile);
             } finally {
                 barrier.release();
                 await Promise.allSettled(requests);
@@ -2087,7 +2083,7 @@ test(
             assert.deepEqual(entry.calls, calls);
             assertUploadError(await f.start(loser), 409, 'space_quota');
             f.noEffects(loser);
-            await f.usage(fourGB, fourGB + twoGB);
+            await f.usage(fileLimit, 2 * halfFile);
         } finally {
             await f.dispose();
         }
@@ -2137,7 +2133,7 @@ async function reuseQuota(f: QuotaFixture, input: QuotaInput) {
         first,
     );
     assert.deepEqual(entry.calls, calls);
-    await f.usage(0, 2 * fourGB + 1);
+    await f.usage(0, fileLimit + halfFile + 1);
 }
 
 async function confirmQuotaAbort(
@@ -2156,7 +2152,7 @@ async function confirmQuotaAbort(
     assert(entry.active);
     assert.equal(entry.parts.size, 1);
     assert(!entry.calls.includes('abort'));
-    await f.usage(0, tenGB);
+    await f.usage(0, accountQuota);
     await rejectQuota(f, one);
     const barrier = recoveryBarrier();
     f.hooks.abort = async (candidate, upload) => {
@@ -2170,7 +2166,7 @@ async function confirmQuotaAbort(
         assert(entry.active);
         assert.equal(entry.parts.size, 1);
         assert(!entry.calls.includes('abort-confirmed'));
-        await f.usage(0, tenGB);
+        await f.usage(0, accountQuota);
         await rejectQuota(f, one);
     } finally {
         barrier.release();
@@ -2185,7 +2181,7 @@ async function confirmQuotaAbort(
     assert.equal(entry.active, false);
     assert.equal(entry.parts.size, 0);
     assert.equal(entry.size, null);
-    await f.usage(0, 2 * fourGB);
+    await f.usage(0, fileLimit + halfFile);
     return quotaView(f, input, outcome);
 }
 
@@ -2196,13 +2192,13 @@ test(
         const clock = recoveryClock(t);
         const f = await openQuotaFixture();
         try {
-            const fill1 = f.register('fill1.bin', fourGB);
-            const fill2 = f.register('fill2.bin', fourGB);
-            const fill3 = f.register('fill3.bin', twoGB);
+            const fill1 = f.register('fill1.bin', fileLimit);
+            const fill2 = f.register('fill2.bin', halfFile);
+            const fill3 = f.register('fill3.bin', halfFile);
             const one = f.register('one.bin', 1);
             for (const input of [fill1, fill2, fill3]) await f.begin(input);
             await f.sendPart(fill3, 1);
-            await f.usage(0, tenGB);
+            await f.usage(0, accountQuota);
             const cancel = () =>
                 f.request(f.uploadUrl(fill3) + '/cancel', 'POST', {});
             const cleaning = f.assertUpload(await cancel(), fill3, 'cleaning');
@@ -2238,9 +2234,9 @@ test(
         const clock = recoveryClock(t);
         const f = await openQuotaFixture();
         try {
-            const expired = f.register('expired.bin', twoGB);
-            const fill1 = f.register('fill1.bin', fourGB);
-            const fill2 = f.register('fill2.bin', fourGB);
+            const expired = f.register('expired.bin', halfFile);
+            const fill1 = f.register('fill1.bin', fileLimit);
+            const fill2 = f.register('fill2.bin', halfFile);
             const one = f.register('one.bin', 1);
             const upload = await f.begin(expired);
             clock.advanceTo(upload.expires - 60_000);
@@ -2248,7 +2244,7 @@ test(
             await f.begin(fill1);
             await f.begin(fill2);
             await f.sendPart(expired, 1);
-            await f.usage(0, tenGB);
+            await f.usage(0, accountQuota);
             clock.advanceTo(upload.expires);
             await clock.sweep();
             const cleaning = await quotaView(f, expired, 'cleaning');
@@ -2297,15 +2293,15 @@ test(
         const clock = recoveryClock(t);
         const f = await openQuotaFixture();
         try {
-            const deleted = f.register('delete.bin', twoGB);
-            const fill1 = f.register('fill1.bin', fourGB);
-            const fill2 = f.register('fill2.bin', fourGB);
+            const deleted = f.register('delete.bin', halfFile);
+            const fill1 = f.register('fill1.bin', fileLimit);
+            const fill2 = f.register('fill2.bin', halfFile);
             const one = f.register('one.bin', 1);
             await f.begin(deleted);
             await f.save(deleted);
             await f.begin(fill1);
             await f.begin(fill2);
-            await f.usage(twoGB, 2 * fourGB);
+            await f.usage(halfFile, fileLimit + halfFile);
             const key = spaceObjectKey(deleted.id);
             const entry = f.object(key);
             const barrier = recoveryBarrier();
@@ -2332,8 +2328,8 @@ test(
                 const detail = await f.request(f.projectUrl('a'));
                 assert.equal(detail.status, 200);
                 assert.deepEqual(detail.json.files, []);
-                assert.equal(entry.size, twoGB);
-                await f.usage(twoGB, 2 * fourGB);
+                assert.equal(entry.size, halfFile);
+                await f.usage(halfFile, fileLimit + halfFile);
                 await rejectQuota(f, one);
             }
             try {
@@ -2361,7 +2357,7 @@ test(
                     .length,
                 1,
             );
-            const view = await f.usage(0, 2 * fourGB);
+            const view = await f.usage(0, fileLimit + halfFile);
             assert(
                 !view.uploads.some(
                     (upload: { id: string }) => upload.id === deleted.id,
