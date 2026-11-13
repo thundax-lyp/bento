@@ -40,6 +40,20 @@ Compose 的 `auth-build` 阶段独立生成个人端认证 HTML 和 CSS。运行
 
 启动失败时运行 `docker compose -f deploy/compose.yaml logs --tail=100`。核对 Realm 导入、OIDC 客户端配置、容器对 issuer 的连通性，以及适配器的启动日志。用同一 Compose 项目名执行 `stop` 和 `up -d` 恢复。保留命名卷以延续账号、身份、空间及执行状态。
 
+## 单节点业务执行账本备份还原演练
+
+从仓库根目录使用已安装锁定依赖的 Node.js 22 和 pnpm 12.15.0。确认当前 Node 22 提供 `node:sqlite.backup`。命令使用测试进程的动态回环端口和私有临时目录。
+
+```bash
+node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='^restores the completed Run business ledger from an isolated backup$' apps/orchestrator/execution-service/service.test.ts
+```
+
+演练生成合成项目及成功 Run，等执行服务关闭后，以 SQLite backup API 读取 `business.sqlite` 并生成单库备份。备份通过完整性、外键和已提交回执检查，才复制到一个全新目录。启动前核对备份与还原文件的 SHA-256，再用同一个执行服务入口启动还原实例。SQLite 使用 WAL，运行中直接复制主库文件可能遗漏已提交事务。其他数据库、WAL/SHM、锁文件和本地 fixture 卷均不随该备份复制。
+
+PASS 时只通过一个匹配测试，报告备份 SHA-256。项目、Run、diff、同键同输入的原 Run 回执均一致，同键异输入返回冲突，其他 owner 读不到该 Run，列表只有原 Run，且没有调用还原侧 fixture 的执行入口。摘要来自合成数据，每次运行可变化。命令失败时使用测试输出定位失败断言，测试会关闭服务并清理本次临时目录。修复前置条件后重新执行，下一次使用全新目录。测试进程被强杀后，先核实进程已退出，再清理仅属于该次运行的 `bento-ledger-restore-*` 临时目录。
+
+Compose 当前的 TS 执行服务持有该业务账本。演练覆盖其中已结束 Run 的读取和幂等重放。生产恢复还需单独验证授权账本、会话历史、外部 Workspace、Temporal、账号与身份数据、S3 及部署级回滚。演练产物只用于本地校验，禁止覆盖已运行或曾运行的状态目录。
+
 ## OpenShell 执行宿主
 
 ### 接入前检查
