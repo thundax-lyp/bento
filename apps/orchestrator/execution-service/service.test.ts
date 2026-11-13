@@ -8,6 +8,7 @@ import {
     mkdir,
     mkdtemp,
     readFile,
+    readdir,
     rm,
     writeFile,
 } from 'node:fs/promises';
@@ -2539,6 +2540,343 @@ if (process.argv[2] === '--effect-worker') {
             await rm(state, { recursive: true, force: true });
         }
     });
+
+    test(
+        'execution entry enforces two-slot tenant fairness and queue backpressure',
+        { timeout: 65_000, skip: !process.env.BENTO_TEST_FAIR_BINARY },
+        async () => {
+            const binary = process.env.BENTO_TEST_FAIR_BINARY;
+            const state = process.env.BENTO_TEST_FAIR_DIR;
+            assert(binary && state);
+            const wrapper = join(state, 'control');
+            const module = join(state, 'host.mjs');
+            const quote = (value: string) =>
+                "'" + value.replaceAll("'", "'\"'\"'") + "'";
+            await writeFile(
+                wrapper,
+                '#!/bin/sh\nexec ' +
+                    [
+                        binary,
+                        '-test.run=^TestTemporalFairDispatchControlProcess$',
+                    ]
+                        .map(quote)
+                        .join(' ') +
+                    '\n',
+                { mode: 0o700 },
+            );
+            await writeFile(
+                module,
+                `
+                import { linkSync, unlinkSync, writeFileSync } from 'node:fs';
+                import { access } from 'node:fs/promises';
+                import { join } from 'node:path';
+                import { setTimeout as delay } from 'node:timers/promises';
+                import { localHost } from ${JSON.stringify(new URL('./local.ts', import.meta.url).href)};
+                export default function ({ state }) {
+                    const base = localHost(join(state, 'volume'));
+                    let sequence = 0;
+                    let active = 0;
+                    let peak = 0;
+                    return {
+                        ...base,
+                        workerSlots: 2,
+                        warmWorker: () => async () => {},
+                        sdk: {
+                            upstream: new URL('https://127.0.0.1:1'),
+                            credentials: { ca: Buffer.alloc(0), cert: Buffer.alloc(0), key: Buffer.alloc(0) },
+                            workspace: 'default',
+                            decode() { throw new Error('Unexpected SDK call'); },
+                        },
+                        async worker(request, signal, slot) {
+                            const { prompt, mode, grant, binding } = request;
+                            if (mode !== 'execute' || !['A0','A1','A2','A3','B0'].includes(prompt))
+                                throw new Error('Unexpected fair dispatch Worker request');
+                            const entered = join(state, 'entered-' + prompt);
+                            const temporary = entered + '.tmp-' + ++sequence;
+                            active++;
+                            peak = Math.max(peak, active);
+                            try {
+                                writeFileSync(temporary, JSON.stringify({
+                                    sequence, active, peak, slot, run: grant.run,
+                                    tenant: binding.tenant, project: binding.project,
+                                }), { flag: 'wx' });
+                                try {
+                                    linkSync(temporary, entered);
+                                } catch (error) {
+                                    if (error.code === 'EEXIST')
+                                        writeFileSync(join(state, 'duplicate-' + prompt), '');
+                                    throw error;
+                                } finally {
+                                    unlinkSync(temporary);
+                                }
+                                const deadline = performance.now() + 35_000;
+                                while (performance.now() < deadline) {
+                                    signal.throwIfAborted();
+                                    try {
+                                        await access(join(state, 'release-' + prompt));
+                                    } catch (error) {
+                                        if (error.code !== 'ENOENT') throw error;
+                                        await delay(20, undefined, { signal });
+                                        continue;
+                                    }
+                                    return await base.worker(request, signal, slot);
+                                }
+                                throw new Error('Worker release timed out: ' + prompt);
+                            } finally {
+                                active--;
+                            }
+                        },
+                    };
+                }
+                `,
+            );
+            const controller = spawn(
+                process.execPath,
+                [
+                    ...process.execArgv,
+                    fileURLToPath(new URL('./start.ts', import.meta.url)),
+                ],
+                {
+                    detached: false,
+                    stdio: ['ignore', 'pipe', 'pipe'],
+                    env: {
+                        ...Object.fromEntries(
+                            Object.entries(process.env).filter(
+                                ([key]) => !key.startsWith('BENTO_'),
+                            ),
+                        ),
+                        BENTO_STATE_DIR: state,
+                        BENTO_SERVICE_BEARER: testToken,
+                        BENTO_BIND_HOST: '127.0.0.1',
+                        BENTO_PORT: '0',
+                        BENTO_HOST_MODULE: module,
+                        BENTO_TENANT_QUEUE_LIMIT: '2',
+                        BENTO_GO_CONTROL: wrapper,
+                        BENTO_TEST_FAIR_DIR: state,
+                        BENTO_TEMPORAL_ADDRESS: 'fixture',
+                        BENTO_TEMPORAL_NAMESPACE: 'default',
+                        BENTO_TEMPORAL_TASK_QUEUE: 'fair-dispatch',
+                    },
+                },
+            );
+            let stderr = Buffer.alloc(0);
+            controller.stderr.on('data', (chunk: Buffer) => {
+                stderr = Buffer.concat([stderr, chunk]).subarray(-8192);
+            });
+            let spawnError: Error | undefined;
+            controller.once('error', (error) => {
+                spawnError = error;
+            });
+            const closed = new Promise<unknown[]>((resolve) => {
+                controller.once('close', (...result) => resolve(result));
+            });
+            const lines = createInterface({ input: controller.stdout });
+            async function within<T>(promise: Promise<T>, label: string) {
+                const timer = new AbortController();
+                try {
+                    return await Promise.race([
+                        promise,
+                        delay(5000, undefined, { signal: timer.signal }).then(
+                            () => {
+                                throw new Error('Timed out: ' + label);
+                            },
+                        ),
+                    ]);
+                } finally {
+                    timer.abort();
+                }
+            }
+            const marker = async (name: string) => {
+                try {
+                    return await readFile(join(state, name), 'utf8');
+                } catch (error) {
+                    if ((error as NodeJS.ErrnoException).code === 'ENOENT')
+                        return undefined;
+                    throw error;
+                }
+            };
+            const release = (name: string) =>
+                writeFile(join(state, 'release-' + name), '', { flag: 'wx' });
+            try {
+                const [url] = await within(
+                    Promise.race([
+                        once(lines, 'line'),
+                        closed.then(() => {
+                            throw (
+                                spawnError ??
+                                new Error(
+                                    'Execution entry exited before listening',
+                                )
+                            );
+                        }),
+                    ]),
+                    'execution entry listening',
+                );
+                const a = client(url, 'fair-a');
+                const b = client(url, 'fair-b');
+                const a0 = await project(a);
+                const a1 = await project(a);
+                const a2 = await project(a);
+                const a3 = await project(a);
+                const a4 = await project(a);
+                const b0 = await project(b);
+                async function entered(
+                    name: string,
+                    run: string,
+                    tenant: string,
+                    sequence: number,
+                    slot: number,
+                    active: number,
+                ) {
+                    const content = await until(
+                        () => marker('entered-' + name),
+                        (value) => value !== undefined,
+                        name + ' entered',
+                    );
+                    assert(content);
+                    const [, project, , id] = run.split('/');
+                    assert.deepEqual(JSON.parse(content), {
+                        sequence,
+                        active,
+                        peak: active,
+                        slot,
+                        run: id,
+                        tenant,
+                        project,
+                    });
+                }
+                const runA0 = await submit(a, a0, 'A0', 'A0');
+                await entered('A0', runA0, 'fair-a', 1, 0, 1);
+                const runA1 = await submit(a, a1, 'A1', 'A1');
+                await entered('A1', runA1, 'fair-a', 2, 1, 2);
+                assert.equal((await a(runA0)).json().status, 'running');
+                assert.equal((await a(runA1)).json().status, 'running');
+
+                const runA2 = await submit(a, a2, 'A2', 'A2');
+                const runA3 = await submit(a, a3, 'A3', 'A3');
+                const rejected = await a(
+                    a4 + '/runs',
+                    'POST',
+                    { prompt: 'A4' },
+                    'A4',
+                );
+                assert.equal(rejected.status, 429);
+                assert.equal(
+                    JSON.parse(rejected.text).error.code,
+                    'tenant_queue_full',
+                );
+                const empty = await a(a4 + '/runs');
+                assert.equal(empty.status, 200);
+                assert.deepEqual(empty.json(), { runs: [] });
+                const replay = await a(
+                    a2 + '/runs',
+                    'POST',
+                    { prompt: 'A2' },
+                    'A2',
+                );
+                assert.equal(replay.status, 200);
+                assert.equal(replay.json().id, runA2.split('/').at(-1));
+                const runB0 = await submit(b, b0, 'B0', 'B0');
+                assert.equal((await a(runA2)).json().status, 'queued');
+                assert.equal((await a(runA3)).json().status, 'queued');
+                assert.equal((await b(runB0)).json().status, 'queued');
+
+                await release('A0');
+                await entered('B0', runB0, 'fair-b', 3, 0, 2);
+                assert.equal((await a(runA1)).json().status, 'running');
+                assert.equal((await a(runA2)).json().status, 'queued');
+                assert.equal((await a(runA3)).json().status, 'queued');
+                await release('B0');
+                await entered('A2', runA2, 'fair-a', 4, 0, 2);
+                assert.equal((await a(runA1)).json().status, 'running');
+                await release('A2');
+                await entered('A3', runA3, 'fair-a', 5, 0, 2);
+                assert.equal((await a(runA1)).json().status, 'running');
+                await release('A3');
+                await release('A1');
+
+                const accepted = [
+                    [a, runA0, a0, 'A0'],
+                    [a, runA1, a1, 'A1'],
+                    [a, runA2, a2, 'A2'],
+                    [a, runA3, a3, 'A3'],
+                    [b, runB0, b0, 'B0'],
+                ] as const;
+                for (const [api, run, target, prompt] of accepted) {
+                    await until(
+                        () => api(run),
+                        (response) =>
+                            response.status === 200 &&
+                            response.json().status === 'succeeded',
+                        prompt + ' succeeded',
+                    );
+                    const done = await until(
+                        () => marker('done-' + run.split('/').at(-1)),
+                        (value) => value !== undefined,
+                        prompt + ' Workflow done',
+                    );
+                    assert.equal(done, '');
+                    assert.equal(
+                        await readFile(
+                            join(
+                                state,
+                                'volume',
+                                target.slice(1),
+                                'volume',
+                                'README.md',
+                            ),
+                            'utf8',
+                        ),
+                        '# Fixture\n' + prompt + '\n',
+                    );
+                }
+                const names = await readdir(state);
+                assert.deepEqual(
+                    names.filter((name) => name.startsWith('entered-')).sort(),
+                    [
+                        'entered-A0',
+                        'entered-A1',
+                        'entered-A2',
+                        'entered-A3',
+                        'entered-B0',
+                    ],
+                );
+                assert.deepEqual(
+                    names.filter((name) => name.startsWith('duplicate-')),
+                    [],
+                );
+                assert.equal(
+                    await readFile(
+                        join(
+                            state,
+                            'volume',
+                            a4.slice(1),
+                            'volume',
+                            'README.md',
+                        ),
+                        'utf8',
+                    ),
+                    '# Fixture\n',
+                );
+                assert(controller.pid);
+                controller.kill('SIGTERM');
+                assert.deepEqual(
+                    await within(closed, 'execution entry shutdown'),
+                    [0, null],
+                );
+            } catch (error) {
+                if (controller.pid) controller.kill('SIGKILL');
+                await within(closed, 'execution entry killed');
+                throw new Error(
+                    'Fair dispatch execution entry failed\n' +
+                        stderr.toString(),
+                    { cause: error },
+                );
+            } finally {
+                lines.close();
+            }
+        },
+    );
 
     test('private HTTP, three-account FIFO, next generation and immutable diff across restart', async () => {
         const state = await mkdtemp(join(tmpdir(), 'bento-http-test-'));
