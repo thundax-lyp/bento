@@ -1,0 +1,246 @@
+# RUNBOOK-WEB-MULTIRUN
+
+状态为 Worker A 待审草稿。日期为 2026-11-16。工作目录为 `/Volumes/storage/workspace/bento-a`，基线为 `main@d791d69363dd28c5076a3fc61ef0aedc9ed39ef1`，审核通过后使用 `codex/web-task-lifecycle`。
+
+## 执行约定
+
+Worker A 持有本文件和实现。Worker B 对草稿完整 SHA-256 给出 `Executable` 后，A 从审定基线建分支并仅提交审定稿。提交后方可进入 T0。任何影响执行的基线或内容变化须重新审核受影响的步骤。
+
+每一步的文件限额包含此文件。PASS 后从此文件删去已执行步骤，保留后续所需契约，并把后续前置条件改为已验证事实。按[提交规则](../00-governance/COMMIT-RULES.md)单独提交。STOP 保留现场和当步说明，记录最后 PASS 的步骤与 commit、触发符号、复现命令、脱敏结果与恢复条件。进程或服务返回结果未知时保留原 receipt，等待同一对象的可验证状态。先按原白名单处理可恢复故障，方案或范围变化交回审核。
+
+## 闭环与依据
+
+| 正式依据                                                                                     | 行为和验收链路                                                                                        |
+| -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| [WEB-04](../10-requirements/WEB-REQUIREMENTS.md#web-04-项目与-agent-输入)、WEB-A07           | 每个 Task 从指定文件 UUID 集合独立冻结输入。T2、T4、T5 验证源变更、跨 Task 隔离、沙盒绑定和删除竞争。 |
+| [WEB-05](../10-requirements/WEB-REQUIREMENTS.md#web-05-执行环境)、WEB-A06                    | 空白 Task 可由默认环境准备。T4、T5、T7 验证准备失败按原地址和版本恢复、回执丢失和无文件服务时的入口。 |
+| [WEB-07](../10-requirements/WEB-REQUIREMENTS.md#web-07-连续对话与任务控制)、WEB-A11、WEB-A12 | T2、T3、T4、T6、T7 验证同 Task 多 Run、续聊、代际撤权、可信停止、恢复两个检查点与可重读事件。         |
+| [WEB-08](../10-requirements/WEB-REQUIREMENTS.md#web-08-结果审阅与交付)、WEB-A13              | T2、T4、T6、T7 验证两个结果版本各自保留摘要、检查、增量与累计补丁。                                   |
+| [WEB-01、WEB-03](../10-requirements/WEB-REQUIREMENTS.md#功能需求)                            | T4、T5 验证项目删除与账号 purge 的写门禁、终态等待和清理回执。                                        |
+
+四项主体需求以 Task 为同一个身份、执行和交付边界。从空白或空间文件开始，经个人端认证、Orchestrator 准备、独占工作区、Run 追加和受控重试直到按版本交付。现有 [Web 接口](../20-interfaces/WEB-INTERFACE.md#执行输入与任务--web-04--web-06) 的项目入口继续服务现有调用。新入口使用同一 Run 账本、队列、Temporal、授权和执行链。[Web 设计](./WEB-DESIGN.md#执行环境与任务交互)和[平台架构](../00-governance/ARCHITECTURE.md)约束数据所有权。覆盖缺口见 [Readiness](../40-readiness/CURRENT-READINESS.md)。
+
+基线断点位于 `space-execution.ts::spaceExecution` 的一空间一执行项目映射、`store.ts::Store.enqueueRun` 的项目级控制、`service.ts::driveCancellation` 对 SDK 或变更后的取消保守进入待核对、`SessionHistory` 无检查点、`pages.tsx::RunDetails` 仅处理单 Run。适配范围限现有单执行宿主和 Orchestrator TS 权威实现。Go 权威账本替换、管理端结案 UI、HA、SSH/PTTY、真实外部副作用补偿不在实施范围。
+
+## 权威模型
+
+- Orchestrator 在 `Store` 持有 Task、Run、事件、结果、Workspace 检查点、停止证据与重试 receipt。Task 的内部执行项目 ID 固定等于 Task ID。每 Task 一条 backing `projects` 记录，独占其 session/sandbox/volume，复用已有调度查询与 binding。旧项目入口对 backing project 过滤并返回 404，防止绕过 Task 写门禁。个人端只持有空间来源意图、文件 pin、空间删除及账号清理协调记录。SessionHistory 管理 DSH 的检查点、写围栏和 restore receipt。
+- ID 为服务端 UUID v4，时间为 UTC ISO-8601。空白 Task ID 由 Orchestrator 分配，快照 Task ID 由个人端来源意图分配，Run ID 和 retry attempt ID 由 Orchestrator 生成，空间来源 ID 沿用现有 `resourceId`。客户端只提供幂等键。Run 状态沿用 `RunStatus`。活动集合为 queued、running、recovering、cancelling、needs_review，以及待恢复 retry receipt。分配按 Task 从 1 递增的 Run 序号。Run 的 authority generation 来自现有 `inspect/admit`。排队重试可记录预期新代，使用前再比对 authority。
+- Task 行持有 `id,owner,name,sourceSpaceId,inputDigest,environmentVersion,createdAt,updatedAt,prepareError,closedReason`。closedReason 为 null 或 unconfirmed。`sourceSpaceId` 和 `prepareError` 可空。状态由 backing project 的 importing/ready/failed 映射 preparing/ready/failed，逻辑删除门禁映射 deleting。最终清除后读 404。初始内容存 backing project 的冻结文本。输入摘要沿用 `textSnapshot → snapshotSha256`。新增 manifest 为 `{fileId:string,path:string,bytes:number,sha256:string}[]`，按 fileId 排序，逐项与文本 UTF-8 字节校验。空白使用空数组。恢复和 diff 始终读取冻结文本。
+- 创建 receipt 按 `(owner,key)` 唯一。Run 的 continue/retry 共用 `(taskId,key)`，两类 hash 用操作名区分。canonical JSON 一律用 UTF-8 `JSON.stringify` 和下面列出的字段顺序，无末尾换行。创建外部 hash 为 `{name,source}`，其中 snapshot source 的字段顺序为 kind/spaceId/fileIds，fileIds 排序。内部创建 hash 为 `{name,sourceSpaceId,inputManifest,inputDigest}`，由 Orchestrator 重算。Run hash 分别用 `{op:"continue",prompt}` 与 `{op:"retry",sourceRunId}`。相同键同 hash 回原资源，异 hash 409。每次新用户要求在 Run 入队的同一事务写事件，eventId 为 `${runId}:user`。retry 复制原 prompt，追加类型为 step 的重试事件，eventId 为 `${runId}:retry`。公开 payload 不带 key/hash/receipt。
+- Event sequence 是 Task 级从 1 开始的严格递增整数，`UNIQUE(taskId,eventId)`。相同 eventId 的 replay 须在分配 sequence 前处理。投影结束的 `(runId,generation)` 标记也由 Store 在同一事务落账。同 ID 内容不同报内部证据冲突。结果 `version=1`，唯一键为 runId，结果、事件和基线只有项目删除或账号 purge 时物理清理。成功状态和冻结结果在同一 Store 事务写入。增量和累计复用 `unifiedDiff`，两者使用同一个结果快照。发布记录包含版本、两个 baseline digest、after digest、两份 diff UTF-8 字节、各自 SHA-256、摘要、checks 及时间。重放比较所有内容，沿用首次记录的时间。
+
+## HTTP 唯一映射
+
+表中路径以公开 `/api` 或私有 `/v1` 为前缀。私有请求由个人端附 service Bearer、认证派生的 `X-Bento-Owner-Id`。POST 要求同源会话校验。K 表示单一 UUID v4 `Idempotency-Key`。cancel 沿用现有无键的条件状态转换。URL 路径资源先校验再按 owner、Task、Run 关系查询。列表按创建时间、ID，Run 按 sequence，Event 按 sequence 升序。列表当前返回全量，events 未指定 after 时为 0，传入单个非负安全整数并按严格大于过滤。
+
+| 方法和路径                                                         | 请求与转发                                                                                                                                                                                                                                                                                                                                                                                                                                   | 成功                                                                                                                                       |
+| ------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| POST `/tasks`                                                      | K。公开 `{name,source}`。blank source 为 `{kind:"blank"}`，snapshot source 为 `{kind:"space_snapshot",spaceId,fileIds}`。私有 `{id,name,sourceSpaceId,inputFiles,inputManifest,inputDigest}`，inputFiles 是 `{path,text}[]`。blank 的私有 id/sourceSpaceId 均为 null，Task ID 由 Orchestrator 在 receipt 首写分配。snapshot 的 id 是意图事务持久化的 UUID，Orchestrator 使用该 ID。同 owner/key 已受理的跨来源请求先按 canonical hash 检查。 | 首受理 202 `{task}`，重放 200 `{task}`。                                                                                                   |
+| GET `/tasks`                                                       | 无正文                                                                                                                                                                                                                                                                                                                                                                                                                                       | 200 `{items:TaskDTO[]}`                                                                                                                    |
+| POST `/tasks/{taskId}/prepare`                                     | 无正文、无 K。按该 Task 原 create receipt 触发重准备。                                                                                                                                                                                                                                                                                                                                                                                       | 200 `{task}`                                                                                                                               |
+| GET `/tasks/{taskId}`                                              | 无正文                                                                                                                                                                                                                                                                                                                                                                                                                                       | 200 `{task}`                                                                                                                               |
+| GET `/tasks/{taskId}/events?after=0`                               | 转发 after                                                                                                                                                                                                                                                                                                                                                                                                                                   | 200 `{items:TaskEventDTO[]}`                                                                                                               |
+| GET `/tasks/{taskId}/runs`                                         | 无正文                                                                                                                                                                                                                                                                                                                                                                                                                                       | 200 `{items:RunDTO[]}`                                                                                                                     |
+| POST `/tasks/{taskId}/runs`                                        | K，`{prompt}` 原形转发                                                                                                                                                                                                                                                                                                                                                                                                                       | 首次 202 `{run}`，重放 200 `{run}`                                                                                                         |
+| GET `/tasks/{taskId}/runs/{runId}`                                 | 无正文                                                                                                                                                                                                                                                                                                                                                                                                                                       | 200 `{run}`                                                                                                                                |
+| POST `/tasks/{taskId}/runs/{runId}/cancel`                         | 无正文                                                                                                                                                                                                                                                                                                                                                                                                                                       | 200 `{run}`                                                                                                                                |
+| POST `/tasks/{taskId}/runs/{runId}/retry`                          | K，无正文，Run ID 来自路径                                                                                                                                                                                                                                                                                                                                                                                                                   | 202 `{retry:{id,runId,state}}`，同键重放 200 同 receipt。state 为 preparing/queued/blocked，runId 为预分配 ID，queued 前不得按其读取 Run。 |
+| GET `/tasks/{taskId}/runs/{runId}/results`                         | 无正文                                                                                                                                                                                                                                                                                                                                                                                                                                       | 200 `{result}`                                                                                                                             |
+| GET `/tasks/{taskId}/runs/{runId}/results/1/diff?view=incremental` | view 必为 incremental 或 cumulative，可选单个 download=1                                                                                                                                                                                                                                                                                                                                                                                     | 200 `text/plain; charset=utf-8`，download 时使用固定附件名 `changes.patch`，字节相同。                                                     |
+
+- `TaskDTO={id,name,sourceSpaceId,inputDigest,environmentVersion,status,prepareError,closedReason,createdAt,updatedAt}`。prepareError 为 null、environment_unavailable 或 preparation_failed。源 ID 无值用 null。输入展示另含 `inputs:{fileId,path,bytes,sha256}[]`，不含原文。
+- `RunDTO={id,taskId,sequence,prompt,status,retryOf,canContinue,canCancel,retryReason,resultVersion,summary,createdAt,updatedAt}`。retryOf、summary、resultVersion 可空。retryReason 为 null 或 `task_closed|not_latest|not_terminal|needs_review|stop_unconfirmed|checkpoint_unavailable|environment_unavailable|task_busy|task_not_ready`。canContinue 要求 Task ready、closedReason 为 null、无活动 Run/attempt，且没有待重试的失败或取消工作区污染。排队取消且从未执行可继续。成功可继续，执行后明确失败或取消只开放符合条件的 retry。canCancel 使用现有取消门禁。retry 只考虑最新一次 Run 的失败或取消，防止回滚掉后续成功。
+- `TaskEventDTO={id,sequence,runId,at,kind,text,check}`。kind 为 user_message/agent_reply/step/command/check。非 check 事件的 check 为 null。公开 event ID 不含提交键。check DTO 为 `{name,status,output}`，status 为 passed/failed/not_run/unavailable，output 为 string 或 null。采集未观察到检查时数组为空。
+- `ResultDTO={runId,version:1,summary,checks,incrementalSha256,cumulativeSha256,createdAt}`。HTTP 仅白名单字段，追踪不包含原 DSH 事件、命令参数、未知原文输出、宿主地址、卷、token 或凭据。
+- name trim 后 1–120 字符，prompt 沿用 `runPrompt`；拒绝多余字段、重复 ID、无效路径/query。公开有正文限 64 KiB，私有创建 8 MiB。JSON/schema/query 非法为 400 invalid_input，K 缺失或非法为 400 invalid_key，Origin 失配沿用 400 invalid_origin，认证缺失为 401。404 not_found 统一处理路径遗漏、资源不存在、越权及绑定不符。409 白名单为 idempotency_conflict、task_not_ready、task_busy、run_not_cancellable、run_not_retryable、diff_unavailable、project_busy、owner_closed，retry 拒绝含 `error.reason`。正文或文件上限为 413 too_large，租户队列 429 tenant_queue_full，缺 space 且要求 snapshot 时 503 source_unavailable，代理异常 502 backend_error。旧本地 mock 对 Task 业务路由固定 503 tasks_unavailable，Web 据此保留原 mock 入口。沿用 `{error:{code,message}}`，仅发送固定公开文案。
+
+## 运行环境与准备
+
+新增 `ExecutionHost.environmentVersion: string`。生产 command/模块工厂的受信配置包含 imageDigest、policyDigest，格式均为 `sha256:<64 lowercase hex>`。摘要输入固定为 `JSON.stringify({imageDigest,policyDigest})`，按 UTF-8 SHA-256 后加 `sha256:`。模块从自身的可信镜像/策略配置构造版本。command host 从仓库内 `apps/orchestrator/execution-service/command-host.ts::Settings` 读取两项。该类型由 `commandHost(configPath)` 用于解析 `start.ts::main` 传入的 `BENTO_HOST_CONFIG` 文件；部署时该文件位于只读私有挂载，由操作者预先配置。两项用于构造默认 launcher 环境。禁止从浏览器请求覆盖。启动读取 `BENTO_EXECUTION_ENVIRONMENT_VERSION`，要求格式正确且等于 host 值；在监听、打开数据库前校验。Compose 的 orchestrator 注入 `${BENTO_EXECUTION_ENVIRONMENT_VERSION:?Set BENTO_EXECUTION_ENVIRONMENT_VERSION}`，不向 Worker 环境扩散。README 使用以下生成命令，变量由操作者从可信运行配置提供。
+
+```sh
+node -e 'const {createHash}=require("node:crypto"); const imageDigest=process.env.BENTO_EXECUTION_IMAGE_DIGEST; const policyDigest=process.env.BENTO_EXECUTION_POLICY_DIGEST; if (![imageDigest,policyDigest].every(x=>/^sha256:[0-9a-f]{64}$/.test(x??""))) process.exit(2); process.stdout.write("sha256:"+createHash("sha256").update(JSON.stringify({imageDigest,policyDigest}),"utf8").digest("hex")+"\n");'
+```
+
+Task 首写冻结版本。可信 host 新增 `provisionTask(binding,files,environmentVersion):Promise<Observation & {environmentVersion:string}>`，基线 `provision/snapshot` 保持给原项目使用。版本轮换后，已冻结而未准备的 Task 按旧版本显式请求 provisionTask，adapter 只从可信历史版本映射取配置，未知版本返回失败。已准备的绑定继续使用原环境，部署适配器不可因默认版本切换改造既有 sandbox。启动与恢复验证 provisionTask 回执、完整 binding 和独立 snapshot 摘要。原地址通过 prepare 动作按原 create receipt 从 failed 转 preparing，后台继续使用冻结版本和原字节。并发 prepare 在一个 Store 条件更新中只触发一次；preparing 或 ready 回当前 Task，deleting 回 409 task_not_ready。重复 POST create 只回原 Task。更换输入/版本需要用户显式另建 Task。
+
+## 停止与重试
+
+- Run 取得调度预留后、`db.start` 与 Worker admit 前，持久化 Workspace 完整文本和摘要，以及 `SessionHistory.checkpoint` 的 receipt。以 runId 为不可变键，重放复用该快照，现场摘要不一致时进待核对。尚无 DSH 历史时 checkpoint 是明确的 absent。其余存当前 header JSON、inherited、next、顺序 events、epoch 与 SHA-256，要求无 handle、batch intent，owner 和 epoch 由 T3 的条件验证。History 与 Store 各自事务，均落账后才能执行。
+- 使用 `SingleHostExecution.takeover` 的旧代撤权及 stop observation。该调用随后重新启动沙盒。新代 READY 只说明当前授权状态，不能证明当前卷无写入者。可信 launcher callback 持久 `worker_exit(runId,generation,at)`。worker 返回、abort、超时本身不构成 exit。现有 SDK 分支无法仅凭 operations 表证明工具副作用已知。Task 的可信 adapter 只有显式提供 `ExecutionHost.taskRecovery` 时才可提供 `retryObservation(binding,runId,generation):Promise<{unknownOperations:number,workspaceOnly:boolean}>`，证明旧代没有 UNKNOWN 且所有影响限于可恢复 Workspace。仅凭空 operations 表、文件差异、Worker 自报或进程终止时保持 needs_review。非 SDK 同样需要此观察。本轮仅启用确定性 local fixture 的恢复能力。基线 `command-host.ts::commandHost` 的非预热分支使用 `worker.ts::processWorker`，该函数只接收 request 和 signal。其 Promise settle 或子进程 close 不提供旧代全部进程退出的证明。预热 Worker 的现有可取消能力也不能证明新代卷的独占性。命令宿主、本轮无已验证恢复能力的生产模块均不开放 Task retry。对于执行过的 Run，缺此能力返回 409 run_not_retryable，reason 为 stop_unconfirmed。排队取消从未 admission 时保持原路径，不创建 stop proof。
+- 新增可选 ExecutionHost.observeWorkerExit(binding,runId,generation):Promise<WorkerExitObservation|null>。WorkerExitObservation 固定为 {sessionId,runId,generation,bindingDigest,exitedAt}，只来自可信 launcher 的持久进程监督记录。服务 worker 执行派发前持久 runId/generation/bindingDigest 对应的 admission 记录。已有 supportsRunningCancellation 的 host 继续使用回调；local fixture 同时设置该能力。回调关闭后由服务写 worker_exit，按 runId/generation 唯一，先核对 admission 和 binding。admission 使用既有 runs 新增 nullable admittedGeneration/admittedBindingDigest，恢复 worker 不覆盖 execute admission，重复值不覆盖。重启只先从 Store 读取该 receipt；没有回调记录时由 stopAndProve/closeTaskRun 查询 observeWorkerExit，核对全部字段和旧代身份后持久采用。仅已知执行代才可查询，timeout、abort、worker Promise settle、takeover 后的 READY 皆无证据效力。普通 commandHost 不提供 observeWorkerExit 或 taskRecovery，继续按既有保守待核对路径，重试回 409 run_not_retryable，reason 为 stop_unconfirmed；缺该证据的可信结案返回私有 review_unavailable，生产适配器需提供观察后才能结案。
+- localHost 是 fixture 退出观察记录的生产者。其 worker 在完成或中止的 finally 中先等待该 attempt 发出的所有本地文件写入和持久化请求结束，再关掉活动计数、在该 binding 的私有项目目录写入 exits/<runId>.<generation>.json。以同目录临时文件写入固定字段 WorkerExitObservation、fsync 文件、rename、fsync exits 目录，然后才调用 onWorkerExit。使用绑定校验过的 Run UUID 和正整数 generation 生成文件名；若同键已有记录，逐字段核对后使用原 exitedAt。localHost.observeWorkerExit 只读该文件并验证 binding、session、run、generation，缺文件回 null，损坏或冲突拒绝。崩溃发生在文件持久后且 Store 回执前时，重启走此 API 并补写原时间；在宿主持久前崩溃时不补造证明。只有回调而无可回读记录的宿主，一旦丢失回调且 Store 无 receipt，就保留原执行代和 needs_review，返回 run_not_retryable/stop_unconfirmed，可信结案返回 review_unavailable；后续只在可信观察可用且验证通过后重读同一 Run。
+- Store `stop_proofs` 以 source run ID 为键持久 canonical JSON、SHA-256。proof 是 source Run 的一次性停止证据。retry_attempts 以 sourceRunId 唯一，第二个键不得重复消费同一 proof；已入队重试再次失败时有独立 Run ID，按该 ID 取得独立 proof。固定键序 `{taskId,runId,sessionId,bindingDigest,oldGeneration,newGeneration,workerExitedAt,authorityState,authorityRun,hasCapability,unknownOperations,pendingBatches,workspaceOnly,observedAt}`。bindingDigest 为按 tenant/project/session/sandbox/volume 顺序的 JSON SHA-256。必须是同绑定、`newGeneration=oldGeneration+1`、READY、null run、无 capability、两个计数为 0、workspaceOnly=true。取消经可信观察可保留被部分修改的卷，旧 SDK 无证据则按现有逻辑进入待核对。可信确认失败沿现有 review 边界，拥有以上完整证据才开放 retry。
+- `service.ts::stopAndProve` 调用链为持久 exit → `SingleHostExecution.takeover` → `inspect` → `hasUnknownOperations` → `host.retryObservation` → `SingleHostExecution.historyQuiescence` → `Store.recordStopProof`。已 READY 时回用同一旧代持久 takeover 状态。任一证据不足返回原保守分支。 `Store.readStopProof` 只读原 canonical JSON/SHA。 `service.ts::verifiedStopProof` 重新反序列化、逐字段校验和 canonicalize/hash，比较 source/new run、attempt、Task、session、固定 binding 和当前新代。签发内部 branded `VerifiedStopProof` 后才调用 `SingleHostExecution.restoreHistory → SessionHistory.restore`。SessionHistory 从自己的库验证 checkpoint、epoch、无 handle/intents 以及 receipt，禁止读取 Store。brand 定义置于 `session-history.ts`，服务专用构造通过 TS 类型断言，SQLite 读取结果及 HTTP 输入不得直接断言。
+- `retry_attempts` 持久 `id,taskId,sourceRunId,newRunId,key,hash,phase,oldGeneration,newGeneration,workspaceSha256,historySha256,error,createdAt,updatedAt`。与 Task 的活动判定和队列容量同事务竞争。receipt 阶段为 preparing、workspace_restored、history_restored、queued、blocked。preparing 先重验证证据，再调用 `host.taskRecovery.restoreTask(binding,attemptId,files,expectedSha256)`。写入卷之前，adapter 对当前 binding 持有排他的写入禁入权，并在同一 attempt 下额外停掉、观察新代沙盒及所有卷写入者均已退出。该确认独立于旧代停止证明和 READY，且在发布和哈希回读期间持续有效。adapter 在独占期内原子发布 staging、回读摘要并持久化同 attemptId 的恢复回执，然后恢复原 binding 并独立观察 mount 和 running，之后才归还独占权。STOP 或回执未知时保持 Task 写门禁并只对账原 attempt，未知停止或未证实独占时不得执行任何卷修改。回包丢失可先读现有 receipt 并独立 snapshot 对账，摘要匹配时推进同 attempt。事务间崩溃保留当前 phase。证据冲突进入 blocked，锁住写入并走人工核对。
+- taskRecovery 还提供 queryRestore(binding,attemptId):Promise<null|{attemptId:string,phase:"prepared"|"published"|"ready",sha256:string}>，由相同绑定根读取 receipt，仅做观察。restoreTask 在 staging 验证通过后先持久 prepared（含 staging ID、旧 pointer、expectedSha256），再 rename 指针。queryRestore 若看到 prepared 及指向该 attempt staging 的 pointer，应验证摘要后报告 published。published 表示已发布但尚未证明新代运行及挂载；ready 表示已完成独占回读与启动观察。重启后先 query，同键 null 才首次写入；prepared 只在重新取得独占并观察停止后继续原 staging；published 禁止第二次替换，先验证原树并续作启动；ready 仅独立回读。识别到异 pointer 或 digest 不符保持门禁并 STOP。
+- localHost 使用同一私有 project root 中的可信 volume pointer。新增 resolveTaskVolume(binding)，仅允许单段相对名字匹配 volume-<UUID>，拒绝绝对路径、斜杠、目标 symlink 及非目录。校验 realpath 仍为该 project root 的直接子目录，再把实际目录传给现有 readTextVolume。所有 fixture snapshot 和写入均通过该解析；在 binding 互斥区修改指针。旧项目仍直接读其 volume 目录；readTextVolume 保持拒绝 symlink 根。publish 由同目录 rename 原子完成，指针切换前的 journal 及恢复回执在返回前同步到持久目录。
+- SessionHistory 的 restore 在一个事务内写恢复回执再返回。保留 batch receipts 和原 checkpoint，校验并恢复 header/inherited/event prefix，更新 next/revision/owner/epoch。非空 prefix 设置 owner=newRunId、epoch=newGeneration；absent checkpoint 删除当前 session/events，等待 admit 后由 DSH create 初始化。相同 attemptId 重放返回原 receipt，异内容拒绝。只有独立回读 Workspace 和 DSH digest 都匹配，Store 才把同一预分配 Run 排队并清除 attempt 写门禁。TaskEvent、原 Run、旧结果保持原样。
+
+## 生命周期清理与投影
+
+- 私有 GET /v1/task-sources/{spaceId}/deletion 返回 200 {runCount,diffCount,blockers}。GET 与 DELETE 可带 legacyProjectId，取自 spaceExecution.deletionProject 的已确认映射。DELETE /v1/task-sources/{spaceId} 只接受 phase=hold、commit、release，要求 K。旧 DELETE /v1/projects/{projectId} 原样保留。
+- Store 的 task_source_deletions 主键为 (owner,spaceId,operationId)，字段为 legacyProjectId nullable、state、denialCode nullable。hold 以一个 Store.write 事务检查该 source 的所有 Task 与可选旧执行项目。检查准备中、活动 Run/attempt、文件删除门禁、旧项目删除操作及 owner drain。阻断时按 project_importing、project_busy、owner_closed 优先级持久 denied receipt，无资源冻结。成功写 held 及每个目标的 item receipt。held/committing 同时阻止所有目标的新写和旧项目直删。held 不触发清理。
+- 以下错误只用于私有 source 路径，个人端按当前 phase 消费。相同操作键但关联字段不同回 409 idempotency_conflict。hold 遇 held 回 202 {state:"held"}，committing 回 202 {state:"deleting"}，deleted 回 204，denied 回原 409，released 回 409 deletion_released。commit 只将 held 转 committing，committing 重放回 202 deleting，deleted 回 204，denied 回原 409，缺 receipt 或 released 回 409 deletion_not_held。release 将 held 转 released 并解冻，缺 receipt 建 released tombstone，released/denied 同键均回 204，committing/deleted 回 409 deletion_committed。其他键只与 held/committing/deleted 冲突。owner drain 后继续处理已有 receipt 的同键操作。
+- committing 每项等待 Temporal 关闭并执行可信 sandbox/volume purge，再用同一 Store 事务清理关联业务记录并标项 cleaned。旧 binding 也使用该 item 作清理授权。所有项完成才将 receipt 标 deleted，空集合也留 receipt。晚到的 Task create 若来源已删返回 404。
+- space_project_deletions 的 phase 固定为 holding/committing/releasing/cleaning/deleted，原 executionProjectId 为可空字段。holding 由 deleteProject 在 SQLite 写入，原子拦住新来源意图及文件写入。先对账已有来源请求再发 hold。hold 回 held 先持久 committing，回 deleting 同样进入 committing，回 204 进入 cleaning。hold 明确拒绝时先持久 releasing 及原错误，再发 release。release 回 204 删除本地门禁并返回原拒绝，回 deletion_committed 则改为 committing 并续作。未知响应仅重放当前动作，commit 未知禁止 release。只有明确取得 commit 204 才物理回收文件。接受迟到 hold 的 204 视为同一 commit 已完成。
+- 账号关闭用原 account sweep 和 POST /v1/account/purge。新增私有 POST /v1/account/drain，无正文，回 204，认证规则同 purge，仅持久 Store.drainOwner。sweepAccounts 先标空间 owner drain，再等 API inFlight 收敛，调用 drain 得 204。随后等待 space.drain(owner) 的已有本地 phase 与来源 receipt 全部收敛，再调用原 purge。该分离避免来源 receipt 等待远端关写而 purge 又等待 space.drain 的死锁。尚未送达的冻结意图可标 abandoned，结果未知的先以私有 GET /v1/tasks?creationKey=<K> 查询同 owner receipt，回 200 {items:TaskDTO[]}，至多一项。查不到时只在 owner drain 后原键重放确认拒绝；明确拒绝后释放 pin。task-sources 私有门禁和 account/drain 都由 execution-service-http.ts 的现有 Bearer 与 owner header 映射转发，后者的 Operation kind 固定为 drainOwner。Orchestrator drain 持久关闭新业务写，等待 held/committing 操作收敛和全部 Run 终态、调度关闭。needs_review 阻止 purge，项目删除和账号注销均不代结案。
+- 可信结案沿用私有 review module，给 start.ts 的 InstallReview 依次传入原 reviewRun、新 closeTaskRun 和 readTaskClosure。closeTaskRun(input:{runId:string,decision:"failed"|"unconfirmed",expectedGeneration:number}):Promise<void> 只接受 Task needs_review。服务以独立可信退出证明、旧代沙盒停止、新代 READY/无能力、binding 和 session 静止为前置。输入决议本身无证据效力。failed 在缺完整 retry proof 时也可进入终态，retryReason 固定 stop_unconfirmed 或 checkpoint_unavailable，不能续写原工作区。unconfirmed 进入 failed 终态，Task 持久 closedReason=unconfirmed，禁再次执行，旧成功结果继续可读。两类终态均允许删除及注销。原 reviewRun 成功路径对 Task 同时保存 review receipt 和两类结果。
+- Store 以独立的 task_closure_audit(runId PRIMARY KEY,decision,authorityGeneration,stopDigest,closedAt) 保存最小审计。它没有到业务表的外键，stopDigest 为固定顺序 {exitReceiptDigest,bindingDigest,oldGeneration,newGeneration} 的 JSON SHA-256。决议、审计和终态同一事务，原决议重放成功，异决议拒绝。仅受信 readTaskClosure(runId:string):TaskClosureAudit|null 可读。项目和账号 purge 删除业务关联数据，保留此表。表中没有 owner、prompt、文件、输出和凭据，随部署的持久审计保留规则处理。
+- Worker 仍使用受信 Binding、Grant 和 persistence 协议。Task identity 使用 `binding.project`，服务只对有 Task 行的绑定附 `WorkerRequest.publicEventsUrl?: string`。Worker 不调用 checkpoint、restore 或停止接口。现有 `runDshWorker` 已区分首轮 create 与后续 resume，沿用其会话入口。新增 Runtime 的 `publicEvents?(events:readonly Event[]):readonly PublicWorkerEvent[]` 作为固定 DSH bootstrap 的脱敏投影边界。SDK host 若未配此回调，Task execute 在发送 prompt 前返回 review，保留待核对，旧项目仍按原流程。fixture 使用同一 ingress。
+- `PublicWorkerEvent` 判别联合为 `{offset:number,kind:"agent_reply"|"step"|"command",text:string}` 或 `{offset:number,kind:"check",name:string,status:CheckStatus,output:string|null}`。offset 为本轮 DSH 事件数组的零基索引，每 offset 最多一个公开事件，递增。固定上限每批 100 项、单批 256 KiB、每 text/output 4096 UTF-8 字节、name 120 字节。在 flush 后、返回完成前，以 Worker Bearer POST `/task-events`，正文 `{items}`。捕获已观察的投影前缀，失败/取消时仅保留成功送达的 prefix。Orchestrator 校验活跃 execute grant、run 与 binding，再以 `${runId}:${generation}:${offset}` 写入 Store，重复载荷 200，冲突或旧代拒绝。无可验证投影回执禁止发布成功。部署 bootstrap 负责从公开用户可见字段投影，命令只公开脱敏名称，check output 仅可信可公开摘要；原始参数、工具 JSON、环境/密钥字段不进入载荷。测试以金丝雀凭据验证最终 HTTP 和 diff 无该值，生产密钥隔离仍需真实环境证据。
+
+## 开工代码规模
+
+以下只计基线上实现需要修改或直接核对的非空非纯注释代码。表内行区间互不重叠，数值为保守下限。以同一 HEAD 的现有代码为计数依据，新增测试和部署文档计 0。表外文件在各步仅按精确白名单授权，不用于凑门槛。
+
+| 基线文件                                                  | 本任务需要的区间和符号                                                                                     | 保守 LOC | 涉及的改动依据                                    |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | -------: | ------------------------------------------------- |
+| `apps/orchestrator/execution-service/store.ts`            | 142–237 owner drain/purge，246–351 project deletion，450–595 write/holds/enqueueRun                        |      190 | 门禁、receipt、Run 服务路径及原子事件             |
+| `apps/orchestrator/execution-service/service.ts`          | 248–309 requestCancellation，313–469 worker/fence/finish/settle，471–605 import/driveCancellation/driveRun |      260 | launcher exit、任务准备、checkpoint、双 diff 发布 |
+| `apps/orchestrator/openshell/session-history.ts`          | 55–110 schema 与 purge，142–240 request/create/open/read                                                   |      115 | checkpoint 行、撤权后的 owner/epoch、空历史与读取 |
+| `apps/orchestrator/openshell/single-host.ts`              | 44–164 bind/inspect/admit/takeover                                                                         |       90 | 独占执行拥有者、旧代停启、history 可信桥          |
+| `apps/workspace/api/space.ts`                             | 158–233 项目/影响，276–399 advance/delete/drain，638–777 file deletion                                     |      240 | 统一 source 门禁、账号关闭、删除与创建 pin 竞争   |
+| `apps/workspace/api/space-execution.ts`                   | 29–102 spaceExecution 初始化与 view，138–217 start，218–303 validate/reconcile/advance                     |      190 | 保存输入、读取冻结后的文件、原意图重放            |
+| `apps/workspace/api/protocol.ts`                          | 112–207 object/projectInput/runPrompt/resourceId，233–282 view/publicJson                                  |      105 | 解析、限制、明确 DTO 映射                         |
+| `apps/workspace/api/server.ts`                            | 166–207 taskEntryServer 与 sweepAccounts，208–348 handle                                                   |      125 | 认证、账号门禁和新 Task 分发                      |
+| `apps/workspace/api/execution-service-http.ts`            | 11–75 path/error，76–135 httpBackend                                                                       |       95 | 方法、路径、键及上游错误白名单                    |
+| `apps/worker/dsh-worker.ts`                               | 22–35 completedTurn，76–141 runDshWorker                                                                   |       65 | 复用 create/resume，提交 flush 后投影             |
+| `apps/workspace/web/src/main.tsx`                         | 110–134 已认证路由                                                                                         |       15 | 新 Task URL 和旧 Run URL 并存                     |
+| `apps/orchestrator/openshell/remote-session.test.ts`      | 12–91 reconciliation retries with the same writer                                                          |        0 | 扩充同 writer 重放为新代可读验收                  |
+| `apps/orchestrator/openshell/persistence-ingress.test.ts` | 9–83 persistence dispatch preserves UTF-8                                                                  |        0 | 使用现有 HTTP fixture 新增旧代拒写验收            |
+
+合计保守下限 1490 LOC、11 个既有代码文件。T3 直接验收文件列在表中，计 0 LOC。
+
+## 机械执行步骤
+
+### T0 验证审定稿与干净基线
+
+前置状态：B 已对 SHA-256 给出 Executable。任务分支顶端为只含审定 RUNBOOK 的提交。
+
+允许修改：无。禁止修改：工作树、基线及部署环境。
+
+执行：从 checkout 根执行以下命令。文件列表命令只允许输出 RUNBOOK 路径。SHA 命令输出逐字与 B 审查记录比对。依赖使用该 checkout 已安装版本，缺失时按仓库部署说明准备后重跑。只有处理环境连接时读取本 checkout 根的 `ENVIRONMENTS.md`，缺失再读主 checkout 根受控文件。
+
+```sh
+test "$(git branch --show-current)" = codex/web-task-lifecycle
+test "$(git rev-parse HEAD^)" = d791d69363dd28c5076a3fc61ef0aedc9ed39ef1
+git diff-tree --no-commit-id --name-only -r HEAD
+git show HEAD:docs/30-designs/RUNBOOK-WEB-MULTIRUN.md | shasum -a 256
+test -z "$(git status --porcelain)"
+git diff HEAD^ HEAD --check
+pnpm check
+```
+
+PASS：基线、单文件提交、哈希和干净状态均匹配，命令全部成功。STOP：任一不符时保留当前分支与文件，禁止进入 T1。
+
+### T1 固化正式跨边界契约
+
+前置状态：T0 PASS。
+
+允许修改：`docs/20-interfaces/WEB-INTERFACE.md`、`docs/30-designs/WEB-DESIGN.md`、`docs/00-governance/ARCHITECTURE.md`。禁止修改：Requirements、Readiness 和代码。
+
+执行：在接口的「任务与补丁 · 现有」后追加「Task 生命周期」并写入本文件的 HTTP 表、DTO、状态/错误、source 删除阶段和环境字段，在「错误语义与兼容」添加公开 Task 入口的兼容说明。设计的「工作区初始化」「提交与交付」「执行环境与任务交互」按本稿分别写冻结及 pin、Task 路由及结果、stop proof/双事务 saga，保留原入口明示适用范围。Requirements 和设计索引的现有双向链接保留并核对。架构「当前实现接线」记录当前 TS Orchestrator 新增 Task 权威记录及 Worker 依旧只持当次 grant，Go 目标章节保持。以上均写成目标契约，覆盖验证只写在 T8。
+
+验证：`git diff --check`，`pnpm exec prettier --check docs/20-interfaces/WEB-INTERFACE.md docs/30-designs/WEB-DESIGN.md docs/00-governance/ARCHITECTURE.md`，`rg -n "WEB-DESIGN.md|WEB-REQUIREMENTS.md" docs/10-requirements/README.md docs/30-designs/WEB-DESIGN.md`。PASS：HTTP 每行、四类 DTO、三方所有权、错误、冻结与清理顺序逐款一致。STOP：正式契约冲突无法按既有入口并行共存时保留草稿并退审。
+
+### T2 建立 Task 和 Run 的原子账本
+
+前置状态：正式契约已落账。
+
+允许修改：`apps/orchestrator/execution-service/store.ts`、`apps/orchestrator/execution-service/service.test.ts`。禁止修改：调度器、现有 authority 与 HTTP。
+
+执行：用 Store constructor 新 schema 创建 `tasks`、`task_creation_receipts`、`task_events`、`task_run_results`、`task_run_checkpoints`、`stop_proofs`、`worker_exit`、`retry_attempts`、`task_source_deletions`、`task_source_deletion_items`、`task_closure_audit`。保留原 `runs` 行及调度字段，新增 nullable `taskSequence,retryOf,expectedGeneration,admittedGeneration,admittedBindingDigest`，用现有 projectId 找到 Task；旧 Run 均为 null。复用 `Store.write`/enqueueRun，使 `createTask`、`enqueueTaskRun`、`acceptTaskRetry`、`finalizeTaskRetry`、`appendTaskEvents`、`publishTaskResult`、`recordStopProof`、`readStopProof` 与 source 门禁按上文事务实施。预分配重试占用一个租户 queue 额度，finalize 释放预留并入队同一事务，不得二次占位。`ownedProject/projects` 对旧 HTTP 屏蔽 backing project，内部调度和 cleanup 继续可读。结果 hash 从 UTF-8 字节计算，摘要、检查从已投影记录构造。首次 summary 取最新 agent_reply，空时沿用既有成功提示。
+
+验证：`pnpm --filter @bento/orchestrator typecheck`，`pnpm --filter @bento/orchestrator test`。PASS：新增用例断言跨账号 404、旧入口不可绕行、同键重放、异键冲突、一次入队一个 user event、queue/活动门禁、两份结果不可变、重开同 SQLite 可读、删除 receipt 独立存续。STOP：任一原调用回归，复核 backing project 隔离和同事务边界，禁止开第二套队列。
+
+### T3 引入 DSH 检查点与可信恢复入口
+
+前置状态：T2 的 Store 账本和测试通过。
+
+允许修改：`apps/orchestrator/openshell/session-history.ts`、`apps/orchestrator/openshell/single-host.ts`、`apps/orchestrator/openshell/remote-session.test.ts`、`apps/orchestrator/openshell/persistence-ingress.test.ts`。禁止修改：Store、Worker 远端持久化协议和 SDK 权限。
+
+执行：在 SessionHistory 添加 `quiescence(sessionId:string):{handleOpen:boolean,pendingBatches:number}`、`checkpoint(sessionId:string,runId:string,authorityGeneration:number):{sha256:string}`、`restore(proof:VerifiedStopProof):{sha256:string}`、`restoredDigest(proof:VerifiedStopProof):string`。 `VerifiedStopProof` 是 readonly `{attemptId,taskId,sourceRunId,newRunId,sessionId,oldGeneration,newGeneration,checkpointSha256}` 与私有 unique symbol 品牌的交集。只有 T4 的 service 在证据验证后构造该类型。已存在历史时，接受 epoch 为 authorityGeneration−1 且 owner revoked，或来自已验证 retry restore receipt、epoch 为 authorityGeneration 且 owner 为本次 runId。空历史以 absent 表示。历史 JSON 的键序为 `{kind:"present",header,inherited,next,events}` 或 `{kind:"absent"}`，SHA-256 比较原字节；header 保留现有 JSON 字符串，events 按 seq 依序存现有 JSON 字符串。历史库内以 runId 存 checkpoint，以 attemptId 存 `{sessionId,sourceRunId,newRunId,newGeneration,sha256}` receipt，执行 purge 时删除两者。恢复前非空现场要求 owner revoked、epoch 为 oldGeneration；验证新代关系、session、两个 Run ID 与 receipt/检查点关联。检查点 SHA 异常、非连续序列、打开 handle 或未结 batch 时零写。 `SingleHostExecution` 暴露同签名的 historyQuiescence/checkpointHistory/restoreHistory/restoredHistoryDigest 代理，checkpoint/restore 均额外校验 authority READY、run null、无 capability 和代数。
+
+验证：`pnpm --filter @bento/orchestrator test`。PASS：空/非空检查点恢复成功，epoch/owner/receipt 一致，旧 grant 拒绝，batch receipt 保留，错 session/epoch/SHA、handle、batch intent 均零写，重开后重放同一 receipt。STOP：历史无法证明静止或恢复事务无法锁定时停在本步。
+
+### T4a 固定受信环境和宿主恢复契约
+
+前置状态：T3 PASS。
+
+允许修改：`apps/orchestrator/execution-service/types.ts`、`apps/orchestrator/execution-service/start.ts`、`apps/orchestrator/execution-service/command-host.ts`、`apps/orchestrator/execution-service/local.ts`、`apps/orchestrator/execution-service/service.test.ts`、`deploy/compose.yaml`、`deploy/README.md`、`README.md`。禁止修改：Worker 启动协议与权威状态、私有 launcher 配置。
+
+执行：在 `types.ts::ExecutionHost` 加环境版本、provisionTask 以及可选 `observeWorkerExit`、`taskRecovery?: {retryObservation,queryRestore,restoreTask}`。其中 `restoreTask(binding:Binding,attemptId:string,files:readonly FileText[],expectedSha256:string):Promise<{attemptId:string,sha256:string}>` 同时承担新代卷写入隔离和回执契约。command host 的 control JSON 仅新增 `{action:"provisionTask",binding,files,environmentVersion}`，逐字段校验回执；commandHost 不设置 taskRecovery，processWorker 与 prewarmedWorker 不改。模块工厂若提供 taskRecovery，仍按 T8 外部验收确认；本轮受控运行只在 localHost 启用。`command-host.ts::Settings` 增加必填 `imageDigest:string` 与 `policyDigest:string`，`commandHost(configPath)` 在启动 launcher 或读取证书前校验格式。用 `service.test.ts` 临时目录 fixture 构造两个字段和返回值验证。仓库交付包含配置 schema、必填部署变量和操作手册。真实私有 host 配置及 runtime 摘要由部署操作者提供，作为 T8 外部验收。模块默认工厂仍接收 `{state}`，返同一 ExecutionHost 契约。恢复动作要求 staging 在同 volume，校验完整内容后切换目录入口，保留同 attempt 的持久回执，禁止在恢复前就地删除 live 文件。部署入口的 host 契约要求版本字段。对直接构造 ExecutionHost 的旧测试 fixture，在 service.test.ts 共享 fixture 工厂注入同样的版本字段；space-files.test.ts 若借用 localHost 即沿用其值。localHost 使用确定性 fixture 版本，定义 imageDigest 为 sha256: 后 64 个 0、policyDigest 后 64 个 1。在 `local.ts::localHost.worker` 用 finally 按上文顺序持久化宿主退出文件并报告 onWorkerExit，同时实现 observeWorkerExit 的只读恢复。Task fixture 以 binding 为键维护活动计数和恢复独占互斥，restore 拿到独占权后检查计数为 0、调用本地 stop 并通过 stopped 观察 marker，再写 staging；完成哈希和 receipt 后才 start/running 并释放独占，以当前 workspace symlink 的 rename 为提交点，Task provision 从首次写入即使用同根相对 symlink，旧项目目录保留。snapshot 与 worker 写入都调用 resolveTaskVolume，重放核对快照并续写同一 receipt。限制在 local fixture 路径。更新启动校验、compose required expansion、README 命令和部署手册。私有适配器未实现对应动作时明确失败，记录真实能力缺口。
+
+验证：`pnpm --filter @bento/orchestrator typecheck` 和 `pnpm --filter @bento/orchestrator test`。PASS：正确/错误/缺少版本启动、旧版本显式 provision、错 hash 拒绝、丢回执后原 attempt 可对账及旧项目 host 启动通过。另验证 READY 且新代仍有写入者时零卷修改、stopped 无法确认时零卷修改、恢复过程 Worker 并发写入被拒绝，普通 command host 不因 launcher Promise 完成而取得 retry 能力。STOP：宿主不能在未知结果后核实原恢复动作时保留原回执，禁止盲目覆盖 workspace。
+
+### T4b 接通 Orchestrator HTTP、恢复和结果发布
+
+前置状态：T4a 的宿主契约可用。此步新增的 Task 路由先由双 HTTP 测试直接使用，Web 切换前在 T6 启用投影完成门禁。
+
+允许修改：`apps/orchestrator/execution-service/service.ts`、`apps/orchestrator/execution-service/http.ts`、`apps/orchestrator/execution-service/start.ts`、`apps/orchestrator/execution-service/store.ts`、`apps/orchestrator/execution-service/service.test.ts`、`deploy/README.md`。禁止修改：个人端 API、Worker 协议、History schema。
+
+执行：在 `executionHttp` 添加表中全部私有路径与 source 删除协议，认证后只取 header owner，按固定 HTTP 返回。从 `serveExecution` 的 import/work/driveRun/driveCancellation/finish/reviewRun 连接准备、双检查点、停止证据、可恢复 retry、可信结案和结果发布。将 restart work 扫描加到已有工作循环，按 receipt phase 前进；STOP 时保留锁和 evidence，不修改旧 Run。排队 Run 在任何 Worker admit 前取得检查点。stop proof 用上文固定键序落账，可信结案另写决议 receipt。停止证据必须早于对外报告可重试的原 Run 终态。准备 retry 时先校验宿主 taskRecovery、source terminal、最新 Run、证据与当前环境绑定，再持久 attempt。调用 restoreTask 前保持 Store attempt 写门禁；排队前还须比对恢复回执、authority 和 host.running 的 sandbox/volume 绑定。排队前分别调用 `snapshotSha256(textSnapshot(await host.snapshot(binding)))` 与 `execution.restoredHistoryDigest(proof)` 并与各自预期值核对。对外 retryability 每次从当前事实计算，服务端重验。项目 source hold 用同一事务检查和冻结旧项目与全部来源 Task，与 Run/create 互斥。 `purgeOwner` 复用 owner drain、全部 Run 终态检查和 scheduler purge，清理纳入 Task 子记录。取消、恢复、清理都保持现有 slot/Temporal 条件。
+在 `deploy/README.md` 的可信 review module 说明中，同步默认导出签名 `(reviewRun, closeTaskRun, readTaskClosure) => cleanup`（cleanup 继续允许 void 或 Promise<void>）。列明 `reviewRun({runId,failedGeneration,readyGeneration,stableOperationId,expectedSnapshotSha256}):Promise<void>` 确认原 Run 成功；`closeTaskRun({runId,decision:"failed"|"unconfirmed",expectedGeneration}):Promise<void>` 在可信退出及沙盒/会话前置均已确认时结案；`readTaskClosure(runId:string):TaskClosureAudit|null` 只读最小审计，业务 purge 后仍可查询。三个参数仅由 Orchestrator 安装时传给受信模块，HTTP 不暴露；旧只接收 reviewRun 的模块可继续用第一个参数。测试启动一个只使用原参数的模块和一个使用三个参数的模块，验证安装及 cleanup、旧回调签名、两种结案和 purge 后读回，以及公共/私有业务 HTTP 均 404。
+
+验证：`pnpm --filter @bento/orchestrator test`。PASS：跨 owner 404，retry 原键不重复，source 项目门禁下无取消副作用，实际 stop 证据前 slot 不释放，SDK/UNKNOWN/缺 checkpoint 失败安全。单独篡改 proof JSON、SHA、binding、generation 时 Workspace restore 与 History restore 调用均为 0。在每个 receipt 阶段关闭并重开，以原 attempt 续作，分别验证两个摘要，历史结果不变。对 fixture 启动子进程做两次退出注入。第一次在 exits 文件和目录 fsync 完成后、onWorkerExit 调用前中止进程，确认 Store 无 worker_exit；重启后 observeWorkerExit 回原字段并写入同一 runId/generation，记录时间与宿主文件一致。第二次在宿主退出文件未持久前中止，确认重启仍无两处回执，保留 needs_review，重试 409，可信结案拒绝。对仅回调宿主另测回调未入 Store 时同样失效关闭。其余断言涵盖确定失败无 retry proof 时终态不可重试、项目及账号清理后仍可由受信模块查询最小结案审计。STOP：任何歧义保留原证据与现场，禁止在本步调整 Worker's SDK effect 语义。
+
+### T5 连接个人端 Task 与项目来源
+
+前置状态：私有 HTTP 分发和清理 receipt 可用。
+
+允许修改：`apps/workspace/api/protocol.ts`、`apps/workspace/api/execution-service-http.ts`、`apps/workspace/api/server.ts`、`apps/workspace/api/space.ts`、`apps/workspace/api/space-execution.ts`、`apps/workspace/api/space-files.test.ts`、`apps/workspace/api/mock.ts`。禁止修改：Go 账号与会话实现、存储额度、旧 API 语义。
+
+执行：`protocol.ts` 增 `TaskOperation` 严格并入 `Operation`，解析与 `publicJson` 按表逐字段验证。 `httpBackend` 仅负责 Operation→method/path/body/header 和错误映射。 `taskEntryServer` 调用现有 account/Origin 校验，使用新 parser，再从 backend 转发。未配置 space 时 blank、Task list/detail/events、所有 Run 路径照常转发；snapshot 返回 503。 `spaceExecution` 新增 `space_tasks` 表，唯一 `(owner,key)`，持久 `id,owner,spaceId,key,hash,name,fileIds,state,canonicalBody,lastError`，state 为 pinned/frozen/submitted/ready/failed/abandoned，后 2 个字段可空。另建 `space_task_inputs(taskId,fileId)`，pin 与已保存文件校验同一事务。读文件时再次验证 owner、path、字节、UTF-8 与限额，完整 frozen body 写入 SQLite 后才调用上游。READY 回执核对 taskId、inputDigest 后释放 pin。来源无效且从未送达时释放 pin，保持失败原意图可按键回读，用户可改选择并用新键。未确认提交用原 canonicalBody 和 key。 `mySpace` 的 file delete 对 pinned 文件返回既有冲突语义，`advanceProjectDeletion` 按上文持久 phase 和单一 Orchestrator receipt 完成 hold/commit/release，最后物理清理。account sweep 使用 owner drain 和 receipt 收敛规则，不触发 Run 停止。mockBackend 显式区分 Task Operation，与旧 project 分支隔离。mock 的 Task 业务路由回 503 tasks_unavailable，source impact 返回零计数。mock 的 source hold/commit/release 执行同一内存回执状态机，有旧项目时同时持有该旧项目门禁，直接项目删除保持原路径。
+
+验证：`pnpm --filter @bento/workspace-api check`。PASS：双 HTTP 实测 space undefined 的全部读取和 Run 透传、snapshot 503、回包丢失原 ID、输入不合规零上游写、项目删除/文件删除并发及 owner purge 重开对账、无事件 key 暴露。新增断言分别覆盖仅旧项目忙和仅 Task 忙时零清理、hold/release/commit 丢回包乱序重放、release tombstone 阻止晚到 hold、owner drain 不打断已受理 commit。STOP：跨 SQLite 结论未知时保留原意图，禁止放行 pin 或另建 Task。
+
+### T6 接通 Worker 的可公开事件
+
+前置状态：服务能用 Store 发布 Run 结果且受信绑定校验通过。
+
+允许修改：`apps/worker/protocol.ts`、`apps/worker/dsh-worker.ts`、`apps/orchestrator/openshell/single-host.ts`、`apps/orchestrator/execution-service/service.ts`、`apps/orchestrator/execution-service/service.test.ts`、`apps/orchestrator/execution-service/local.ts`、`deploy/README.md`。禁止修改：Binding/Grant/WorkerResult 形态、Agent 的恢复协议、SessionHistory 或断开栅栏。 `WorkerRequest` 只新增 `publicEventsUrl?: string`。保留 `mode,binding,grant,prompt?,persistenceUrl,operationUrl,gateway?` 的类型，以及 `grant.run` 作为唯一 Run ID。warm/stdio 仍按原 JSON 传递；旧 fixture 省略新字段时跳过公开投影，`/operations` 行为不变。
+
+执行：`protocol.ts` 新增 `PublicWorkerEvent` 与 `publicEventsUrl`。`apps/orchestrator/execution-service/service.ts::serveExecution` 中，将既有 `listen(execution.operationIngress(canExecute), options.workerPort?.operation)` 改为传第二个参数 `acceptTaskEvents`。其内部 `worker` 仅对 Task execute 请求加 `publicEventsUrl: new URL("/task-events", operationUrl).href`。 `apps/orchestrator/openshell/single-host.ts::SingleHostExecution.operationIngress` 在现有 `createServer` handler 内增加 `POST /task-events` 分支，通过原 `grant(authorization, allow)` 校验，并在读完有限正文后再次检查 allow，再调用 `acceptTaskEvents(grant, parsedBody)`。公开事件入口复用该私有监听地址；`POST /operations` 保留原路径、限制和响应。 `runDshWorker` 在既有 event slice 上调用公有投影并逐批 POST，响应未确认以同一 event ID 重试一次，重复失败走 review。Orchestrator 按活跃 execute grant、同绑定与本 Run generation 校验并去重，完成前校验已收投影结束批次，空投影也必须发 `{items:[]}` 作为结束。Store 在 T2 的 appendTaskEvents 同一事务记录 `(runId,generation)` 的投影结束标记，结束后仅接受原批次重放。此处在 T6 校验 T2 已具备的标记。 `localHost.worker` 在成功回执前沿同一 URL 发送 fixture 投影和结束批。原消息、结果摘要和 checks 在 Store 只读路径分别投影，保持旧事件的不变性。部署手册记录私有 bootstrap callback 的字段、限额与敏感边界。
+
+验证：`pnpm --filter @bento/worker typecheck`，`pnpm --filter @bento/orchestrator test`。PASS：两个 Run 调用同 DSH Session，另 Task 隔离；重放/旧代/伪造拒绝；公开 payload 无凭据和原始参数；丢回执不会造成重复事件、成功前可查询已收批。STOP：可信 bootstrap 可公开事件契约无法满足时明确该 adapter 未覆盖并禁止公开原始事件。
+
+### T7 交付 Web Task 路由和状态
+
+前置状态：公开 HTTP、Worker 事件和版本化结果通过测试。
+
+允许修改：`apps/workspace/web/src/main.tsx`、`apps/workspace/web/src/api.ts`、`apps/workspace/web/src/pages.tsx`、`apps/workspace/web/src/space.tsx`、`apps/workspace/web/e2e/task.spec.ts`。禁止修改：上传状态机、旧 Run URL 的解析和行为、认证、全局样式。
+
+执行：`main.tsx` 在受保护路由新增 `/tasks/:taskId` → `TaskDetails`。 `Dashboard/Composer` 用 blank create，空间文件选择器以 snapshot create 连接该路由。 读取 `GET /api/tasks` 仅在收到 503 tasks_unavailable 时显示旧 mock 创建 UI。Playwright 的新路径通过 `page.route` 提供可重入 Task fixtures，旧流程继续使用默认 mockBackend。 `TaskList` 合并新 Task 与旧 Run 入口，保留 `/runs/:runId?project=<projectId>` 的既有 `RunDetails` 解析、读取、取消和下载。旧地址不重定向、不查 Task。由 Task 产生的 Run 详情只通过 `/tasks/:taskId?run=<runId>` 选择，缺 run 参数选最新，参数不属本 Task 时显示找不到该 Run 并避免读取。 `api.ts` 新增 DTO 和 Task fetch helpers，复用 session account query 隔离。浏览器以 account、操作、Task 或 source 作为 pending key scope，sessionStorage 保存 key 和规范请求标识，未知回包重读或原键重试，确定受理后清除；失败准备按钮调用原址 prepare，重试请求禁止提交另一个 prompt。 `TaskDetails` 首次读取 Task、Run 列表和 after=0，再按已确认最大 sequence 串行轮询，按 event id 去重。断线保留同账号的已确认内容，登录丢失或归属失效清除。显示冻结文件、版本、准备错误、状态、可继续/取消/重试原因、恢复可能丢弃本轮变更提示，按选定 Run/version/view 共用预览和下载 URL。
+
+验证：`pnpm --filter @bento/web check`，`pnpm --filter @bento/web exec playwright test e2e/task.spec.ts`。PASS：空白/空间创建、原址、另一浏览器重准备失败任务、同 key 报错重试、旧 URL、双浏览器重复轮询、两轮结果与安全 retry、unsafe 禁用和旧 result 下载字节均有明确断言。STOP：UI 推断超出服务端状态时退回 API 或页面本步的原职责修复。
+
+### T8 验证、Readiness 与删除 RUNBOOK
+
+前置状态：T1–T7 全部已提交并保留验证记录。核对最新 `origin/main` 的当前需求、Readiness 证据与共享改动；如需同步或复验，先按 PR 规则在仍有明确步进边界时完成，变更契约须复审。
+
+允许修改：`docs/40-readiness/CURRENT-READINESS.md` 和删除本 RUNBOOK。禁止修改：生产、测试、长期契约与部署文件。若发现问题回到对应步骤修复和重验。
+
+执行：
+
+1. 各步的 focused 验证已完成。T8 从根目录依次运行以下命令并记录退出码。前三条分别确认 Orchestrator、个人端双 HTTP、浏览器的新增断言实际执行，第 4 条为根回归。Workspace 校验比较可信 volume snapshot SHA 与 Workspace checkpoint SHA；Session 校验比较 history restoredDigest 与 DSH checkpoint SHA。
+
+    ```sh
+    node --import ./register-paths.mjs --experimental-strip-types --test apps/orchestrator/execution-service/service.test.ts apps/orchestrator/openshell/remote-session.test.ts apps/orchestrator/openshell/persistence-ingress.test.ts
+    node --import ./register-paths.mjs --test apps/workspace/api/space-files.test.ts
+    pnpm --filter @bento/web exec playwright test e2e/task.spec.ts
+    pnpm check
+    git diff --check origin/main...HEAD
+    ```
+
+2. 外部验收先查看 A 根 `ENVIRONMENTS.md` 的相关章节，缺失时查看主 checkout 根受控文件。用 [部署手册](../../deploy/README.md) 启动受控部署，按实际宿主能力执行以下固定场景。环境、账号或适配器缺失时，在 Readiness 记录对应 Not Covered，本地门禁照常执行。
+
+    - **普通真实宿主**。创建 blank 和两文件 snapshot Task，在同一 Task 完成两轮有依赖的修改。第二浏览器按同一地址断开再连接，核对 event ID 不重复。用 `git apply --check changes.patch` 检查累计补丁，再应用到冻结输入并与所选 Run 的结果树比对。重新下载首轮补丁，用 `shasum -a 256 changes.patch` 比对原结果。轮换前后任务分别核对版本，另一 Task 的工作区无前一 Task 未交付修改。验证宿主已执行且被可信判定为 failed 的 Run，在缺 taskRecovery 的部署用同源 POST retry，预期 409 run_not_retryable、reason=stop_unconfirmed、无新 Run 和无 restore；若普通宿主无法可信结案，保留该 Run 的 needs_review，断言 HTTP 409、error.code=run_not_retryable、error.reason=needs_review，原 Run 仍为 needs_review，且未创建新 Run、未触发 restore，将前一条失败终态分支记 Not Covered。普通宿主的成功用例可记录为 WEB-A06/A07/A11/A13 的实测证据，WEB-A12 的真实安全恢复仍未覆盖。
+    - **具备可信退出与卷独占的真实宿主**。仅当受控部署能提供实际可读的旧代退出记录、无 UNKNOWN 证据及恢复期卷独占时运行。首轮成功后第二轮部分写入再取消，确认退出前仍占槽；只有可信停止时进入 cancelled。按同一 K 重试两次，得到同一个新 Run ID，回读并分别比较 Workspace 和 Session 摘要，保留首轮和原失败尝试记录，确认重新执行成功。模拟 UNKNOWN，再发 retry 返回 409，Workspace、Session 和旧结果不变。全部断言实际通过后可记录 WEB-A12 的真实安全重试证据；能力、环境或任一断言缺失则保留 WEB-07 部分实现并写明复验前提。
+    - 两类真实环境均使用部署允许的测试标记检查凭据隔离，验收记录只保留脱敏证据。fixture 不用于提升真实宿主覆盖。
+
+3. 只更新 WEB-04/05/07/08 行，列日期、最新验证 commit、执行方式、必需用例实际结果与未覆盖边界。仅在全部适用证据通过时标已实现，缺真实覆盖的保留部分实现。删除 RUNBOOK，检查并清理仅引用它的 Readiness 文本，若其他文件存在引用回原步骤处理。
+4. 运行 `git diff --check`，执行 `rg -n 'RUNBOOK-WEB-MULTIRUN' --glob '*.md' .`，预期 rg 退出 1；检查变更内 Markdown 相对链接及目标锚点。以 Readiness 与 RUNBOOK 删除同一提交收口。再按[PR 规则](../00-governance/PR-RULES.md)推送、审查、合并与同步，记录最新真实 PR HEAD 所对应的结果。
+
+PASS：全量门禁通过、实际结果与 Readiness 对应、删除临时文档无残留引用。STOP：必需本地断言失败、验证证据含敏感值或差异不能复现时保留阶段现场。外部环境缺失记录未覆盖和复验前置条件。
