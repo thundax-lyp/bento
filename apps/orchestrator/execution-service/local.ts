@@ -197,7 +197,7 @@ export function localHost(root: string): ExecutionHost {
             throw new Error('Invalid Task volume pointer');
         return target;
     };
-    async function resolveTaskVolume(binding: Binding) {
+    async function resolveTaskVolume(binding: Binding, name?: string) {
         const hostRoot = await realpath(root);
         const projectRoot = await realpath(project(binding));
         if (
@@ -205,7 +205,10 @@ export function localHost(root: string): ExecutionHost {
             dirname(projectRoot) !== hostRoot
         )
             throw new Error('Invalid Task project root');
-        const target = join(projectRoot, await getPointer(binding));
+        const entry = name ?? (await getPointer(binding));
+        if (!entry.startsWith('volume-') || !uuid.test(entry.slice(7)))
+            throw new Error('Invalid Task volume entry');
+        const target = join(projectRoot, entry);
         if (
             !(await lstat(target)).isDirectory() ||
             (await realpath(target)) !== target
@@ -437,8 +440,18 @@ export function localHost(root: string): ExecutionHost {
                     }
                     if (journal.sha256 !== expectedSha256)
                         throw new Error('Conflicting restore input');
-                    if (journal.phase === 'prepared')
+                    if (journal.phase === 'prepared') {
+                        const staging = await resolveTaskVolume(
+                            binding,
+                            journal.stagedVolume,
+                        );
+                        if (
+                            snapshotDigest(await readTextVolume(staging)) !==
+                            expectedSha256
+                        )
+                            throw new Error('Prepared restore staging differs');
                         await publishPointer(binding, journal.stagedVolume);
+                    }
                     if (
                         snapshotDigest(
                             await readTextVolume(

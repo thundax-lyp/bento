@@ -8,6 +8,7 @@ import {
     mkdir,
     mkdtemp,
     readFile,
+    readlink,
     readdir,
     rm,
     writeFile,
@@ -30,7 +31,12 @@ import { commandHost } from './command-host.ts';
 import { completedTurn } from '@/apps/worker/dsh-worker.ts';
 import { Store } from './store.ts';
 import { serveExecution, snapshotSha256 } from './service.ts';
-import type { ExecutionHost, FileText, WorkerRequest } from './types.ts';
+import {
+    executionBindingDigest,
+    type ExecutionHost,
+    type FileText,
+    type WorkerRequest,
+} from './types.ts';
 import { processWorker } from './worker.ts';
 import { reserveOperation } from '@/apps/worker/protocol.ts';
 import { prewarmedWorker } from './warm-worker.ts';
@@ -4014,4 +4020,52 @@ test('fixture recovery journals a verified volume and refuses overlap with an ac
         { attemptId, sha256: digest },
     );
     assert.deepEqual(await host.snapshot(binding), readme);
+});
+
+test('prepared restore validates staging before changing the published pointer', async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), 'bento-task-stage-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const binding = {
+        tenant: 'tenant',
+        project: randomUUID(),
+        session: randomUUID(),
+        sandbox: 'sandbox',
+        volume: 'volume',
+    };
+    const host = localHost(directory);
+    await host.provisionTask(binding, readme, host.environmentVersion);
+    const root = join(directory, binding.project);
+    const pointer = join(root, 'task-volume');
+    const previousVolume = await readlink(pointer);
+    const attemptId = randomUUID();
+    const stagedVolume = 'volume-' + attemptId;
+    await mkdir(join(root, stagedVolume));
+    await writeFile(join(root, stagedVolume, 'README.md'), 'damaged staging');
+    await mkdir(join(root, 'restores'));
+    const sha256 = snapshotSha256(readme);
+    await writeFile(
+        join(root, 'restores', attemptId + '.json'),
+        JSON.stringify({
+            attemptId,
+            phase: 'prepared',
+            sha256,
+            bindingDigest: executionBindingDigest(binding),
+            previousVolume,
+            stagedVolume,
+        }),
+    );
+    const restarted = localHost(directory);
+    await assert.rejects(
+        restarted.taskRecovery!.restoreTask(binding, attemptId, readme, sha256),
+        /staging differs/,
+    );
+    assert.equal(await readlink(pointer), previousVolume);
+    assert.deepEqual(await restarted.snapshot(binding), readme);
+    await rm(join(root, stagedVolume), { recursive: true });
+    await assert.rejects(
+        restarted.taskRecovery!.restoreTask(binding, attemptId, readme, sha256),
+        { code: 'ENOENT' },
+    );
+    assert.equal(await readlink(pointer), previousVolume);
+    assert.deepEqual(await restarted.snapshot(binding), readme);
 });
