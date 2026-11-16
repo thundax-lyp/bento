@@ -4128,6 +4128,12 @@ test(
         const written = barrier();
         let controller = await start(state, {
             ...host,
+            taskRecovery: {
+                ...host.taskRecovery!,
+                async restoreTask() {
+                    throw new Error('Wait for restarted controller');
+                },
+            },
             async worker(request, signal, slot, onExit) {
                 const result = await host.worker(request, signal, slot, onExit);
                 if (request.prompt === 'second' && ++performed === 1) {
@@ -4944,7 +4950,7 @@ test(
         await mkdir(join(directory, stagedVolume));
         await writeFile(
             join(directory, stagedVolume, 'damaged.txt'),
-            'not the checkpoint',
+            Buffer.from([0xff]),
         );
         await mkdir(join(directory, 'restores'));
         await writeFile(

@@ -16,7 +16,7 @@ import {
     writeFile,
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { filePath, textSnapshot } from './input.ts';
+import { filePath, RequestError, textSnapshot } from './input.ts';
 import { operationId, reserveOperation } from '@/apps/worker/protocol.ts';
 import {
     TaskRestoreEvidenceConflict,
@@ -32,6 +32,8 @@ import {
     type WorkerRequest,
 } from './types.ts';
 
+class InvalidWorkspaceContent extends Error {}
+
 export async function readTextVolume(root: string) {
     const files: FileText[] = [];
     let bytes = 0;
@@ -39,7 +41,9 @@ export async function readTextVolume(root: string) {
     async function read(directory: string, prefix: string) {
         for (const entry of await readdir(directory, { withFileTypes: true })) {
             if (++entries > 4096)
-                throw new Error('Workspace has too many entries');
+                throw new InvalidWorkspaceContent(
+                    'Workspace has too many entries',
+                );
             const path = prefix + entry.name;
             filePath(path);
             const full = join(directory, entry.name);
@@ -48,25 +52,36 @@ export async function readTextVolume(root: string) {
                 continue;
             }
             if (!entry.isFile() || files.length >= 100)
-                throw new Error('Workspace is outside text snapshot limits');
+                throw new InvalidWorkspaceContent(
+                    'Workspace is outside text snapshot limits',
+                );
             const size = (await lstat(full)).size;
             if (bytes + size > 1024 * 1024)
-                throw new Error('Workspace exceeds size limit');
+                throw new InvalidWorkspaceContent(
+                    'Workspace exceeds size limit',
+                );
             const buffer = await readFile(full);
             bytes += buffer.length;
             if (bytes > 1024 * 1024)
-                throw new Error('Workspace exceeds size limit');
-            files.push({
-                path,
-                text: new TextDecoder('utf-8', {
+                throw new InvalidWorkspaceContent(
+                    'Workspace exceeds size limit',
+                );
+            try {
+                const text = new TextDecoder('utf-8', {
                     fatal: true,
                     ignoreBOM: true,
-                }).decode(buffer),
-            });
+                }).decode(buffer);
+                files.push({ path, text });
+            } catch (error) {
+                throw new InvalidWorkspaceContent(
+                    'Workspace file is not valid UTF-8',
+                    { cause: error },
+                );
+            }
         }
     }
     if (!(await lstat(root)).isDirectory())
-        throw new Error('Workspace directory required');
+        throw new InvalidWorkspaceContent('Workspace directory required');
     await read(root, '');
     return textSnapshot(files);
 }
@@ -329,7 +344,13 @@ export function localHost(root: string): ExecutionHost {
             );
         } catch (error) {
             const code = (error as NodeJS.ErrnoException).code;
-            if (code === 'ENOENT' || code === 'ELOOP' || code === 'ENOTDIR')
+            if (
+                error instanceof InvalidWorkspaceContent ||
+                error instanceof RequestError ||
+                code === 'ENOENT' ||
+                code === 'ELOOP' ||
+                code === 'ENOTDIR'
+            )
                 throw new TaskRestoreEvidenceConflict(
                     'Restore volume is missing or invalid',
                     { cause: error },
