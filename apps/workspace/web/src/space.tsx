@@ -17,13 +17,7 @@ import {
     transferFile,
 } from './space-api.ts';
 import type { PreviewResult, Space, Upload } from './space-api.ts';
-import {
-    ApiError,
-    createTask,
-    taskListQuery,
-    taskUrl,
-    tasksUnavailable,
-} from './api.ts';
+import { ApiError, createTask, taskListQuery, taskUrl } from './api.ts';
 import { Button, Notice } from './ui';
 
 function message(error: unknown) {
@@ -327,7 +321,7 @@ function CloudProject({ account, id }: { account: string; id: string }) {
     const project = useQuery(spaceProjectQuery(account, id));
     const tasks = useQuery(taskListQuery(account));
     const taskEnabled = tasks.isSuccess;
-    const legacyEnabled = tasksUnavailable(tasks.error);
+    const legacyEnabled = !taskEnabled;
 
     const navigate = useNavigate();
     const deletionKey = JSON.stringify(['bento:project-delete', account, id]);
