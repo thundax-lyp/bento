@@ -12,6 +12,7 @@ type InstallReview = (
 async function main() {
     const {
         BENTO_STATE_DIR,
+        BENTO_EXECUTION_ENVIRONMENT_VERSION,
         BENTO_SERVICE_BEARER,
         BENTO_HOST_MODULE,
         BENTO_HOST_CONFIG,
@@ -25,6 +26,10 @@ async function main() {
     } = process.env;
     if (!BENTO_STATE_DIR || !BENTO_SERVICE_BEARER)
         throw new Error('State and service bearer required');
+    if (
+        !/^sha256:[0-9a-f]{64}$/.test(BENTO_EXECUTION_ENVIRONMENT_VERSION ?? '')
+    )
+        throw new Error('Execution environment version required');
     const state = resolve(BENTO_STATE_DIR);
     const port = Number(BENTO_PORT ?? 8788);
     if (!Number.isInteger(port) || port < 0 || port > 65535)
@@ -64,6 +69,9 @@ async function main() {
             'Select local fixture or private OpenShell host configuration',
         );
     }
+
+    if (host.environmentVersion !== BENTO_EXECUTION_ENVIRONMENT_VERSION)
+        throw new Error('Execution environment version mismatch');
 
     if (BENTO_TEMPORAL_ADDRESS !== undefined && !BENTO_TEMPORAL_TASK_QUEUE)
         throw new Error('Temporal Task Queue required');
@@ -139,7 +147,7 @@ async function main() {
 
 main().catch(() => {
     process.stderr.write(
-        'Bento execution service failed to start. Check state directory, port, bearer, host and review modules, and Temporal configuration.\n',
+        'Bento execution service failed to start. Check state directory, port, bearer, environment version, host and review modules, and Temporal configuration.\n',
     );
     process.exitCode = 1;
 });

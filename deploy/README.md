@@ -96,6 +96,16 @@ PASS 要求基线 Web 健康，首页和匿名会话返回 200、401。候选 We
 
 ### 配置执行服务
 
+部署方从可信 launcher 配置取得 `BENTO_EXECUTION_IMAGE_DIGEST` 和 `BENTO_EXECUTION_POLICY_DIGEST`，两项都使用 `sha256:` 加 64 位小写十六进制。导出这两项后运行：
+
+```sh
+node -e 'const {createHash}=require("node:crypto"); const imageDigest=process.env.BENTO_EXECUTION_IMAGE_DIGEST; const policyDigest=process.env.BENTO_EXECUTION_POLICY_DIGEST; if (![imageDigest,policyDigest].every(x=>/^sha256:[0-9a-f]{64}$/.test(x??""))) process.exit(2); process.stdout.write("sha256:"+createHash("sha256").update(JSON.stringify({imageDigest,policyDigest}),"utf8").digest("hex")+"\n");'
+```
+
+把输出保存到 Compose 根 `.env` 的 `BENTO_EXECUTION_ENVIRONMENT_VERSION`。执行服务启动时校验该值与宿主公开的环境版本一致。命令适配器从私有 host JSON 的 `imageDigest` 与 `policyDigest` 生成版本。模块适配器从相同的可信摘要生成 `ExecutionHost.environmentVersion`。配置缺失或不一致时拒绝启动。
+
+新建 Task 固定当前版本。可信 `provisionTask` 必须按请求中的冻结版本准备并返回独立观测到的版本、sandbox 和 volume。轮换时保留旧版本的可信配置和已准备的绑定。旧版本无法准备时保留原 Task 和冻结输入，以便恢复该版本后重新准备。
+
 在 `debug-workspace/execution.env` 选择一种受信适配器。私有文件放在 `debug-workspace/execution/`，在容器内以只读方式挂载到 `/app/private`。Orchestrator 镜像包含 Go Temporal 控制面、执行服务和 DSH Worker 源码及运行依赖。容器以 UID 1000 运行，私有文件须允许该身份读取。
 
 - `BENTO_HOST_CONFIG=/app/private/host.json` 使用命令适配器。JSON 包含 Gateway、workspace scope、mTLS 文件、固定 SDK 的 `raw.js`，以及可信的 `control` 和 `worker` 命令。命令与文件路径以容器内路径为准，二进制须匹配容器平台。控制命令负责项目导入、独立读卷、沙盒停启及观察。Worker 命令由受信启动器执行，启动器隔离 Worker 与宿主管理凭据，并向 Worker 提供 `BENTO_DSH_BOOTSTRAP`。协议见[命令宿主适配器](../apps/orchestrator/execution-service/command-host.ts)。

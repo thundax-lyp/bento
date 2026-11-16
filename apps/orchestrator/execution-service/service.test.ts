@@ -12,6 +12,7 @@ import {
     rm,
     writeFile,
 } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { connect } from 'node:http2';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,7 +25,8 @@ import { PersistenceFence } from '../openshell/persistence-fence.ts';
 import { SingleHostExecution } from '../openshell/single-host.ts';
 import { executionHttp } from './http.ts';
 import { dockerOpenShellPurge } from './docker-openshell-purge.ts';
-import { localHost } from './local.ts';
+import { localEnvironmentVersion, localHost } from './local.ts';
+import { commandHost } from './command-host.ts';
 import { completedTurn } from '@/apps/worker/dsh-worker.ts';
 import { Store } from './store.ts';
 import { serveExecution, snapshotSha256 } from './service.ts';
@@ -2507,6 +2509,8 @@ if (process.argv[2] === '--effect-worker') {
                 env: {
                     ...process.env,
                     BENTO_STATE_DIR: state,
+                    BENTO_EXECUTION_ENVIRONMENT_VERSION:
+                        localEnvironmentVersion,
                     BENTO_SERVICE_BEARER: testToken,
                     BENTO_PORT: '0',
                     BENTO_REVIEW_MODULE: module,
@@ -2646,6 +2650,8 @@ if (process.argv[2] === '--effect-worker') {
                             ),
                         ),
                         BENTO_STATE_DIR: state,
+                        BENTO_EXECUTION_ENVIRONMENT_VERSION:
+                            localEnvironmentVersion,
                         BENTO_SERVICE_BEARER: testToken,
                         BENTO_BIND_HOST: '127.0.0.1',
                         BENTO_PORT: '0',
@@ -3753,4 +3759,259 @@ test('settled retry receipts release the attempt reservation and preserve closur
         'evidence',
     );
     assert.throws(() => store.task(owner, taskId), { status: 404 });
+});
+
+test('startup requires the trusted host environment version', async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), 'bento-task-start-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const { BENTO_EXECUTION_ENVIRONMENT_VERSION: _version, ...env } =
+        process.env;
+    void _version;
+    for (const version of [undefined, 'sha256:' + 'f'.repeat(64)]) {
+        const state = join(directory, version ? 'mismatch' : 'missing');
+        const child = spawn(
+            process.execPath,
+            [
+                ...process.execArgv,
+                fileURLToPath(new URL('./start.ts', import.meta.url)),
+                '--local',
+            ],
+            {
+                env: {
+                    ...env,
+                    BENTO_STATE_DIR: state,
+                    BENTO_SERVICE_BEARER: testToken,
+                    ...(version
+                        ? { BENTO_EXECUTION_ENVIRONMENT_VERSION: version }
+                        : {}),
+                },
+                stdio: 'ignore',
+            },
+        );
+        assert.deepEqual(await once(child, 'close'), [1, null]);
+        await assert.rejects(readFile(join(state, 'business.sqlite')), {
+            code: 'ENOENT',
+        });
+    }
+});
+
+test('command host requests the frozen environment and exposes no fixture recovery', async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), 'bento-command-version-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const protobuf = join(directory, 'node_modules', '@bufbuild', 'protobuf');
+    await mkdir(protobuf, { recursive: true });
+    await writeFile(
+        join(protobuf, 'index.js'),
+        'module.exports = { fromBinary() {} };',
+    );
+    await writeFile(join(directory, 'raw.mjs'), 'export {};');
+    await writeFile(join(directory, 'local-material'), 'fixture');
+    const control = join(directory, 'control.cjs');
+    await writeFile(
+        control,
+        `
+        let json = '';
+        process.stdin.on('data', chunk => json += chunk);
+        process.stdin.on('end', () => {
+            const {action,binding,environmentVersion} = JSON.parse(json);
+            if (action !== 'provisionTask') process.exit(1);
+            process.stdout.write(JSON.stringify({
+                sandbox:binding.sandbox,volume:binding.volume,running:true,installed:true,
+                environmentVersion:environmentVersion === 'bad' ? 'other' : environmentVersion,
+            }));
+        });
+    `,
+    );
+    const configPath = join(directory, 'host.json');
+    const settings = {
+        imageDigest: 'sha256:' + '0'.repeat(64),
+        policyDigest: 'sha256:' + '1'.repeat(64),
+        gateway: 'https://fixture.invalid',
+        workspace: 'workspace',
+        ca: 'local-material',
+        cert: 'local-material',
+        key: 'local-material',
+        sdkRaw: 'raw.mjs',
+        control: { command: process.execPath, args: [control] },
+        worker: { command: process.execPath, args: [control] },
+    };
+    await writeFile(
+        configPath,
+        JSON.stringify({ ...settings, imageDigest: 'invalid' }),
+    );
+    await assert.rejects(
+        commandHost(configPath),
+        /Invalid execution environment identity/,
+    );
+    await writeFile(configPath, JSON.stringify(settings));
+    const host = await commandHost(configPath);
+    assert.equal(host.environmentVersion, localEnvironmentVersion);
+    assert.equal(host.taskRecovery, undefined);
+    assert.equal(host.observeWorkerExit, undefined);
+    const binding = {
+        tenant: 'tenant',
+        project: randomUUID(),
+        session: randomUUID(),
+        sandbox: 'sandbox',
+        volume: 'volume',
+    };
+    const frozen = 'sha256:' + 'e'.repeat(64);
+    assert.equal(
+        (await host.provisionTask(binding, [], frozen)).environmentVersion,
+        frozen,
+    );
+    await assert.rejects(
+        host.provisionTask(binding, [], 'bad'),
+        /observation mismatch/,
+    );
+});
+
+test('fixture recovery journals a verified volume and refuses overlap with an active writer', async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), 'bento-task-host-'));
+    const server = createServer(async (req, res) => {
+        for await (const chunk of req) void chunk;
+        if (req.url === '/operations') {
+            res.writeHead(201).end();
+            return;
+        }
+        res.end(JSON.stringify({ ok: true, value: { key: 'fixture' } }));
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    t.after(async () => {
+        server.close();
+        server.closeAllConnections();
+        await rm(directory, { recursive: true, force: true });
+    });
+    const address = server.address();
+    assert(address && typeof address === 'object');
+    const url = `http://127.0.0.1:${address.port}`;
+    const binding = {
+        tenant: 'tenant',
+        project: randomUUID(),
+        session: randomUUID(),
+        sandbox: 'sandbox',
+        volume: 'volume',
+    };
+    let host = localHost(directory);
+    await host.provisionTask(binding, readme, host.environmentVersion);
+    const grant = (generation: number) => ({
+        run: randomUUID(),
+        session: binding.session,
+        generation,
+        token: 'fixture',
+    });
+    const request = (generation: number): WorkerRequest => ({
+        mode: 'execute',
+        binding,
+        grant: grant(generation),
+        persistenceUrl: url,
+        operationUrl: url,
+        prompt: 'edited',
+    });
+    const preWrite = request(1);
+    await assert.rejects(host.worker(preWrite, AbortSignal.abort()));
+    assert.equal(
+        await host.taskRecovery!.readFixtureWriteReceipt!(
+            binding,
+            preWrite.grant.run,
+            1,
+        ),
+        null,
+    );
+    assert.deepEqual(await host.snapshot(binding), readme);
+
+    const writes = join(directory, binding.project, 'writes');
+    await writeFile(writes, 'block receipt directory');
+    const unknown = request(2);
+    await assert.rejects(host.worker(unknown, new AbortController().signal));
+    await rm(writes);
+    assert.equal(
+        await host.taskRecovery!.readFixtureWriteReceipt!(
+            binding,
+            unknown.grant.run,
+            2,
+        ),
+        null,
+    );
+    assert.match((await host.snapshot(binding))[0]!.text, /edited\n$/);
+
+    const run = request(3);
+    const attemptId = randomUUID();
+    const digest = snapshotSha256(readme);
+    const marker = join(directory, binding.project, 'running');
+    const beforeFailedStop = await host.snapshot(binding);
+    await rm(marker);
+    await mkdir(marker);
+    await assert.rejects(
+        host.taskRecovery!.restoreTask(binding, attemptId, readme, digest),
+    );
+    assert.deepEqual(await host.snapshot(binding), beforeFailedStop);
+    assert.equal(
+        await host.taskRecovery!.queryRestore(binding, attemptId),
+        null,
+    );
+    await rm(marker, { recursive: true });
+    await host.provisionTask(binding, readme, host.environmentVersion);
+    const execution = host.worker(run, new AbortController().signal);
+    await assert.rejects(
+        host.taskRecovery!.restoreTask(binding, attemptId, readme, digest),
+        /active writer/,
+    );
+    assert.equal(await execution, 'completed');
+    const receipt = await host.taskRecovery!.readFixtureWriteReceipt!(
+        binding,
+        run.grant.run,
+        3,
+    );
+    assert(receipt);
+    assert.equal(
+        receipt.fileSha256,
+        createHash('sha256')
+            .update((await host.snapshot(binding))[0]!.text)
+            .digest('hex'),
+    );
+    host = localHost(directory);
+    assert.deepEqual(
+        await host.taskRecovery!.readFixtureWriteReceipt!(
+            binding,
+            run.grant.run,
+            3,
+        ),
+        receipt,
+    );
+    assert(await host.observeWorkerExit!(binding, run.grant.run, 3));
+    await assert.rejects(
+        host.taskRecovery!.restoreTask(
+            binding,
+            attemptId,
+            readme,
+            'f'.repeat(64),
+        ),
+        /input digest/,
+    );
+    assert.deepEqual(
+        await host.taskRecovery!.restoreTask(
+            binding,
+            attemptId,
+            readme,
+            digest,
+        ),
+        { attemptId, sha256: digest },
+    );
+    host = localHost(directory);
+    assert.deepEqual(
+        await host.taskRecovery!.queryRestore(binding, attemptId),
+        { attemptId, phase: 'ready', sha256: digest },
+    );
+    assert.deepEqual(
+        await host.taskRecovery!.restoreTask(
+            binding,
+            attemptId,
+            readme,
+            digest,
+        ),
+        { attemptId, sha256: digest },
+    );
+    assert.deepEqual(await host.snapshot(binding), readme);
 });
