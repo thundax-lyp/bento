@@ -32,6 +32,7 @@ import { completedTurn } from '@/apps/worker/dsh-worker.ts';
 import { Store } from './store.ts';
 import { serveExecution, snapshotSha256 } from './service.ts';
 import {
+    TaskRestoreEvidenceConflict,
     executionBindingDigest,
     type ExecutionHost,
     type FileText,
@@ -4102,14 +4103,16 @@ test('prepared restore validates staging before changing the published pointer',
     const restarted = localHost(directory);
     await assert.rejects(
         restarted.taskRecovery!.restoreTask(binding, attemptId, readme, sha256),
-        /staging differs/,
+        (error: unknown) =>
+            error instanceof TaskRestoreEvidenceConflict &&
+            /staging differs/.test(error.message),
     );
     assert.equal(await readlink(pointer), previousVolume);
     assert.deepEqual(await restarted.snapshot(binding), readme);
     await rm(join(root, stagedVolume), { recursive: true });
     await assert.rejects(
         restarted.taskRecovery!.restoreTask(binding, attemptId, readme, sha256),
-        { code: 'ENOENT' },
+        TaskRestoreEvidenceConflict,
     );
     assert.equal(await readlink(pointer), previousVolume);
     assert.deepEqual(await restarted.snapshot(binding), readme);
@@ -4768,3 +4771,234 @@ test('startup registers the six trusted review callbacks only in process', async
         Array(6).fill('function'),
     );
 });
+
+test(
+    'uncertain retries yield to other Tasks and a damaged staging journal is durably blocked',
+    { timeout: 25_000 },
+    async (t) => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-retry-fairness-'));
+        const root = join(state, 'volume');
+        const base = localHost(root);
+        const executed = new Set<string>();
+        const fault: { taskId?: string } = {};
+        let deferRestore = true;
+        let transientCalls = 0;
+        let transientQueries = 0;
+        const host: ExecutionHost = {
+            ...base,
+            async worker(request, signal, slot, exit) {
+                const result = await base.worker(request, signal, slot, exit);
+                if (
+                    request.prompt === 'noop' &&
+                    fault.taskId !== undefined &&
+                    request.binding.project !== fault.taskId &&
+                    executed.has(request.binding.project)
+                )
+                    return result;
+                if (
+                    request.mode === 'execute' &&
+                    !executed.has(request.binding.project)
+                ) {
+                    executed.add(request.binding.project);
+                    return 'review';
+                }
+                return result;
+            },
+            taskRecovery: {
+                ...base.taskRecovery!,
+                async queryRestore(...args) {
+                    if (args[0].project === fault.taskId) transientQueries++;
+                    return base.taskRecovery!.queryRestore(...args);
+                },
+                async restoreTask(...args) {
+                    if (args[0].project === fault.taskId) {
+                        transientCalls++;
+                        if (deferRestore)
+                            throw new Error('Fixture restore response unknown');
+                    }
+                    return base.taskRecovery!.restoreTask(...args);
+                },
+            },
+        };
+        let controller = await start(state, host);
+        t.after(async () => {
+            await controller.close();
+            await rm(state, { recursive: true, force: true });
+        });
+        async function api(
+            path: string,
+            method = 'GET',
+            body?: unknown,
+            key?: string,
+        ) {
+            const response = await fetch(controller.url + '/v1' + path, {
+                method,
+                headers: {
+                    authorization: 'Bearer ' + testToken,
+                    'x-bento-owner-id': 'account-a',
+                    ...(key ? { 'idempotency-key': key } : {}),
+                    ...(body === undefined
+                        ? {}
+                        : { 'content-type': 'application/json' }),
+                },
+                ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+                signal: AbortSignal.timeout(5000),
+            });
+            return { status: response.status, body: await response.json() };
+        }
+        const workspaceSha256 = snapshotSha256([]);
+        async function create() {
+            const response = await api(
+                '/tasks',
+                'POST',
+                {
+                    id: null,
+                    name: 'Task',
+                    sourceSpaceId: null,
+                    inputFiles: [],
+                    inputManifest: [],
+                    inputDigest: workspaceSha256,
+                },
+                randomUUID(),
+            );
+            assert.equal(response.status, 202);
+            const id = response.body.task.id as string;
+            const path = '/tasks/' + id;
+            await until(
+                () => api(path),
+                (r) => r.body.task.status === 'ready',
+                'New Task ready',
+            );
+            return { id, path };
+        }
+        async function run(path: string) {
+            const response = await api(
+                path + '/runs',
+                'POST',
+                { prompt: 'noop' },
+                randomUUID(),
+            );
+            assert.equal(response.status, 202);
+            return path + '/runs/' + response.body.run.id;
+        }
+        const first = await create();
+        fault.taskId = first.id;
+        const firstRun = await run(first.path);
+        await until(
+            () => api(firstRun),
+            (r) => r.body.run.status === 'failed',
+            'First Task failed safely',
+        );
+        const key = randomUUID();
+        const retry = () => api(firstRun + '/retry', 'POST', undefined, key);
+        const firstAttempt = await retry();
+        assert.equal(firstAttempt.status, 202);
+        const attemptId = firstAttempt.body.retry.id as string;
+        await until(
+            async () => transientCalls,
+            (n) => n >= 2,
+            'Original attempt queried again',
+        );
+        assert.equal((await retry()).body.retry.state, 'preparing');
+        assert(transientQueries >= 2);
+
+        const second = await create();
+        const secondRun = await run(second.path);
+        await until(
+            () => api(secondRun),
+            (r) => r.body.run.status === 'failed',
+            'Second Task failed safely',
+        );
+        const secondAttempt = await api(
+            secondRun + '/retry',
+            'POST',
+            undefined,
+            randomUUID(),
+        );
+        assert.equal(secondAttempt.status, 202);
+        const other = await create();
+        executed.add(other.id);
+        const otherRun = await run(other.path);
+        await until(
+            () => api(otherRun),
+            (r) => r.body.run.status === 'succeeded',
+            'Independent Task progressed',
+        );
+        const secondRetry =
+            second.path + '/runs/' + secondAttempt.body.retry.runId;
+        await until(
+            () => api(secondRetry),
+            (r) => r.status === 200 && r.body.run.status === 'succeeded',
+            'Second retry progressed',
+        );
+
+        const store = new Store(join(state, 'business.sqlite'));
+        const binding = store.binding(
+            store.findRun(firstRun.split('/').at(-1)!),
+        );
+        store.close();
+        const directory = join(root, binding.project);
+        const pointer = join(directory, 'task-volume');
+        const previousVolume = await readlink(pointer);
+        const stagedVolume = 'volume-' + attemptId;
+        await mkdir(join(directory, stagedVolume));
+        await writeFile(
+            join(directory, stagedVolume, 'damaged.txt'),
+            'not the checkpoint',
+        );
+        await mkdir(join(directory, 'restores'));
+        await writeFile(
+            join(directory, 'restores', attemptId + '.json'),
+            JSON.stringify({
+                attemptId,
+                phase: 'prepared',
+                sha256: workspaceSha256,
+                bindingDigest: executionBindingDigest(binding),
+                previousVolume,
+                stagedVolume,
+            }),
+        );
+        deferRestore = false;
+        await until(
+            retry,
+            (r) => r.body.retry.state === 'blocked',
+            'Deterministic conflict became blocked',
+        );
+        assert.equal(await readlink(pointer), previousVolume);
+        const callsAtBlock = transientCalls;
+        await controller.close();
+        controller = await start(state, {
+            ...host,
+            observeRetryCleanup: async () => null,
+        });
+        assert.equal((await retry()).body.retry.state, 'blocked');
+        const reopenedStore = new Store(join(state, 'business.sqlite'));
+        assert.equal(
+            reopenedStore.taskRetry(attemptId).lastConfirmedPhase,
+            'preparing',
+        );
+        reopenedStore.close();
+        assert.equal(
+            await controller.reconcileTaskRetry({
+                attemptId,
+                expectedGeneration: 2,
+            }),
+            'pending',
+        );
+        await assert.rejects(
+            controller.closeTaskRetry({ attemptId, expectedGeneration: 2 }),
+            { code: 'review_unavailable' },
+        );
+        assert.equal(controller.readTaskRetryClosure(attemptId), null);
+        assert.equal(transientCalls, callsAtBlock);
+        await controller.close();
+        controller = await start(state, host);
+        await controller.closeTaskRetry({ attemptId, expectedGeneration: 2 });
+        assert.equal((await retry()).body.retry.state, 'closed');
+        assert.equal(
+            controller.readTaskRetryClosure(attemptId)?.authorityGeneration,
+            2,
+        );
+        assert.equal(await readlink(pointer), previousVolume);
+    },
+);

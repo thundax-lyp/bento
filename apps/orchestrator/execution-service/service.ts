@@ -13,6 +13,7 @@ import { conflict, textSnapshot } from './input.ts';
 import { projectBinding, Store, type ProjectDeletionReceipt } from './store.ts';
 import type { TemporalRunOptions, temporalRuns } from './temporal.ts';
 import {
+    TaskRestoreEvidenceConflict,
     executionBindingDigest,
     sha256Digest,
     type Binding,
@@ -589,7 +590,8 @@ export async function serveExecution(options: Options) {
             } catch (error) {
                 if (
                     !stop.signal.aborted &&
-                    error instanceof RetryEvidenceConflict
+                    (error instanceof RetryEvidenceConflict ||
+                        error instanceof TaskRestoreEvidenceConflict)
                 )
                     db.advanceTaskRetry(attempt.id, phase, 'blocked');
                 // An ambiguous host response is queried under the same attempt on the next tick.
@@ -1404,6 +1406,7 @@ export async function serveExecution(options: Options) {
             );
         }
         let enqueued = new Set<string>();
+        let retryCursor = 0;
 
         async function work() {
             // These Runs were fenced before capture failed. Retry the snapshot without another worker or Workflow.
@@ -1456,10 +1459,11 @@ export async function serveExecution(options: Options) {
                 const unfinished = db.next('active');
                 if (unfinished) return driveRun(unfinished, 0);
             }
-            const attempt = db.nextTaskRetry();
+            const attempt = db.nextTaskRetry(retryCursor);
             if (attempt) {
+                retryCursor = attempt.rowId;
                 await advanceTaskRetry(attempt);
-                return;
+                if (stop.signal.aborted) return;
             }
             const project = db.importing();
             if (project) {

@@ -1693,12 +1693,14 @@ export class Store {
         return this.retryByKey(id, key);
     }
 
-    nextTaskRetry() {
+    nextTaskRetry(afterRowId: number) {
         return this.db
             .prepare(
-                "SELECT * FROM retry_attempts WHERE phase IN ('preparing','workspace_restored','history_restored') ORDER BY rowid LIMIT 1",
+                `SELECT rowid AS rowId,* FROM retry_attempts
+            WHERE phase IN ('preparing','workspace_restored','history_restored')
+            ORDER BY (rowid<=?),rowid LIMIT 1`,
             )
-            .get() as RetryAttempt | undefined;
+            .get(afterRowId) as (RetryAttempt & { rowId: number }) | undefined;
     }
 
     recordTaskCheckpoint(

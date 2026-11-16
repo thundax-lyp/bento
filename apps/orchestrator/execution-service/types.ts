@@ -64,6 +64,8 @@ export type FixtureWriteReceipt = Pick<
     fileSha256: string;
 };
 
+export class TaskRestoreEvidenceConflict extends Error {}
+
 export type RestoreObservation = {
     attemptId: string;
     phase: 'prepared' | 'published' | 'ready';

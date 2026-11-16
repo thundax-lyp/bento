@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path';
 import { filePath, textSnapshot } from './input.ts';
 import { operationId, reserveOperation } from '@/apps/worker/protocol.ts';
 import {
+    TaskRestoreEvidenceConflict,
     executionBindingDigest,
     executionEnvironmentVersion,
     sha256Digest,
@@ -194,7 +195,9 @@ export function localHost(root: string): ExecutionHost {
     const getPointer = async (binding: Binding) => {
         const target = await readlink(taskPointer(binding));
         if (!target.startsWith('volume-') || !uuid.test(target.slice(7)))
-            throw new Error('Invalid Task volume pointer');
+            throw new TaskRestoreEvidenceConflict(
+                'Invalid Task volume pointer',
+            );
         return target;
     };
     async function resolveTaskVolume(binding: Binding, name?: string) {
@@ -204,16 +207,16 @@ export function localHost(root: string): ExecutionHost {
             projectRoot !== join(hostRoot, binding.project) ||
             dirname(projectRoot) !== hostRoot
         )
-            throw new Error('Invalid Task project root');
+            throw new TaskRestoreEvidenceConflict('Invalid Task project root');
         const entry = name ?? (await getPointer(binding));
         if (!entry.startsWith('volume-') || !uuid.test(entry.slice(7)))
-            throw new Error('Invalid Task volume entry');
+            throw new TaskRestoreEvidenceConflict('Invalid Task volume entry');
         const target = join(projectRoot, entry);
         if (
             !(await lstat(target)).isDirectory() ||
             (await realpath(target)) !== target
         )
-            throw new Error('Invalid Task volume root');
+            throw new TaskRestoreEvidenceConflict('Invalid Task volume root');
         return target;
     }
     const workspace = async (binding: Binding) =>
@@ -319,28 +322,78 @@ export function localHost(root: string): ExecutionHost {
             await rm(temporary, { force: true });
         }
     }
+    async function restoreVolumeDigest(binding: Binding, name?: string) {
+        try {
+            return snapshotDigest(
+                await readTextVolume(await resolveTaskVolume(binding, name)),
+            );
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (code === 'ENOENT' || code === 'ELOOP' || code === 'ENOTDIR')
+                throw new TaskRestoreEvidenceConflict(
+                    'Restore volume is missing or invalid',
+                    { cause: error },
+                );
+            throw error;
+        }
+    }
     async function readRestore(binding: Binding, attemptId: string) {
-        const journal = await readJson<RestoreJournal>(
-            scopedPath(binding, 'restores', attemptId),
-        );
-        if (!journal) return null;
+        let journal: RestoreJournal | null;
+        try {
+            const file = scopedPath(binding, 'restores', attemptId);
+            journal = JSON.parse(
+                await readFile(file, 'utf8'),
+            ) as RestoreJournal | null;
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+            if (error instanceof SyntaxError)
+                throw new TaskRestoreEvidenceConflict(
+                    'Invalid restore journal',
+                    { cause: error },
+                );
+            throw error;
+        }
         if (
+            !journal ||
             journal.attemptId !== attemptId ||
             journal.bindingDigest !== executionBindingDigest(binding) ||
             journal.stagedVolume !== 'volume-' + attemptId ||
-            !hex.test(journal.sha256)
+            typeof journal.sha256 !== 'string' ||
+            !hex.test(journal.sha256) ||
+            typeof journal.previousVolume !== 'string' ||
+            !journal.previousVolume.startsWith('volume-') ||
+            !uuid.test(journal.previousVolume.slice(7)) ||
+            !['prepared', 'published', 'ready'].includes(journal.phase)
         )
-            throw new Error('Conflicting restore journal');
-        const pointer = await getPointer(binding);
+            throw new TaskRestoreEvidenceConflict(
+                'Conflicting restore journal',
+            );
+        let pointer: string;
+        try {
+            pointer = await getPointer(binding);
+        } catch (error) {
+            const code = (error as NodeJS.ErrnoException).code;
+            if (
+                code === 'ENOENT' ||
+                code === 'EINVAL' ||
+                code === 'ELOOP' ||
+                code === 'ENOTDIR'
+            )
+                throw new TaskRestoreEvidenceConflict(
+                    'Missing or invalid published volume pointer',
+                    { cause: error },
+                );
+            throw error;
+        }
         if (journal.phase === 'prepared' && pointer === journal.previousVolume)
             return journal;
         if (
             pointer !== journal.stagedVolume ||
-            snapshotDigest(
-                await readTextVolume(await resolveTaskVolume(binding)),
-            ) !== journal.sha256
+            (await restoreVolumeDigest(binding)) !== journal.sha256
         )
-            throw new Error('Restore volume evidence mismatch');
+            throw new TaskRestoreEvidenceConflict(
+                'Restore volume evidence mismatch',
+            );
         return {
             ...journal,
             phase:
@@ -415,12 +468,16 @@ export function localHost(root: string): ExecutionHost {
             },
             async restoreTask(binding, attemptId, files, expectedSha256) {
                 if (snapshotDigest(files) !== expectedSha256)
-                    throw new Error('Unexpected restore input digest');
+                    throw new TaskRestoreEvidenceConflict(
+                        'Unexpected restore input digest',
+                    );
                 const path = scopedPath(binding, 'restores', attemptId);
                 const receipt = { attemptId, sha256: expectedSha256 };
                 const prior = await readRestore(binding, attemptId);
                 if (prior && prior.sha256 !== expectedSha256)
-                    throw new Error('Conflicting restore input');
+                    throw new TaskRestoreEvidenceConflict(
+                        'Conflicting restore input',
+                    );
                 if (prior?.phase === 'ready') return receipt;
                 return withStoppedVolume(binding, async () => {
                     let journal = await readRestore(binding, attemptId);
@@ -439,27 +496,25 @@ export function localHost(root: string): ExecutionHost {
                         await durableJson(path, journal);
                     }
                     if (journal.sha256 !== expectedSha256)
-                        throw new Error('Conflicting restore input');
-                    if (journal.phase === 'prepared') {
-                        const staging = await resolveTaskVolume(
-                            binding,
-                            journal.stagedVolume,
+                        throw new TaskRestoreEvidenceConflict(
+                            'Conflicting restore input',
                         );
+                    if (journal.phase === 'prepared') {
                         if (
-                            snapshotDigest(await readTextVolume(staging)) !==
-                            expectedSha256
+                            (await restoreVolumeDigest(
+                                binding,
+                                journal.stagedVolume,
+                            )) !== expectedSha256
                         )
-                            throw new Error('Prepared restore staging differs');
+                            throw new TaskRestoreEvidenceConflict(
+                                'Prepared restore staging differs',
+                            );
                         await publishPointer(binding, journal.stagedVolume);
                     }
-                    if (
-                        snapshotDigest(
-                            await readTextVolume(
-                                await resolveTaskVolume(binding),
-                            ),
-                        ) !== expectedSha256
-                    )
-                        throw new Error('Restore verification failed');
+                    if ((await restoreVolumeDigest(binding)) !== expectedSha256)
+                        throw new TaskRestoreEvidenceConflict(
+                            'Restore verification failed',
+                        );
                     await durableJson(path, { ...journal, phase: 'published' });
                     await start(binding);
                     if (!(await running(binding)).running)
