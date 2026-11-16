@@ -4,7 +4,12 @@ import { dirname, isAbsolute, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { SdkIngressOptions } from '../openshell/sdk-ingress.ts';
 import { object, textSnapshot } from './input.ts';
-import type { Binding, ExecutionHost, FileText } from './types.ts';
+import {
+    executionEnvironmentVersion,
+    type Binding,
+    type ExecutionHost,
+    type FileText,
+} from './types.ts';
 import { prewarmedWorker } from './warm-worker.ts';
 import { invokeProcess, processWorker, type Launch } from './worker.ts';
 
@@ -18,6 +23,8 @@ type Request = {
 };
 type Decoded = Request & { payload: { case: string; value: Request } };
 type Settings = {
+    imageDigest: string;
+    policyDigest: string;
     gateway: string;
     workspace: string;
     ca: string;
@@ -80,6 +87,10 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
     const settings = object(
         JSON.parse(await readFile(configPath, 'utf8')),
     ) as Settings;
+    const environmentVersion = executionEnvironmentVersion(
+        settings.imageDigest,
+        settings.policyDigest,
+    );
     if (
         !isAbsolute(settings.control?.command ?? '') ||
         !isAbsolute(settings.worker?.command ?? '')
@@ -115,10 +126,18 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
         action: string,
         binding: Binding,
         files?: readonly FileText[],
+        version?: string,
     ) {
         const output = await invokeProcess(
             settings.control,
-            { action, binding, ...(files === undefined ? {} : { files }) },
+            {
+                action,
+                binding,
+                ...(files === undefined ? {} : { files }),
+                ...(version === undefined
+                    ? {}
+                    : { environmentVersion: version }),
+            },
             AbortSignal.timeout(timeout),
             9 * 1024 * 1024,
         );
@@ -136,6 +155,15 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
         return { sandbox, volume, running, installed };
     }
     return {
+        environmentVersion,
+        async provisionTask(binding, files, version) {
+            const result = object(
+                await call('provisionTask', binding, files, version),
+            );
+            if (result.environmentVersion !== version)
+                throw new Error('Task environment observation mismatch');
+            return { ...observation(result), environmentVersion: version };
+        },
         sdk: {
             upstream,
             workspace: settings.workspace,

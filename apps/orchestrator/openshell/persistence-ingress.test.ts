@@ -1,10 +1,16 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { request } from 'node:http';
 import { test } from 'node:test';
 import { Authority } from './authority.ts';
 import { createPersistenceIngress } from './persistence-ingress.ts';
 import { WorkerGate } from './worker-gate.ts';
+import { SingleHostExecution } from './single-host.ts';
+import type { VerifiedStopProof } from './session-history.ts';
 
 test(
     'persistence dispatch preserves UTF-8 split across HTTP chunks',
@@ -81,3 +87,81 @@ test(
         }
     },
 );
+
+test('an absent history checkpoint restores only behind the new authority fence', async (t) => {
+    const folder = await mkdtemp(join(tmpdir(), 'bento-history-fence-'));
+    const binding = {
+        tenant: 'tenant',
+        project: 'project',
+        session: randomUUID(),
+        sandbox: 'sandbox',
+        volume: 'volume',
+    };
+    const observation = {
+        sandbox: binding.sandbox,
+        volume: binding.volume,
+        running: true,
+        installed: true,
+    };
+    let running = true;
+    const controller = new SingleHostExecution(
+        {
+            authority: join(folder, 'authority.sqlite'),
+            history: join(folder, 'history.sqlite'),
+        },
+        {
+            async stop() {
+                running = false;
+            },
+            async start() {
+                running = true;
+            },
+            async stopped() {
+                return !running;
+            },
+            async running() {
+                return { ...observation, running };
+            },
+        },
+    );
+    const server = controller.persistenceIngress();
+    t.after(async () => {
+        server.close();
+        server.closeAllConnections();
+        controller.close();
+        await rm(folder, { recursive: true, force: true });
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    assert(address && typeof address === 'object');
+    const rpc = (token: string, method: string) =>
+        fetch(`http://127.0.0.1:${address.port}/rpc`, {
+            method: 'POST',
+            headers: { authorization: 'Bearer ' + token },
+            body: JSON.stringify({ method, id: binding.session }),
+        });
+    controller.bind(binding, observation);
+    const source = randomUUID();
+    const next = randomUUID();
+    const checkpoint = controller.checkpointHistory(binding.session, source, 1);
+    const proof = {
+        attemptId: randomUUID(),
+        taskId: binding.project,
+        sourceRunId: source,
+        newRunId: next,
+        sessionId: binding.session,
+        oldGeneration: 1,
+        newGeneration: 2,
+        checkpointSha256: checkpoint.sha256,
+    } as VerifiedStopProof;
+    const stale = controller.admit(binding.session, 1, source, 10_000);
+    assert.throws(() => controller.restoreHistory(proof), /not ready/);
+    assert.equal((await rpc(stale.token, 'stat')).status, 200);
+    await controller.takeover(binding.session, 1);
+    assert.deepEqual(controller.restoreHistory(proof), checkpoint);
+    assert.equal(controller.restoredHistoryDigest(proof), checkpoint.sha256);
+    const fresh = controller.admit(binding.session, 2, next, 10_000);
+    assert.equal((await rpc(stale.token, 'stat')).status, 403);
+    assert.equal((await rpc(fresh.token, 'stat')).status, 200);
+});

@@ -5,6 +5,8 @@ import {
 } from './remote-session.ts';
 import {
     reserveOperation,
+    writeTaskProjection,
+    type PublicWorkerEvent,
     type WorkerRequest,
     type WorkerResult,
 } from './protocol.ts';
@@ -57,6 +59,7 @@ type Runtime = {
     };
     flush(agent: Agent): Promise<void>;
     userMessage(prompt: string): unknown;
+    publicEvents?(events: readonly Event[]): readonly PublicWorkerEvent[];
     initialize?(): Promise<void>;
     provider?: Provider;
     dispose(): Promise<void> | void;
@@ -128,11 +131,22 @@ export async function runDshWorker(
             return 'recovered';
         }
 
+        if (request.publicEventsUrl && !runtime.publicEvents) return 'review';
         const first = agent.session.snapshotEvents().length;
         agent.followup(runtime.userMessage(request.prompt ?? ''));
         await agent.whenIdle();
         await runtime.flush(agent);
         const events = agent.session.snapshotEvents().slice(first);
+        if (request.publicEventsUrl && runtime.publicEvents) {
+            try {
+                const projected = runtime.publicEvents(events);
+                if (projected.some((event) => event.offset >= events.length))
+                    return 'review';
+                await writeTaskProjection(request, projected);
+            } catch {
+                return 'review';
+            }
+        }
         return !review && completedTurn(events) ? 'completed' : 'review';
     } finally {
         await runtime.dispose();

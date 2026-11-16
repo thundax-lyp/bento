@@ -8,10 +8,12 @@ import {
     mkdir,
     mkdtemp,
     readFile,
+    readlink,
     readdir,
     rm,
     writeFile,
 } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { connect } from 'node:http2';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -24,11 +26,18 @@ import { PersistenceFence } from '../openshell/persistence-fence.ts';
 import { SingleHostExecution } from '../openshell/single-host.ts';
 import { executionHttp } from './http.ts';
 import { dockerOpenShellPurge } from './docker-openshell-purge.ts';
-import { localHost } from './local.ts';
+import { localEnvironmentVersion, localHost } from './local.ts';
+import { commandHost } from './command-host.ts';
 import { completedTurn } from '@/apps/worker/dsh-worker.ts';
 import { Store } from './store.ts';
 import { serveExecution, snapshotSha256 } from './service.ts';
-import type { ExecutionHost, FileText, WorkerRequest } from './types.ts';
+import {
+    TaskRestoreEvidenceConflict,
+    executionBindingDigest,
+    type ExecutionHost,
+    type FileText,
+    type WorkerRequest,
+} from './types.ts';
 import { processWorker } from './worker.ts';
 import { reserveOperation } from '@/apps/worker/protocol.ts';
 import { prewarmedWorker } from './warm-worker.ts';
@@ -277,12 +286,57 @@ async function projectDeleteControlFixture(counter: string) {
     }
 }
 
+async function taskCrashController(state: string, fault: string) {
+    const base = localHost(join(state, 'volume'));
+    const service = await start(state, {
+        ...base,
+        taskRecovery: {
+            ...base.taskRecovery!,
+            async retryObservation(...args) {
+                if (fault === 'after-authority') process.exit(79);
+                return base.taskRecovery!.retryObservation(...args);
+            },
+        },
+        async worker(request, signal, slot) {
+            if (request.mode !== 'execute')
+                return base.worker(request, signal, slot);
+            if (fault === 'before-write') {
+                assert(
+                    await reserveOperation(
+                        request,
+                        'local-demo',
+                        request.prompt!,
+                        signal,
+                    ),
+                );
+                process.exit(79);
+            }
+            if (fault === 'before-receipt') {
+                // The fixture write reaches the volume but cannot save its evidence.
+                await writeFile(
+                    join(state, 'volume', request.binding.project, 'writes'),
+                    'receipt fault',
+                );
+                await base.worker(request, signal, slot).catch(() => {});
+                process.exit(79);
+            }
+            await base.worker(request, signal, slot);
+            if (fault === 'before-authority') process.exit(79);
+            // The host exit and write receipts exist; there is no successful Run receipt.
+            return 'review';
+        },
+    });
+    process.stdout.write(service.url + '\n');
+}
+
 if (process.argv[2] === '--effect-worker') {
     await effectWorker(process.argv[3] ?? '');
 } else if (process.argv[2] === '--project-delete-control-fixture') {
     await projectDeleteControlFixture(process.argv[3] ?? '');
 } else if (process.argv[2] === '--crash-controller') {
     await crashController(process.argv[3] ?? '');
+} else if (process.argv[2] === '--task-crash-controller') {
+    await taskCrashController(process.argv[3] ?? '', process.argv[4] ?? '');
 } else {
     test('DSH completion and UNKNOWN use the structured event shapes', () => {
         const completed = {
@@ -2507,6 +2561,8 @@ if (process.argv[2] === '--effect-worker') {
                 env: {
                     ...process.env,
                     BENTO_STATE_DIR: state,
+                    BENTO_EXECUTION_ENVIRONMENT_VERSION:
+                        localEnvironmentVersion,
                     BENTO_SERVICE_BEARER: testToken,
                     BENTO_PORT: '0',
                     BENTO_REVIEW_MODULE: module,
@@ -2646,6 +2702,8 @@ if (process.argv[2] === '--effect-worker') {
                             ),
                         ),
                         BENTO_STATE_DIR: state,
+                        BENTO_EXECUTION_ENVIRONMENT_VERSION:
+                            localEnvironmentVersion,
                         BENTO_SERVICE_BEARER: testToken,
                         BENTO_BIND_HOST: '127.0.0.1',
                         BENTO_PORT: '0',
@@ -3361,3 +3419,1781 @@ if (process.argv[2] === '--effect-worker') {
         }
     });
 }
+
+test('Task input, Run, and source deletion share a durable transaction boundary', async (t) => {
+    const folder = await mkdtemp(join(tmpdir(), 'bento-task-store-'));
+    const path = join(folder, 'business.sqlite');
+    let store = new Store(path, 1);
+    t.after(async () => {
+        store.close();
+        await rm(folder, { recursive: true, force: true });
+    });
+    const owner = 'account-a';
+    const taskId = randomUUID();
+    const spaceId = randomUUID();
+    const fileId = randomUUID();
+    const creationKey = randomUUID();
+    const runKey = randomUUID();
+    const fileHold = randomUUID();
+    const deletion = randomUUID();
+    const input = {
+        id: taskId,
+        name: 'Text task',
+        sourceSpaceId: spaceId,
+        inputFiles: readme,
+        inputManifest: [
+            {
+                fileId,
+                path: readme[0]!.path,
+                bytes: Buffer.byteLength(readme[0]!.text),
+                sha256: createHash('sha256')
+                    .update(readme[0]!.text)
+                    .digest('hex'),
+            },
+        ],
+        inputDigest: snapshotSha256(readme),
+    };
+    const version = 'sha256:' + 'a'.repeat(64);
+    assert.equal(
+        store.createTask(owner, creationKey, input, version).task.id,
+        taskId,
+    );
+    assert.equal(
+        store.createTask(owner, creationKey, input, version).replay,
+        true,
+    );
+    assert.throws(
+        () =>
+            store.createTask(
+                owner,
+                creationKey,
+                { ...input, name: 'Other' },
+                version,
+            ),
+        { code: 'idempotency_conflict' },
+    );
+    assert.throws(() => store.task('account-b', taskId), { status: 404 });
+    assert.throws(() => store.project(owner, taskId), { status: 404 });
+    assert.deepEqual(store.projects(owner), []);
+    assert.throws(() => store.addRun(owner, taskId, runKey, 'Legacy access'), {
+        status: 404,
+    });
+    store.importResult(taskId, 'ready');
+
+    assert.equal(
+        store.acquireTaskInputDeleteHold(owner, spaceId, fileId, fileHold, null)
+            .state,
+        'held',
+    );
+    assert.throws(() => store.enqueueTaskRun(owner, taskId, runKey, 'First'), {
+        code: 'project_busy',
+    });
+    assert.equal(
+        store.changeTaskSourceDeletion(owner, spaceId, deletion, null, 'hold')
+            .state,
+        'denied',
+    );
+    store.close();
+    store = new Store(path, 1);
+    assert.equal(
+        store.releaseTaskInputDeleteHold(owner, spaceId, fileId, fileHold, null)
+            .state,
+        'released',
+    );
+    assert.equal(
+        store.acquireTaskInputDeleteHold(owner, spaceId, fileId, fileHold, null)
+            .state,
+        'released',
+    );
+    const sourceFirst = randomUUID();
+    assert.equal(
+        store.changeTaskSourceDeletion(
+            owner,
+            spaceId,
+            sourceFirst,
+            null,
+            'hold',
+        ).state,
+        'held',
+    );
+    assert.equal(
+        store.acquireTaskInputDeleteHold(
+            owner,
+            spaceId,
+            fileId,
+            randomUUID(),
+            null,
+        ).state,
+        'denied',
+    );
+    assert.equal(
+        store.changeTaskSourceDeletion(
+            owner,
+            spaceId,
+            sourceFirst,
+            null,
+            'release',
+        ).state,
+        'released',
+    );
+
+    const run = store.enqueueTaskRun(owner, taskId, runKey, 'First').run;
+    assert.equal(
+        store.enqueueTaskRun(owner, taskId, runKey, 'First').run.id,
+        run.id,
+    );
+    assert.throws(
+        () => store.enqueueTaskRun(owner, taskId, runKey, 'Different'),
+        { code: 'idempotency_conflict' },
+    );
+    assert.throws(
+        () => store.enqueueTaskRun(owner, taskId, randomUUID(), 'Next'),
+        { code: 'task_busy' },
+    );
+    assert.deepEqual(
+        store.taskEvents(owner, taskId, 0).map((e) => [e.id, e.sequence]),
+        [[run.id + ':user', 1]],
+    );
+    assert.equal(
+        store.acquireTaskInputDeleteHold(
+            owner,
+            spaceId,
+            fileId,
+            randomUUID(),
+            null,
+        ).state,
+        'denied',
+    );
+    assert.equal(store.start(run.id, readme, 1), true);
+    const result = {
+        baselineSha256: input.inputDigest,
+        initialSha256: input.inputDigest,
+        afterSha256: input.inputDigest,
+        incremental: '',
+        cumulative: '',
+    };
+    const first = store.publishTaskResult(run.id, result);
+    assert.deepEqual(store.publishTaskResult(run.id, result), first);
+    assert.throws(
+        () =>
+            store.publishTaskResult(run.id, {
+                ...result,
+                cumulative: 'changed',
+            }),
+        /Conflicting Task result/,
+    );
+    const zeroFileId = randomUUID();
+    const zeroHoldId = randomUUID();
+    assert.equal(
+        store.acquireTaskInputDeleteHold(
+            owner,
+            spaceId,
+            zeroFileId,
+            zeroHoldId,
+            null,
+        ).state,
+        'held',
+    );
+    store.drainOwner(owner);
+    store.close();
+    store = new Store(path, 1);
+    assert.equal(
+        store.acquireTaskInputDeleteHold(
+            owner,
+            spaceId,
+            zeroFileId,
+            zeroHoldId,
+            null,
+        ).state,
+        'held',
+    );
+    assert.equal(
+        store.releaseTaskInputDeleteHold(
+            owner,
+            spaceId,
+            zeroFileId,
+            zeroHoldId,
+            null,
+        ).state,
+        'released',
+    );
+    assert.deepEqual(store.publishTaskResult(run.id, result), first);
+    assert.equal(store.ownerDrained(owner), true);
+});
+
+test('settled retry receipts release the attempt reservation and preserve closure evidence', async (t) => {
+    const folder = await mkdtemp(join(tmpdir(), 'bento-task-retry-'));
+    const path = join(folder, 'business.sqlite');
+    let store = new Store(path, 1);
+    t.after(async () => {
+        store.close();
+        await rm(folder, { recursive: true, force: true });
+    });
+    const owner = 'retry-owner';
+    const sourceSpaceId = randomUUID();
+    const input = {
+        id: randomUUID(),
+        name: 'Retry task',
+        sourceSpaceId,
+        inputFiles: readme,
+        inputManifest: [
+            {
+                fileId: randomUUID(),
+                path: readme[0]!.path,
+                bytes: Buffer.byteLength(readme[0]!.text),
+                sha256: createHash('sha256')
+                    .update(readme[0]!.text)
+                    .digest('hex'),
+            },
+        ],
+        inputDigest: snapshotSha256(readme),
+    };
+    const evidence = {
+        oldGeneration: 1,
+        newGeneration: 2,
+        workspaceSha256: input.inputDigest,
+        historySha256: input.inputDigest,
+    };
+    const taskId = store.createTask(owner, randomUUID(), input, 'environment-a')
+        .task.id;
+    store.importResult(taskId, 'ready');
+    const first = store.enqueueTaskRun(
+        owner,
+        taskId,
+        randomUUID(),
+        'First',
+    ).run;
+    store.status(first.id, 'failed', 'Failed.');
+    store.recordStopProof(first.id, '{}');
+    const retryKey = randomUUID();
+    const attempt = store.acceptTaskRetry(
+        owner,
+        taskId,
+        first.id,
+        retryKey,
+        evidence,
+    ).attempt;
+    const legacy = store.addProject(owner, 'Legacy', []);
+    store.importResult(legacy.id, 'ready');
+    assert.throws(() => store.addRun(owner, legacy.id, randomUUID(), 'Try'), {
+        code: 'tenant_queue_full',
+    });
+    assert.equal(
+        store.advanceTaskRetry(attempt.id, 'preparing', 'workspace_restored'),
+        true,
+    );
+    assert.equal(
+        store.advanceTaskRetry(attempt.id, 'workspace_restored', 'blocked'),
+        true,
+    );
+    store.close();
+    store = new Store(path, 1);
+    assert.equal(
+        store.taskRetry(attempt.id).lastConfirmedPhase,
+        'workspace_restored',
+    );
+    assert.equal(store.ownerDrained(owner), false);
+    const next = store.finalizeTaskRetry(attempt.id, 'blocked');
+    assert.equal(next.retryOf, first.id);
+    assert.equal(
+        store.acceptTaskRetry(owner, taskId, first.id, retryKey, evidence)
+            .attempt.phase,
+        'queued',
+    );
+    assert.equal(store.ownerDrained(owner), false);
+    store.status(next.id, 'failed', 'Failed again.');
+    assert.equal(store.ownerDrained(owner), true);
+    const deletion = randomUUID();
+    assert.equal(
+        store.changeTaskSourceDeletion(
+            owner,
+            sourceSpaceId,
+            deletion,
+            null,
+            'hold',
+        ).state,
+        'held',
+    );
+    assert.equal(
+        store.changeTaskSourceDeletion(
+            owner,
+            sourceSpaceId,
+            deletion,
+            null,
+            'release',
+        ).state,
+        'released',
+    );
+    store.recordStopProof(next.id, '{}');
+    const blocked = store.acceptTaskRetry(
+        owner,
+        taskId,
+        next.id,
+        randomUUID(),
+        evidence,
+    ).attempt;
+    assert.equal(
+        store.advanceTaskRetry(blocked.id, 'preparing', 'blocked'),
+        true,
+    );
+    assert.equal(store.ownerDrained(owner), false);
+    assert.equal(
+        store.closeBlockedTaskRetry(blocked.id, 2, 'evidence')?.evidenceDigest,
+        'evidence',
+    );
+    assert.equal(store.taskRetry(blocked.id).phase, 'closed');
+    assert.equal(store.ownerDrained(owner), true);
+    assert.throws(
+        () => store.enqueueTaskRun(owner, taskId, randomUUID(), 'Closed'),
+        { code: 'task_not_ready' },
+    );
+    const cleanup = randomUUID();
+    assert.equal(
+        store.changeTaskSourceDeletion(
+            owner,
+            sourceSpaceId,
+            cleanup,
+            null,
+            'hold',
+        ).state,
+        'held',
+    );
+    assert.equal(
+        store.changeTaskSourceDeletion(
+            owner,
+            sourceSpaceId,
+            cleanup,
+            null,
+            'commit',
+        ).state,
+        'committing',
+    );
+    store.close();
+    store = new Store(path, 1);
+    const bindings = store.taskSourceDeletionBindings(
+        owner,
+        sourceSpaceId,
+        cleanup,
+    );
+    assert.deepEqual(bindings, [store.binding(next)]);
+    store.purgeProject(bindings[0]!, cleanup, sourceSpaceId);
+    assert.equal(
+        store.finishTaskSourceDeletion(owner, sourceSpaceId, cleanup),
+        true,
+    );
+    assert.equal(
+        store.finishTaskSourceDeletion(owner, sourceSpaceId, randomUUID()),
+        false,
+    );
+    assert.throws(
+        () =>
+            store.acquireTaskInputDeleteHold(
+                owner,
+                sourceSpaceId,
+                randomUUID(),
+                randomUUID(),
+                null,
+            ),
+        { status: 404 },
+    );
+    assert.equal(
+        store.changeTaskSourceDeletion(
+            owner,
+            sourceSpaceId,
+            cleanup,
+            null,
+            'hold',
+        ).state,
+        'deleted',
+    );
+    assert.equal(
+        store.readTaskRetryClosure(blocked.id)?.evidenceDigest,
+        'evidence',
+    );
+    assert.throws(() => store.task(owner, taskId), { status: 404 });
+});
+
+test('startup requires the trusted host environment version', async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), 'bento-task-start-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const { BENTO_EXECUTION_ENVIRONMENT_VERSION: _version, ...env } =
+        process.env;
+    void _version;
+    for (const version of [undefined, 'sha256:' + 'f'.repeat(64)]) {
+        const state = join(directory, version ? 'mismatch' : 'missing');
+        const child = spawn(
+            process.execPath,
+            [
+                ...process.execArgv,
+                fileURLToPath(new URL('./start.ts', import.meta.url)),
+                '--local',
+            ],
+            {
+                env: {
+                    ...env,
+                    BENTO_STATE_DIR: state,
+                    BENTO_SERVICE_BEARER: testToken,
+                    ...(version
+                        ? { BENTO_EXECUTION_ENVIRONMENT_VERSION: version }
+                        : {}),
+                },
+                stdio: 'ignore',
+            },
+        );
+        assert.deepEqual(await once(child, 'close'), [1, null]);
+        await assert.rejects(readFile(join(state, 'business.sqlite')), {
+            code: 'ENOENT',
+        });
+    }
+});
+
+test('command host requests the frozen environment and exposes no fixture recovery', async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), 'bento-command-version-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const protobuf = join(directory, 'node_modules', '@bufbuild', 'protobuf');
+    await mkdir(protobuf, { recursive: true });
+    await writeFile(
+        join(protobuf, 'index.js'),
+        'module.exports = { fromBinary() {} };',
+    );
+    await writeFile(join(directory, 'raw.mjs'), 'export {};');
+    await writeFile(join(directory, 'local-material'), 'fixture');
+    const control = join(directory, 'control.cjs');
+    await writeFile(
+        control,
+        `
+        let json = '';
+        process.stdin.on('data', chunk => json += chunk);
+        process.stdin.on('end', () => {
+            const {action,binding,environmentVersion} = JSON.parse(json);
+            if (action !== 'provisionTask') process.exit(1);
+            process.stdout.write(JSON.stringify({
+                sandbox:binding.sandbox,volume:binding.volume,running:true,installed:true,
+                environmentVersion:environmentVersion === 'bad' ? 'other' : environmentVersion,
+            }));
+        });
+    `,
+    );
+    const configPath = join(directory, 'host.json');
+    const settings = {
+        imageDigest: 'sha256:' + '0'.repeat(64),
+        policyDigest: 'sha256:' + '1'.repeat(64),
+        gateway: 'https://fixture.invalid',
+        workspace: 'workspace',
+        ca: 'local-material',
+        cert: 'local-material',
+        key: 'local-material',
+        sdkRaw: 'raw.mjs',
+        control: { command: process.execPath, args: [control] },
+        worker: { command: process.execPath, args: [control] },
+    };
+    await writeFile(
+        configPath,
+        JSON.stringify({ ...settings, imageDigest: 'invalid' }),
+    );
+    await assert.rejects(
+        commandHost(configPath),
+        /Invalid execution environment identity/,
+    );
+    await writeFile(configPath, JSON.stringify(settings));
+    const host = await commandHost(configPath);
+    assert.equal(host.environmentVersion, localEnvironmentVersion);
+    assert.equal(host.taskRecovery, undefined);
+    assert.equal(host.observeWorkerExit, undefined);
+    const binding = {
+        tenant: 'tenant',
+        project: randomUUID(),
+        session: randomUUID(),
+        sandbox: 'sandbox',
+        volume: 'volume',
+    };
+    const frozen = 'sha256:' + 'e'.repeat(64);
+    assert.equal(
+        (await host.provisionTask(binding, [], frozen)).environmentVersion,
+        frozen,
+    );
+    await assert.rejects(
+        host.provisionTask(binding, [], 'bad'),
+        /observation mismatch/,
+    );
+});
+
+test('fixture recovery journals a verified volume and refuses overlap with an active writer', async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), 'bento-task-host-'));
+    const server = createServer(async (req, res) => {
+        for await (const chunk of req) void chunk;
+        if (req.url === '/operations') {
+            res.writeHead(201).end();
+            return;
+        }
+        res.end(JSON.stringify({ ok: true, value: { key: 'fixture' } }));
+    });
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    t.after(async () => {
+        server.close();
+        server.closeAllConnections();
+        await rm(directory, { recursive: true, force: true });
+    });
+    const address = server.address();
+    assert(address && typeof address === 'object');
+    const url = `http://127.0.0.1:${address.port}`;
+    const binding = {
+        tenant: 'tenant',
+        project: randomUUID(),
+        session: randomUUID(),
+        sandbox: 'sandbox',
+        volume: 'volume',
+    };
+    let host = localHost(directory);
+    await host.provisionTask(binding, readme, host.environmentVersion);
+    const grant = (generation: number) => ({
+        run: randomUUID(),
+        session: binding.session,
+        generation,
+        token: 'fixture',
+    });
+    const request = (generation: number): WorkerRequest => ({
+        mode: 'execute',
+        binding,
+        grant: grant(generation),
+        persistenceUrl: url,
+        operationUrl: url,
+        prompt: 'edited',
+    });
+    const preWrite = request(1);
+    await assert.rejects(host.worker(preWrite, AbortSignal.abort()));
+    assert.equal(
+        await host.taskRecovery!.readFixtureWriteReceipt!(
+            binding,
+            preWrite.grant.run,
+            1,
+        ),
+        null,
+    );
+    assert.deepEqual(await host.snapshot(binding), readme);
+
+    const writes = join(directory, binding.project, 'writes');
+    await writeFile(writes, 'block receipt directory');
+    const unknown = request(2);
+    await assert.rejects(host.worker(unknown, new AbortController().signal));
+    await rm(writes);
+    assert.equal(
+        await host.taskRecovery!.readFixtureWriteReceipt!(
+            binding,
+            unknown.grant.run,
+            2,
+        ),
+        null,
+    );
+    assert.match((await host.snapshot(binding))[0]!.text, /edited\n$/);
+
+    const run = request(3);
+    const attemptId = randomUUID();
+    const digest = snapshotSha256(readme);
+    const marker = join(directory, binding.project, 'running');
+    const beforeFailedStop = await host.snapshot(binding);
+    await rm(marker);
+    await mkdir(marker);
+    await assert.rejects(
+        host.taskRecovery!.restoreTask(binding, attemptId, readme, digest),
+    );
+    assert.deepEqual(await host.snapshot(binding), beforeFailedStop);
+    assert.equal(
+        await host.taskRecovery!.queryRestore(binding, attemptId),
+        null,
+    );
+    await rm(marker, { recursive: true });
+    await host.provisionTask(binding, readme, host.environmentVersion);
+    const execution = host.worker(run, new AbortController().signal);
+    await assert.rejects(
+        host.taskRecovery!.restoreTask(binding, attemptId, readme, digest),
+        /active writer/,
+    );
+    assert.equal(await execution, 'completed');
+    const receipt = await host.taskRecovery!.readFixtureWriteReceipt!(
+        binding,
+        run.grant.run,
+        3,
+    );
+    assert(receipt);
+    assert.equal(
+        receipt.fileSha256,
+        createHash('sha256')
+            .update((await host.snapshot(binding))[0]!.text)
+            .digest('hex'),
+    );
+    host = localHost(directory);
+    assert.deepEqual(
+        await host.taskRecovery!.readFixtureWriteReceipt!(
+            binding,
+            run.grant.run,
+            3,
+        ),
+        receipt,
+    );
+    assert(await host.observeWorkerExit!(binding, run.grant.run, 3));
+    await assert.rejects(
+        host.taskRecovery!.restoreTask(
+            binding,
+            attemptId,
+            readme,
+            'f'.repeat(64),
+        ),
+        /input digest/,
+    );
+    assert.deepEqual(
+        await host.taskRecovery!.restoreTask(
+            binding,
+            attemptId,
+            readme,
+            digest,
+        ),
+        { attemptId, sha256: digest },
+    );
+    host = localHost(directory);
+    assert.deepEqual(
+        await host.taskRecovery!.queryRestore(binding, attemptId),
+        { attemptId, phase: 'ready', sha256: digest },
+    );
+    assert.deepEqual(
+        await host.taskRecovery!.restoreTask(
+            binding,
+            attemptId,
+            readme,
+            digest,
+        ),
+        { attemptId, sha256: digest },
+    );
+    assert.deepEqual(await host.snapshot(binding), readme);
+});
+
+test('prepared restore validates staging before changing the published pointer', async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), 'bento-task-stage-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const binding = {
+        tenant: 'tenant',
+        project: randomUUID(),
+        session: randomUUID(),
+        sandbox: 'sandbox',
+        volume: 'volume',
+    };
+    const host = localHost(directory);
+    await host.provisionTask(binding, readme, host.environmentVersion);
+    const root = join(directory, binding.project);
+    const pointer = join(root, 'task-volume');
+    const previousVolume = await readlink(pointer);
+    const attemptId = randomUUID();
+    const stagedVolume = 'volume-' + attemptId;
+    await mkdir(join(root, stagedVolume));
+    await writeFile(join(root, stagedVolume, 'README.md'), 'damaged staging');
+    await mkdir(join(root, 'restores'));
+    const sha256 = snapshotSha256(readme);
+    await writeFile(
+        join(root, 'restores', attemptId + '.json'),
+        JSON.stringify({
+            attemptId,
+            phase: 'prepared',
+            sha256,
+            bindingDigest: executionBindingDigest(binding),
+            previousVolume,
+            stagedVolume,
+        }),
+    );
+    const restarted = localHost(directory);
+    await assert.rejects(
+        restarted.taskRecovery!.restoreTask(binding, attemptId, readme, sha256),
+        (error: unknown) =>
+            error instanceof TaskRestoreEvidenceConflict &&
+            /staging differs/.test(error.message),
+    );
+    assert.equal(await readlink(pointer), previousVolume);
+    assert.deepEqual(await restarted.snapshot(binding), readme);
+    await rm(join(root, stagedVolume), { recursive: true });
+    await assert.rejects(
+        restarted.taskRecovery!.restoreTask(binding, attemptId, readme, sha256),
+        TaskRestoreEvidenceConflict,
+    );
+    assert.equal(await readlink(pointer), previousVolume);
+    assert.deepEqual(await restarted.snapshot(binding), readme);
+});
+
+test(
+    'private Task HTTP preserves earlier results across a fenced retry',
+    { timeout: 15_000 },
+    async (t) => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-task-http-'));
+        const host = localHost(join(state, 'volume'));
+        let performed = 0;
+        const written = barrier();
+        let controller = await start(state, {
+            ...host,
+            taskRecovery: {
+                ...host.taskRecovery!,
+                async restoreTask() {
+                    throw new Error('Wait for restarted controller');
+                },
+            },
+            async worker(request, signal, slot, onExit) {
+                const result = await host.worker(request, signal, slot, onExit);
+                if (request.prompt === 'second' && ++performed === 1) {
+                    written.resolve();
+                    await delay(30_000, undefined, { signal });
+                }
+                return result;
+            },
+        });
+        t.after(async () => {
+            await controller.close();
+            await rm(state, { recursive: true, force: true });
+        });
+        async function api(
+            path: string,
+            method = 'GET',
+            body?: unknown,
+            key?: string,
+            owner = 'account-a',
+        ) {
+            const response = await fetch(controller.url + '/v1' + path, {
+                method,
+                headers: {
+                    authorization: 'Bearer ' + testToken,
+                    'x-bento-owner-id': owner,
+                    ...(key ? { 'idempotency-key': key } : {}),
+                    ...(body === undefined
+                        ? {}
+                        : { 'content-type': 'application/json' }),
+                },
+                ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+                signal: AbortSignal.timeout(5000),
+            });
+            const text = await response.text();
+            return {
+                status: response.status,
+                text,
+                json: () => JSON.parse(text),
+            };
+        }
+        const createKey = randomUUID();
+        const sourceSpaceId = randomUUID();
+        const fileId = randomUUID();
+        const input = {
+            id: randomUUID(),
+            name: 'Retry task',
+            sourceSpaceId,
+            inputFiles: readme,
+            inputManifest: [
+                {
+                    fileId,
+                    path: 'README.md',
+                    bytes: Buffer.byteLength(readme[0]!.text),
+                    sha256: createHash('sha256')
+                        .update(readme[0]!.text)
+                        .digest('hex'),
+                },
+            ],
+            inputDigest: snapshotSha256(readme),
+        };
+        const create = await api('/tasks', 'POST', input, createKey);
+        assert.equal(create.status, 202, create.text);
+        const id = create.json().task.id;
+        const path = '/tasks/' + id;
+        assert.equal(
+            (await api('/tasks', 'POST', input, createKey)).status,
+            200,
+        );
+        await until(
+            () => api(path),
+            (r) => r.json().task.status === 'ready',
+            'Task ready',
+        );
+        assert.equal(
+            (await api(path, 'GET', undefined, undefined, 'other')).status,
+            404,
+        );
+        const first = await api(
+            path + '/runs',
+            'POST',
+            { prompt: 'first' },
+            randomUUID(),
+        );
+        assert.equal(first.status, 202, first.text);
+        const firstRun = path + '/runs/' + first.json().run.id;
+        await until(
+            () => api(firstRun),
+            (r) => r.json().run.status === 'succeeded',
+            'First Task result',
+        );
+        const diffPath = '/results/1/diff?view=cumulative';
+        const firstDiff = await api(firstRun + diffPath);
+        assert.equal(firstDiff.status, 200);
+        assert.match(firstDiff.text, /\+first/);
+        const second = await api(
+            path + '/runs',
+            'POST',
+            { prompt: 'second' },
+            randomUUID(),
+        );
+        assert.equal(second.status, 202, second.text);
+        const secondId = second.json().run.id;
+        const secondRun = path + '/runs/' + secondId;
+        await written.promise;
+        const holdPath =
+            '/task-sources/' +
+            sourceSpaceId +
+            '/files/' +
+            fileId +
+            '/deletion-holds/' +
+            randomUUID();
+        assert.equal((await api(holdPath, 'POST')).json().state, 'denied');
+        const cancel = await api(secondRun + '/cancel', 'POST');
+        assert.equal(cancel.status, 200, cancel.text);
+        const cancelled = await until(
+            () => api(secondRun),
+            (r) => ['cancelled', 'needs_review'].includes(r.json().run.status),
+            'Stopped second Run',
+        );
+        assert.equal(cancelled.json().run.status, 'cancelled', cancelled.text);
+        assert.equal(cancelled.json().run.retryReason, null);
+        const dbPath = join(state, 'business.sqlite');
+        const fault = new DatabaseSync(dbPath);
+        const proof = fault
+            .prepare(
+                'SELECT canonicalJson,sha256 FROM stop_proofs WHERE runId=?',
+            )
+            .get(secondId);
+        assert(proof && typeof proof.sha256 === 'string');
+        fault
+            .prepare("UPDATE stop_proofs SET sha256='invalid' WHERE runId=?")
+            .run(secondId);
+        const denied = await api(
+            secondRun + '/retry',
+            'POST',
+            undefined,
+            randomUUID(),
+        );
+        assert.equal(denied.status, 409, denied.text);
+        assert.equal(denied.json().error.code, 'run_not_retryable');
+        assert.equal((await api(path + '/runs')).json().items.length, 2);
+        assert.equal(typeof proof.canonicalJson, 'string');
+        for (const change of [
+            { taskId: randomUUID() },
+            { bindingDigest: 'invalid' },
+            { newGeneration: 42 },
+        ]) {
+            const changed = JSON.stringify({
+                ...JSON.parse(proof.canonicalJson as string),
+                ...change,
+            });
+            fault
+                .prepare(
+                    'UPDATE stop_proofs SET canonicalJson=?,sha256=? WHERE runId=?',
+                )
+                .run(
+                    changed,
+                    createHash('sha256').update(changed).digest('hex'),
+                    secondId,
+                );
+            const response = await api(
+                secondRun + '/retry',
+                'POST',
+                undefined,
+                randomUUID(),
+            );
+            assert.deepEqual(
+                [response.status, response.json().error.reason],
+                [409, 'stop_unconfirmed'],
+            );
+        }
+        fault
+            .prepare(
+                'UPDATE stop_proofs SET canonicalJson=?,sha256=? WHERE runId=?',
+            )
+            .run(proof.canonicalJson as string, proof.sha256, secondId);
+        fault.close();
+        const retryKey = randomUUID();
+        const retry = await api(
+            secondRun + '/retry',
+            'POST',
+            undefined,
+            retryKey,
+        );
+        assert.equal(retry.status, 202, retry.text);
+        await controller.close();
+        const reopened = localHost(join(state, 'volume'));
+        let restoreCalls = 0;
+        controller = await start(state, {
+            ...reopened,
+            taskRecovery: {
+                ...reopened.taskRecovery!,
+                async restoreTask(...args) {
+                    restoreCalls++;
+                    await reopened.taskRecovery!.restoreTask(...args);
+                    throw new Error('Fixture lost its restore response');
+                },
+            },
+        });
+        const replay = await api(
+            secondRun + '/retry',
+            'POST',
+            undefined,
+            retryKey,
+        );
+        assert.equal(replay.status, 200, replay.text);
+        assert.equal(replay.json().retry.runId, retry.json().retry.runId);
+        const retried = path + '/runs/' + retry.json().retry.runId;
+        await until(
+            () => api(retried),
+            (r) => r.status === 200 && r.json().run.status === 'succeeded',
+            'Retried Task result',
+        );
+        const total = await api(retried + diffPath);
+        assert.equal(total.status, 200, total.text);
+        assert.match(total.text, /\+first/);
+        assert.match(total.text, /\+second/);
+        assert.equal(total.text.match(/\+second/g)?.length, 1);
+        assert.equal(restoreCalls, 1);
+        assert.equal((await api(firstRun + diffPath)).text, firstDiff.text);
+        const events = (await api(path + '/events')).json().items;
+        assert.equal(events.length, 3);
+        assert.equal(
+            events.some((event: object) => 'key' in event),
+            false,
+        );
+        const deletion = '/task-sources/' + sourceSpaceId;
+        const operation = randomUUID();
+        assert.equal(
+            (
+                await api(
+                    deletion + '?phase=hold',
+                    'DELETE',
+                    undefined,
+                    operation,
+                )
+            ).json().state,
+            'held',
+        );
+        const afterHold =
+            '/task-sources/' +
+            sourceSpaceId +
+            '/files/' +
+            randomUUID() +
+            '/deletion-holds/' +
+            randomUUID();
+        assert.equal((await api(afterHold, 'POST')).json().state, 'denied');
+        assert.equal((await api('/account/drain', 'POST')).status, 204);
+        assert.equal(
+            (
+                await api(
+                    deletion + '?phase=commit',
+                    'DELETE',
+                    undefined,
+                    operation,
+                )
+            ).status,
+            204,
+        );
+        assert.equal((await api(path)).status, 404);
+    },
+);
+
+test(
+    'Task operation reconciliation stays conservative across four controller crash boundaries',
+    { timeout: 30_000 },
+    async (t) => {
+        for (const fault of [
+            'before-write',
+            'before-receipt',
+            'before-authority',
+            'after-authority',
+        ]) {
+            await t.test(fault, async (t) => {
+                const state = await mkdtemp(
+                    join(tmpdir(), 'bento-task-crash-'),
+                );
+                const child = spawn(
+                    process.execPath,
+                    [
+                        ...process.execArgv,
+                        testFile,
+                        '--task-crash-controller',
+                        state,
+                        fault,
+                    ],
+                    { stdio: ['ignore', 'pipe', 'pipe'] },
+                );
+                const closed = once(child, 'close');
+                const lines = createInterface({ input: child.stdout });
+                const controllers: Awaited<ReturnType<typeof start>>[] = [];
+                t.after(async () => {
+                    child.kill('SIGKILL');
+                    await closed;
+                    lines.close();
+                    for (const controller of controllers)
+                        await controller.close();
+                    await rm(state, { recursive: true, force: true });
+                });
+                const [address] = await Promise.race([
+                    once(lines, 'line'),
+                    closed.then(() => {
+                        throw new Error('Fixture exited before listening');
+                    }),
+                ]);
+                let root = address as string;
+                async function call(
+                    path: string,
+                    method = 'GET',
+                    body?: unknown,
+                    key?: string,
+                ) {
+                    const res = await fetch(root + '/v1' + path, {
+                        method,
+                        headers: {
+                            authorization: 'Bearer ' + testToken,
+                            'x-bento-owner-id': 'account-a',
+                            ...(key ? { 'idempotency-key': key } : {}),
+                            ...(body === undefined
+                                ? {}
+                                : { 'content-type': 'application/json' }),
+                        },
+                        ...(body === undefined
+                            ? {}
+                            : { body: JSON.stringify(body) }),
+                        signal: AbortSignal.timeout(5000),
+                    });
+                    return { status: res.status, body: await res.json() };
+                }
+                const created = await call(
+                    '/tasks',
+                    'POST',
+                    {
+                        id: null,
+                        name: 'Task',
+                        sourceSpaceId: null,
+                        inputFiles: [],
+                        inputManifest: [],
+                        inputDigest: snapshotSha256([]),
+                    },
+                    randomUUID(),
+                );
+                assert.equal(created.status, 202);
+                const id = created.body.task.id;
+                const path = '/tasks/' + id;
+                await until(
+                    () => call(path),
+                    (res) => res.body.task.status === 'ready',
+                    'Fixture Task ready',
+                );
+                const submitted = await call(
+                    path + '/runs',
+                    'POST',
+                    { prompt: 'append once' },
+                    randomUUID(),
+                );
+                assert.equal(submitted.status, 202);
+                const runId = submitted.body.run.id;
+                const runPath = path + '/runs/' + runId;
+                assert.deepEqual(await closed, [79, null]);
+                const authority = new DatabaseSync(
+                    join(state, 'authority.sqlite'),
+                );
+                const authoritativeOperation = () =>
+                    authority.prepare('SELECT state FROM operations').get()
+                        ?.state;
+                assert.equal(
+                    authoritativeOperation(),
+                    fault === 'after-authority' ? 'SUCCEEDED' : 'UNKNOWN',
+                );
+                const business = new DatabaseSync(
+                    join(state, 'business.sqlite'),
+                );
+                const host = localHost(join(state, 'volume'));
+                const binds = new Store(join(state, 'business.sqlite'));
+                const binding = binds.binding(binds.findRun(runId));
+                binds.close();
+                const outcome = await host.observeWorkerExit!(
+                    binding,
+                    runId,
+                    1,
+                );
+                assert.equal(!!outcome, fault !== 'before-write');
+                assert.equal(
+                    business
+                        .prepare('SELECT count(*) AS count FROM worker_exit')
+                        .get()?.count,
+                    fault === 'after-authority' ? 1 : 0,
+                );
+                assert.equal(
+                    business
+                        .prepare('SELECT count(*) AS count FROM stop_proofs')
+                        .get()?.count,
+                    0,
+                );
+                let allowCleanup = false;
+                const service = await start(
+                    state,
+                    fault === 'before-authority'
+                        ? {
+                              ...host,
+                              taskRecovery: {
+                                  ...host.taskRecovery!,
+                                  async queryRestore(_binding, attemptId) {
+                                      return {
+                                          attemptId,
+                                          phase: 'ready',
+                                          sha256: 'f'.repeat(64),
+                                      };
+                                  },
+                              },
+                              async observeRetryCleanup(...args) {
+                                  return allowCleanup
+                                      ? host.observeRetryCleanup!(...args)
+                                      : null;
+                              },
+                          }
+                        : host,
+                );
+                controllers.push(service);
+                root = service.url;
+                const safe =
+                    fault === 'before-authority' || fault === 'after-authority';
+                const final = await until(
+                    () => call(runPath),
+                    (res) =>
+                        ['failed', 'needs_review'].includes(
+                            res.body.run.status,
+                        ),
+                    'Recovered crash evidence',
+                );
+                assert.equal(
+                    final.body.run.status,
+                    safe ? 'failed' : 'needs_review',
+                );
+                assert.equal(
+                    authoritativeOperation(),
+                    safe ? 'SUCCEEDED' : 'UNKNOWN',
+                );
+                assert.equal(
+                    business
+                        .prepare('SELECT count(*) AS count FROM stop_proofs')
+                        .get()?.count,
+                    safe ? 1 : 0,
+                );
+                assert.equal(
+                    (await host.snapshot(binding))[0]?.text,
+                    fault === 'before-write' ? undefined : 'append once\n',
+                );
+                if (!safe) {
+                    const retry = await call(
+                        runPath + '/retry',
+                        'POST',
+                        undefined,
+                        randomUUID(),
+                    );
+                    assert.deepEqual(
+                        [
+                            retry.status,
+                            retry.body.error.code,
+                            retry.body.error.reason,
+                        ],
+                        [409, 'run_not_retryable', 'needs_review'],
+                    );
+                    assert.equal(
+                        business
+                            .prepare(
+                                'SELECT count(*) AS count FROM retry_attempts',
+                            )
+                            .get()?.count,
+                        0,
+                    );
+                }
+                if (fault === 'before-write') {
+                    await assert.rejects(
+                        service.closeTaskRun({
+                            runId,
+                            decision: 'unconfirmed',
+                            expectedGeneration: 3,
+                        }),
+                        { code: 'review_unavailable' },
+                    );
+                }
+                if (fault === 'before-receipt') {
+                    await service.closeTaskRun({
+                        runId,
+                        decision: 'failed',
+                        expectedGeneration: 3,
+                    });
+                    const closedRun = await call(runPath);
+                    assert.equal(closedRun.body.run.status, 'failed');
+                    assert.equal(
+                        closedRun.body.run.retryReason,
+                        'stop_unconfirmed',
+                    );
+                    assert.equal(
+                        service.readTaskClosure(runId)?.decision,
+                        'failed',
+                    );
+                    assert.equal(
+                        (await call('/account/purge', 'POST')).body.complete,
+                        true,
+                    );
+                    assert.equal(
+                        service.readTaskClosure(runId)?.decision,
+                        'failed',
+                    );
+                }
+                if (fault === 'before-authority') {
+                    const key = randomUUID();
+                    const accepted = await call(
+                        runPath + '/retry',
+                        'POST',
+                        undefined,
+                        key,
+                    );
+                    assert.equal(accepted.status, 202);
+                    const attemptId = accepted.body.retry.id;
+                    await until(
+                        () => call(runPath + '/retry', 'POST', undefined, key),
+                        (res) => res.body.retry?.state === 'blocked',
+                        'Rejected recovery observation',
+                    );
+                    assert.equal(
+                        (await call('/account/purge', 'POST')).body.complete,
+                        false,
+                    );
+                    assert.equal(
+                        await service.reconcileTaskRetry({
+                            attemptId,
+                            expectedGeneration: 2,
+                        }),
+                        'pending',
+                    );
+                    await assert.rejects(
+                        service.closeTaskRetry({
+                            attemptId,
+                            expectedGeneration: 2,
+                        }),
+                        { code: 'review_unavailable' },
+                    );
+                    assert.equal(service.readTaskRetryClosure(attemptId), null);
+                    allowCleanup = true;
+                    await service.closeTaskRetry({
+                        attemptId,
+                        expectedGeneration: 2,
+                    });
+                    assert.equal(
+                        (await call(runPath + '/retry', 'POST', undefined, key))
+                            .body.retry.state,
+                        'closed',
+                    );
+                    assert.equal(
+                        (await call(path)).body.task.closedReason,
+                        'unconfirmed',
+                    );
+                    assert.equal(
+                        (await call('/account/purge', 'POST')).body.complete,
+                        true,
+                    );
+                    assert.equal(
+                        service.readTaskRetryClosure(attemptId)
+                            ?.authorityGeneration,
+                        2,
+                    );
+                }
+                authority.close();
+                business.close();
+            });
+        }
+    },
+);
+
+test('startup registers the six trusted review callbacks only in process', async (t) => {
+    const state = await mkdtemp(join(tmpdir(), 'bento-task-review-module-'));
+    const module = join(state, 'review.mjs');
+    const marker = join(state, 'review-callbacks');
+    await writeFile(
+        module,
+        `
+        import { writeFile } from 'node:fs/promises';
+        export default function install(...callbacks) {
+            const types = callbacks.map(callback => typeof callback);
+            if (callbacks[2]('missing') !== null || callbacks[4]('missing') !== null)
+                throw new Error('Unexpected audit receipt');
+            return () => writeFile(process.env.BENTO_TEST_REVIEW_RESULT,JSON.stringify(types));
+        }
+    `,
+    );
+    const child = spawn(
+        process.execPath,
+        [
+            ...process.execArgv,
+            fileURLToPath(new URL('./start.ts', import.meta.url)),
+            '--local',
+        ],
+        {
+            env: {
+                ...process.env,
+                BENTO_STATE_DIR: state,
+                BENTO_SERVICE_BEARER: testToken,
+                BENTO_PORT: '0',
+                BENTO_EXECUTION_ENVIRONMENT_VERSION: localEnvironmentVersion,
+                BENTO_REVIEW_MODULE: module,
+                BENTO_TEST_REVIEW_RESULT: marker,
+            },
+            stdio: ['ignore', 'pipe', 'pipe'],
+        },
+    );
+    const closed = once(child, 'close');
+    const lines = createInterface({ input: child.stdout });
+    t.after(async () => {
+        child.kill('SIGKILL');
+        await closed;
+        lines.close();
+        await rm(state, { recursive: true, force: true });
+    });
+    const [url] = await Promise.race([
+        once(lines, 'line'),
+        closed.then(() => {
+            throw new Error('Review fixture failed to start');
+        }),
+    ]);
+    for (const endpoint of [
+        '/v1/tasks/closure',
+        '/v1/task-retries/reconcile',
+        '/api/tasks/closure',
+    ]) {
+        const res = await fetch(url + endpoint, {
+            headers: {
+                authorization: 'Bearer ' + testToken,
+                'x-bento-owner-id': 'account-a',
+            },
+        });
+        assert.equal(res.status, 404);
+    }
+    child.kill('SIGTERM');
+    assert.deepEqual(await closed, [0, null]);
+    assert.deepEqual(
+        JSON.parse(await readFile(marker, 'utf8')),
+        Array(6).fill('function'),
+    );
+});
+
+test(
+    'uncertain retries yield to other Tasks and a damaged staging journal is durably blocked',
+    { timeout: 25_000 },
+    async (t) => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-retry-fairness-'));
+        const root = join(state, 'volume');
+        const base = localHost(root);
+        const executed = new Set<string>();
+        const fault: { taskId?: string } = {};
+        let deferRestore = true;
+        let transientCalls = 0;
+        let transientQueries = 0;
+        const host: ExecutionHost = {
+            ...base,
+            async worker(request, signal, slot, exit) {
+                const result = await base.worker(request, signal, slot, exit);
+                if (
+                    request.prompt === 'noop' &&
+                    fault.taskId !== undefined &&
+                    request.binding.project !== fault.taskId &&
+                    executed.has(request.binding.project)
+                )
+                    return result;
+                if (
+                    request.mode === 'execute' &&
+                    !executed.has(request.binding.project)
+                ) {
+                    executed.add(request.binding.project);
+                    return 'review';
+                }
+                return result;
+            },
+            taskRecovery: {
+                ...base.taskRecovery!,
+                async queryRestore(...args) {
+                    if (args[0].project === fault.taskId) transientQueries++;
+                    return base.taskRecovery!.queryRestore(...args);
+                },
+                async restoreTask(...args) {
+                    if (args[0].project === fault.taskId) {
+                        transientCalls++;
+                        if (deferRestore)
+                            throw new Error('Fixture restore response unknown');
+                    }
+                    return base.taskRecovery!.restoreTask(...args);
+                },
+            },
+        };
+        let controller = await start(state, host);
+        t.after(async () => {
+            await controller.close();
+            await rm(state, { recursive: true, force: true });
+        });
+        async function api(
+            path: string,
+            method = 'GET',
+            body?: unknown,
+            key?: string,
+        ) {
+            const response = await fetch(controller.url + '/v1' + path, {
+                method,
+                headers: {
+                    authorization: 'Bearer ' + testToken,
+                    'x-bento-owner-id': 'account-a',
+                    ...(key ? { 'idempotency-key': key } : {}),
+                    ...(body === undefined
+                        ? {}
+                        : { 'content-type': 'application/json' }),
+                },
+                ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+                signal: AbortSignal.timeout(5000),
+            });
+            return { status: response.status, body: await response.json() };
+        }
+        const workspaceSha256 = snapshotSha256([]);
+        async function create() {
+            const response = await api(
+                '/tasks',
+                'POST',
+                {
+                    id: null,
+                    name: 'Task',
+                    sourceSpaceId: null,
+                    inputFiles: [],
+                    inputManifest: [],
+                    inputDigest: workspaceSha256,
+                },
+                randomUUID(),
+            );
+            assert.equal(response.status, 202);
+            const id = response.body.task.id as string;
+            const path = '/tasks/' + id;
+            await until(
+                () => api(path),
+                (r) => r.body.task.status === 'ready',
+                'New Task ready',
+            );
+            return { id, path };
+        }
+        async function run(path: string) {
+            const response = await api(
+                path + '/runs',
+                'POST',
+                { prompt: 'noop' },
+                randomUUID(),
+            );
+            assert.equal(response.status, 202);
+            return path + '/runs/' + response.body.run.id;
+        }
+        const first = await create();
+        fault.taskId = first.id;
+        const firstRun = await run(first.path);
+        await until(
+            () => api(firstRun),
+            (r) => r.body.run.status === 'failed',
+            'First Task failed safely',
+        );
+        const key = randomUUID();
+        const retry = () => api(firstRun + '/retry', 'POST', undefined, key);
+        const firstAttempt = await retry();
+        assert.equal(firstAttempt.status, 202);
+        const attemptId = firstAttempt.body.retry.id as string;
+        await until(
+            async () => transientCalls,
+            (n) => n >= 2,
+            'Original attempt queried again',
+        );
+        assert.equal((await retry()).body.retry.state, 'preparing');
+        assert(transientQueries >= 2);
+
+        const second = await create();
+        const secondRun = await run(second.path);
+        await until(
+            () => api(secondRun),
+            (r) => r.body.run.status === 'failed',
+            'Second Task failed safely',
+        );
+        const secondAttempt = await api(
+            secondRun + '/retry',
+            'POST',
+            undefined,
+            randomUUID(),
+        );
+        assert.equal(secondAttempt.status, 202);
+        const other = await create();
+        executed.add(other.id);
+        const otherRun = await run(other.path);
+        await until(
+            () => api(otherRun),
+            (r) => r.body.run.status === 'succeeded',
+            'Independent Task progressed',
+        );
+        const secondRetry =
+            second.path + '/runs/' + secondAttempt.body.retry.runId;
+        await until(
+            () => api(secondRetry),
+            (r) => r.status === 200 && r.body.run.status === 'succeeded',
+            'Second retry progressed',
+        );
+
+        const store = new Store(join(state, 'business.sqlite'));
+        const binding = store.binding(
+            store.findRun(firstRun.split('/').at(-1)!),
+        );
+        store.close();
+        const directory = join(root, binding.project);
+        const pointer = join(directory, 'task-volume');
+        const previousVolume = await readlink(pointer);
+        const stagedVolume = 'volume-' + attemptId;
+        await mkdir(join(directory, stagedVolume));
+        await writeFile(
+            join(directory, stagedVolume, 'damaged.txt'),
+            Buffer.from([0xff]),
+        );
+        await mkdir(join(directory, 'restores'));
+        await writeFile(
+            join(directory, 'restores', attemptId + '.json'),
+            JSON.stringify({
+                attemptId,
+                phase: 'prepared',
+                sha256: workspaceSha256,
+                bindingDigest: executionBindingDigest(binding),
+                previousVolume,
+                stagedVolume,
+            }),
+        );
+        deferRestore = false;
+        await until(
+            retry,
+            (r) => r.body.retry.state === 'blocked',
+            'Deterministic conflict became blocked',
+        );
+        assert.equal(await readlink(pointer), previousVolume);
+        const callsAtBlock = transientCalls;
+        await controller.close();
+        controller = await start(state, {
+            ...host,
+            observeRetryCleanup: async () => null,
+        });
+        assert.equal((await retry()).body.retry.state, 'blocked');
+        const reopenedStore = new Store(join(state, 'business.sqlite'));
+        assert.equal(
+            reopenedStore.taskRetry(attemptId).lastConfirmedPhase,
+            'preparing',
+        );
+        reopenedStore.close();
+        assert.equal(
+            await controller.reconcileTaskRetry({
+                attemptId,
+                expectedGeneration: 2,
+            }),
+            'pending',
+        );
+        await assert.rejects(
+            controller.closeTaskRetry({ attemptId, expectedGeneration: 2 }),
+            { code: 'review_unavailable' },
+        );
+        assert.equal(controller.readTaskRetryClosure(attemptId), null);
+        assert.equal(transientCalls, callsAtBlock);
+        await controller.close();
+        controller = await start(state, host);
+        await controller.closeTaskRetry({ attemptId, expectedGeneration: 2 });
+        assert.equal((await retry()).body.retry.state, 'closed');
+        assert.equal(
+            controller.readTaskRetryClosure(attemptId)?.authorityGeneration,
+            2,
+        );
+        assert.equal(await readlink(pointer), previousVolume);
+    },
+);
+
+test(
+    'Task event projection deduplicates retries and rejects stale grants and private fields',
+    { timeout: 15_000 },
+    async (t) => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-task-projection-'));
+        const base = localHost(join(state, 'volume'));
+        const requests: WorkerRequest[] = [];
+        const canary = 'fixture-credential-must-not-project';
+        async function project(request: WorkerRequest, items: unknown[]) {
+            assert(request.publicEventsUrl);
+            const response = await fetch(request.publicEventsUrl, {
+                method: 'POST',
+                headers: {
+                    authorization: 'Bearer ' + request.grant.token,
+                    'content-type': 'application/json',
+                },
+                body: JSON.stringify({ items }),
+                signal: AbortSignal.timeout(3000),
+            });
+            await response.body?.cancel();
+            return response.status;
+        }
+        const service = await start(state, {
+            ...base,
+            async worker(request, signal, slot, exit) {
+                if (request.mode === 'execute' && request.publicEventsUrl) {
+                    requests.push(request);
+                    assert.equal(
+                        await project(request, [
+                            {
+                                offset: 0,
+                                kind: 'agent_reply',
+                                text: canary,
+                                token: canary,
+                            },
+                        ]),
+                        403,
+                    );
+                    const items = [
+                        { offset: 0, kind: 'agent_reply', text: '任务结果' },
+                        { offset: 1, kind: 'command', text: '确定性检查' },
+                        {
+                            offset: 10,
+                            kind: 'check',
+                            name: 'fixture check',
+                            status: 'passed',
+                            output: 'ok',
+                        },
+                    ];
+                    assert.equal(await project(request, items), 200);
+                    assert.equal(await project(request, items), 200);
+                    assert.equal(
+                        await project(request, [
+                            { offset: 2, kind: 'step', text: 'out of order' },
+                            {
+                                offset: 11,
+                                kind: 'step',
+                                text: 'must not commit',
+                            },
+                        ]),
+                        403,
+                    );
+                    assert.equal(await project(request, [items[0]!]), 200);
+
+                    assert.equal(
+                        await project(request, [
+                            {
+                                offset: 0,
+                                kind: 'agent_reply',
+                                text: 'conflict',
+                            },
+                        ]),
+                        403,
+                    );
+                    const result = await base.worker(
+                        request,
+                        signal,
+                        slot,
+                        exit,
+                    );
+                    assert.equal(
+                        await project(request, [
+                            { offset: 3, kind: 'step', text: 'late' },
+                        ]),
+                        403,
+                    );
+                    return result;
+                }
+                return base.worker(request, signal, slot, exit);
+            },
+        });
+        t.after(async () => {
+            await service.close();
+            await rm(state, { recursive: true, force: true });
+        });
+        async function api(
+            path: string,
+            method = 'GET',
+            body?: unknown,
+            key?: string,
+        ) {
+            const response = await fetch(service.url + '/v1' + path, {
+                method,
+                headers: {
+                    authorization: 'Bearer ' + testToken,
+                    'x-bento-owner-id': 'account-a',
+                    ...(key ? { 'idempotency-key': key } : {}),
+                    ...(body === undefined
+                        ? {}
+                        : { 'content-type': 'application/json' }),
+                },
+                ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+                signal: AbortSignal.timeout(5000),
+            });
+            const text = await response.text();
+            return { status: response.status, text, body: JSON.parse(text) };
+        }
+        async function create() {
+            const task = await api(
+                '/tasks',
+                'POST',
+                {
+                    id: null,
+                    name: 'Projected Task',
+                    sourceSpaceId: null,
+                    inputFiles: [],
+                    inputManifest: [],
+                    inputDigest: snapshotSha256([]),
+                },
+                randomUUID(),
+            );
+            assert.equal(task.status, 202, task.text);
+            const path = '/tasks/' + task.body.task.id;
+            await until(
+                () => api(path),
+                (r) => r.body.task.status === 'ready',
+                'Projected Task ready',
+            );
+            return path;
+        }
+        async function run(task: string) {
+            const response = await api(
+                task + '/runs',
+                'POST',
+                { prompt: 'noop' },
+                randomUUID(),
+            );
+            assert.equal(response.status, 202, response.text);
+            const path = task + '/runs/' + response.body.run.id;
+            await until(
+                () => api(path),
+                (r) => r.body.run.status === 'succeeded',
+                'Projected Run published',
+            );
+            const result = await api(path + '/results');
+            assert.equal(result.body.result.summary, '任务结果');
+            assert.deepEqual(result.body.result.checks, [
+                { name: 'fixture check', status: 'passed', output: 'ok' },
+            ]);
+        }
+        const task = await create();
+        await run(task);
+        await run(task);
+        const separate = await create();
+        await run(separate);
+        assert.equal(requests[0]!.grant.session, requests[1]!.grant.session);
+        assert.notEqual(requests[0]!.grant.session, requests[2]!.grant.session);
+        assert.equal(
+            await project(requests[0]!, [
+                { offset: 10, kind: 'step', text: 'old' },
+            ]),
+            403,
+        );
+        const { body, text } = await api(task + '/events');
+        assert.deepEqual(
+            body.items.map((event: { sequence: number }) => event.sequence),
+            [1, 2, 3, 4, 5, 6, 7, 8],
+        );
+        assert.equal(
+            body.items.filter(
+                (event: { kind: string }) => event.kind === 'check',
+            ).length,
+            2,
+        );
+        assert.equal(text.includes(canary), false);
+        assert.equal((await api(separate + '/events')).body.items.length, 4);
+    },
+);

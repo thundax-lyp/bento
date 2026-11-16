@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
     conflict,
+    isTaskOperation,
     notFound,
     RequestError,
     projectDeletionConflicts,
@@ -11,6 +12,8 @@ import type {
     Project,
     ProjectDeletionBlocker,
     Run,
+    Result,
+    TaskOperation,
 } from './protocol.ts';
 
 type MockProject = {
@@ -164,7 +167,186 @@ export function mockBackend(): Backend {
         throw new RequestError(409, code, projectDeletionConflicts[code]);
     }
 
+    const sourceDeletions = new Map<
+        string,
+        {
+            owner: string;
+            spaceId: string;
+            legacyProjectId: string | null;
+            state: 'held' | 'deleting' | 'deleted' | 'denied' | 'released';
+            code?: keyof typeof projectDeletionConflicts;
+        }
+    >();
+    const inputHolds = new Map<
+        string,
+        {
+            owner: string;
+            spaceId: string;
+            legacyProjectId: string | null;
+            state: FileDeleteHold['state'];
+        }
+    >();
+    const heldSource = (owner: string, spaceId: string) =>
+        [...sourceDeletions.values()].find(
+            (receipt) =>
+                receipt.owner === owner &&
+                receipt.spaceId === spaceId &&
+                ['held', 'deleting', 'deleted'].includes(receipt.state),
+        );
+
+    function sourceOperation(owner: string, operation: TaskOperation): Result {
+        if (operation.kind === 'drainOwner') {
+            draining.add(owner);
+            return { status: 204 };
+        }
+        if (operation.kind === 'taskCreationReceipt')
+            return { status: 200, json: { items: [] } };
+        if (operation.kind === 'taskRequest' || operation.kind === 'createTask')
+            throw new RequestError(
+                503,
+                'tasks_unavailable',
+                '模拟模式不提供新任务入口。',
+            );
+        const { spaceId, legacyProjectId } = operation;
+        const legacy = () => {
+            if (legacyProjectId === null) return undefined;
+            const project = projects.get(legacyProjectId);
+            if (!project || project.ownerId !== owner) throw notFound();
+            return project;
+        };
+        if (operation.kind === 'taskSourceImpact') {
+            const project = legacy();
+            const runs = [...(project?.runs.values() ?? [])];
+            return {
+                status: 200,
+                json: {
+                    runCount: runs.length,
+                    diffCount: runs.filter(
+                        (item) => item.run.status === 'succeeded',
+                    ).length,
+                    blockers: project ? deletionBlockers(project) : [],
+                },
+            };
+        }
+        if (
+            operation.kind === 'acquireTaskInputDeleteHold' ||
+            operation.kind === 'releaseTaskInputDeleteHold'
+        ) {
+            const key = JSON.stringify([
+                owner,
+                spaceId,
+                operation.fileId,
+                operation.operationId,
+            ]);
+            const prior = inputHolds.get(key);
+            const release = operation.kind === 'releaseTaskInputDeleteHold';
+            if (prior && prior.legacyProjectId !== legacyProjectId)
+                rejectDeletion('idempotency_conflict');
+            if (prior && !release)
+                return { status: 200, json: { state: prior.state } };
+            if (release) {
+                if (!prior && heldSource(owner, spaceId)?.state === 'deleted')
+                    throw notFound();
+                if (prior?.state !== 'denied')
+                    inputHolds.set(key, {
+                        owner,
+                        spaceId,
+                        legacyProjectId,
+                        state: 'released',
+                    });
+                return { status: 200, json: { state: 'released' } };
+            }
+            const scope = heldSource(owner, spaceId);
+            if (scope?.state === 'deleted') throw notFound();
+            if (!scope && draining.has(owner)) rejectDeletion('owner_closed');
+            const project = scope ? undefined : legacy();
+            const state =
+                scope || (project && deletionBlockers(project).length)
+                    ? 'denied'
+                    : 'held';
+            inputHolds.set(key, { owner, spaceId, legacyProjectId, state });
+            return { status: 200, json: { state } };
+        }
+        if (operation.kind !== 'taskSourceDeletion') throw notFound();
+        const key = JSON.stringify([owner, spaceId, operation.operationId]);
+        const prior = sourceDeletions.get(key);
+        if (prior && prior.legacyProjectId !== legacyProjectId)
+            rejectDeletion('idempotency_conflict');
+        if (operation.phase === 'release') {
+            if (prior?.state === 'deleting' || prior?.state === 'deleted')
+                throw new RequestError(
+                    409,
+                    'deletion_committed',
+                    '项目清理已受理。',
+                );
+            if (prior?.state !== 'denied')
+                sourceDeletions.set(key, {
+                    owner,
+                    spaceId,
+                    legacyProjectId,
+                    state: 'released',
+                });
+            return { status: 204 };
+        }
+        if (prior?.state === 'denied') rejectDeletion(prior.code!);
+        if (prior?.state === 'deleted') return { status: 204 };
+        if (operation.phase === 'commit') {
+            if (!prior || prior.state === 'released')
+                throw new RequestError(
+                    409,
+                    'deletion_not_held',
+                    '项目清理尚未受理。',
+                );
+            prior.state = 'deleting';
+            if (legacyProjectId !== null) projects.delete(legacyProjectId);
+            prior.state = 'deleted';
+            return { status: 204 };
+        }
+        if (prior?.state === 'released')
+            throw new RequestError(
+                409,
+                'deletion_released',
+                '清理门禁已释放。',
+            );
+        if (prior) return { status: 202, json: { state: prior.state } };
+        if (heldSource(owner, spaceId)) rejectDeletion('idempotency_conflict');
+        const project = legacy();
+        const [blocker] = project ? deletionBlockers(project) : [];
+        const busy = [...inputHolds.values()].some(
+            (hold) =>
+                hold.owner === owner &&
+                hold.spaceId === spaceId &&
+                hold.state === 'held',
+        );
+        const code =
+            blocker ??
+            (busy
+                ? 'project_busy'
+                : draining.has(owner)
+                  ? 'owner_closed'
+                  : undefined);
+        if (code) {
+            sourceDeletions.set(key, {
+                owner,
+                spaceId,
+                legacyProjectId,
+                state: 'denied',
+                code,
+            });
+            rejectDeletion(code);
+        }
+        sourceDeletions.set(key, {
+            owner,
+            spaceId,
+            legacyProjectId,
+            state: 'held',
+        });
+        return { status: 202, json: { state: 'held' } };
+    }
+
     return async (ownerId, operation) => {
+        if (isTaskOperation(operation))
+            return sourceOperation(ownerId, operation);
         if (operation.kind === 'purgeOwner') {
             draining.add(ownerId);
             const owned = [...projects.values()].filter(
@@ -242,6 +424,15 @@ export function mockBackend(): Backend {
 
         if (operation.kind === 'advanceProjectDeletion') {
             const { projectId, operationId } = operation;
+            if (
+                [...sourceDeletions.values()].some(
+                    (r) =>
+                        r.owner === ownerId &&
+                        r.legacyProjectId === projectId &&
+                        r.state === 'held',
+                )
+            )
+                rejectDeletion('project_busy');
             const receipts = deletions.get(projectId) ?? new Map();
             const prior = receipts.get(operationId);
             if (prior) {
@@ -322,7 +513,21 @@ export function mockBackend(): Backend {
                     throw conflict('此提交键已用于其他任务内容。');
                 return { status: 200, json: prior.run };
             }
-            if ([...project.deletionHolds.values()].includes('held'))
+            if (
+                [...project.deletionHolds.values()].includes('held') ||
+                [...inputHolds.values()].some(
+                    (r) =>
+                        r.owner === ownerId &&
+                        r.legacyProjectId === project.project.id &&
+                        r.state === 'held',
+                ) ||
+                [...sourceDeletions.values()].some(
+                    (r) =>
+                        r.owner === ownerId &&
+                        r.legacyProjectId === project.project.id &&
+                        r.state === 'held',
+                )
+            )
                 throw conflict('项目文件正在删除。');
             if (project.project.status !== 'ready')
                 throw conflict('请等项目导入完成。');

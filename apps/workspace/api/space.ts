@@ -53,7 +53,8 @@ type ProjectDeletion = {
     owner: string;
     operationId: string;
     executionProjectId: string | null;
-    phase: 'checking' | 'cleaning' | 'deleted';
+    phase: 'holding' | 'committing' | 'releasing' | 'cleaning' | 'deleted';
+    lastError: string | null;
 };
 const deletionBlockers: DeletionBlocker[] = [
     'upload_pending',
@@ -122,8 +123,8 @@ export function mySpace(
         ) STRICT;
         CREATE TABLE IF NOT EXISTS space_project_deletions (
             spaceId TEXT PRIMARY KEY, owner TEXT NOT NULL, operationId TEXT NOT NULL UNIQUE,
-            executionProjectId TEXT, phase TEXT NOT NULL CHECK(phase IN ('checking','cleaning','deleted')),
-            lastError TEXT CHECK(lastError IN ('execution_unconfirmed','storage_unconfirmed'))
+            executionProjectId TEXT, phase TEXT NOT NULL CHECK(phase IN ('holding','committing','releasing','cleaning','deleted')),
+            lastError TEXT CHECK(lastError IN ('execution_unconfirmed','storage_unconfirmed','project_busy','project_importing','owner_closed'))
         ) STRICT;
         CREATE TABLE IF NOT EXISTS space_draining_owners (owner TEXT PRIMARY KEY) STRICT;
         CREATE TABLE IF NOT EXISTS space_retired_upload_ids (id TEXT PRIMARY KEY) STRICT;
@@ -201,14 +202,12 @@ export function mySpace(
         if (importing) blockers.add('project_importing');
         let runCount = 0;
         let diffCount = 0;
-        if (
-            projectId &&
-            projectDeletion(owner, spaceId)?.phase !== 'cleaning'
-        ) {
+        if (projectDeletion(owner, spaceId)?.phase !== 'cleaning') {
             try {
                 const result = await backend(owner, {
-                    kind: 'projectDeletionImpact',
-                    projectId,
+                    kind: 'taskSourceImpact',
+                    spaceId,
+                    legacyProjectId: projectId,
                 });
                 if (!('json' in result) || !('blockers' in result.json))
                     throw new Error('Missing execution impact');
@@ -263,6 +262,7 @@ export function mySpace(
             db.prepare(
                 'DELETE FROM space_execution WHERE owner=? AND spaceId=?',
             ).run(owner, spaceId);
+            execution.purgeTaskIntents(owner, spaceId);
             db.prepare('DELETE FROM space_projects WHERE owner=? AND id=?').run(
                 owner,
                 spaceId,
@@ -281,53 +281,109 @@ export function mySpace(
         if (!intent) throw notFound();
         if (intent.phase === 'deleted')
             return Promise.resolve({ deleteStatus: 204 });
-        const existing = projectAdvances.get(spaceId);
-        if (existing) return existing;
+        const prior = projectAdvances.get(spaceId);
+        if (prior) return prior;
         const task = (async (): Promise<{ deleteStatus: 202 | 204 }> => {
-            if (intent.phase === 'checking') {
+            let phase = intent.phase;
+            const forward = (phase: 'hold' | 'commit' | 'release') =>
+                backend(owner, {
+                    kind: 'taskSourceDeletion',
+                    spaceId,
+                    operationId: intent.operationId,
+                    legacyProjectId: intent.executionProjectId,
+                    phase,
+                });
+            const record = (
+                state: ProjectDeletion['phase'],
+                error: string | null = null,
+            ) => {
+                db.prepare(
+                    'UPDATE space_project_deletions SET phase=?,lastError=? WHERE owner=? AND spaceId=?',
+                ).run(state, error, owner, spaceId);
+            };
+            if (phase === 'holding') {
                 try {
-                    if (!intent.executionProjectId)
-                        throw new Error('Missing execution project');
-                    const result = await backend(owner, {
-                        kind: 'advanceProjectDeletion',
-                        projectId: intent.executionProjectId,
-                        operationId: intent.operationId,
-                    });
+                    if (!(await execution.settleProjectTasks(owner, spaceId)))
+                        return { deleteStatus: 202 };
+                    const received = await forward('hold');
+                    if (received.status === 204) {
+                        commitDeletionChange(() =>
+                            beginProjectCleaning(owner, spaceId),
+                        );
+                        phase = 'cleaning';
+                    } else if (
+                        received.status === 202 &&
+                        'json' in received &&
+                        'state' in received.json
+                    ) {
+                        if (received.json.state === 'deleting')
+                            return (
+                                record('committing'),
+                                { deleteStatus: 202 }
+                            );
+                        if (received.json.state !== 'held')
+                            throw new Error('Invalid source hold receipt');
+                        record('committing');
+                        phase = 'committing';
+                    } else throw new Error('Invalid source hold receipt');
+                } catch (error) {
+                    if (
+                        !(error instanceof RequestError) ||
+                        error.status !== 409 ||
+                        ![
+                            'project_busy',
+                            'project_importing',
+                            'owner_closed',
+                        ].includes(error.code)
+                    ) {
+                        record('holding', 'execution_unconfirmed');
+                        throw projectDeletionUnconfirmed();
+                    }
+                    record('releasing', error.code);
+                    phase = 'releasing';
+                }
+            }
+            if (phase === 'releasing') {
+                try {
+                    const result = await forward('release');
+                    if (result.status !== 204)
+                        throw new Error('Invalid source release receipt');
+                } catch (error) {
+                    if (
+                        error instanceof RequestError &&
+                        error.code === 'deletion_committed'
+                    ) {
+                        record('committing');
+                        return { deleteStatus: 202 };
+                    }
+                    throw projectDeletionUnconfirmed();
+                }
+                const code = projectDeletion(owner, spaceId)?.lastError;
+                commitDeletionChange(() => {
+                    db.prepare(
+                        'DELETE FROM space_project_deletions WHERE owner=? AND spaceId=?',
+                    ).run(owner, spaceId);
+                });
+                throw projectBlocked(
+                    code === 'project_importing'
+                        ? 'project_importing'
+                        : 'project_busy',
+                );
+            }
+            if (phase === 'committing') {
+                try {
+                    const result = await forward('commit');
                     if (
                         result.status === 202 &&
                         'json' in result &&
                         'state' in result.json &&
                         result.json.state === 'deleting'
-                    ) {
-                        db.prepare(
-                            'UPDATE space_project_deletions SET lastError=NULL WHERE owner=? AND spaceId=?',
-                        ).run(owner, spaceId);
+                    )
                         return { deleteStatus: 202 };
-                    }
                     if (result.status !== 204)
-                        throw new Error('Invalid execution receipt');
-                } catch (error) {
-                    if (
-                        error instanceof RequestError &&
-                        error.status === 409 &&
-                        (error.code === 'project_busy' ||
-                            error.code === 'project_importing' ||
-                            error.code === 'owner_closed')
-                    ) {
-                        commitDeletionChange(() => {
-                            db.prepare(
-                                'DELETE FROM space_project_deletions WHERE owner=? AND spaceId=?',
-                            ).run(owner, spaceId);
-                        });
-                        throw projectBlocked(
-                            error.code === 'project_importing'
-                                ? 'project_importing'
-                                : 'project_busy',
-                        );
-                    }
-                    db.prepare(
-                        "UPDATE space_project_deletions SET lastError='execution_unconfirmed' WHERE owner=? AND spaceId=?",
-                    ).run(owner, spaceId);
+                        throw new Error('Invalid source commit receipt');
+                } catch {
+                    record('committing', 'execution_unconfirmed');
                     throw projectDeletionUnconfirmed();
                 }
                 commitDeletionChange(() =>
@@ -338,9 +394,7 @@ export function mySpace(
                 await cleanProject(owner, spaceId);
                 return { deleteStatus: 204 };
             } catch {
-                db.prepare(
-                    "UPDATE space_project_deletions SET lastError='storage_unconfirmed' WHERE owner=? AND spaceId=?",
-                ).run(owner, spaceId);
+                record('cleaning', 'storage_unconfirmed');
                 return { deleteStatus: 202 };
             }
         })().finally(() => projectAdvances.delete(spaceId));
@@ -371,27 +425,25 @@ export function mySpace(
                 throw projectDeletionUnconfirmed();
             db.prepare(
                 'INSERT INTO space_project_deletions VALUES (?,?,?,?,?,NULL)',
-            ).run(
-                spaceId,
-                owner,
-                randomUUID(),
-                projectId,
-                projectId ? 'checking' : 'cleaning',
-            );
-            if (!projectId) beginProjectCleaning(owner, spaceId);
+            ).run(spaceId, owner, randomUUID(), projectId, 'holding');
         });
         return advanceProjectDeletion(owner, spaceId);
     }
 
-    function drain(owner: string) {
+    function drain(owner: string, confirmed = false) {
         db.prepare(
             'INSERT OR IGNORE INTO space_draining_owners VALUES (?)',
         ).run(owner);
         return (
-            execution.drain(owner) &&
+            execution.drain(owner, confirmed) &&
             !db
                 .prepare(
                     "SELECT 1 FROM space_project_deletions WHERE owner=? AND phase<>'deleted'",
+                )
+                .get(owner) &&
+            !db
+                .prepare(
+                    'SELECT 1 FROM space_file_deletions d JOIN space_uploads u ON u.id=d.fileId WHERE u.owner=?',
                 )
                 .get(owner)
         );
@@ -663,13 +715,13 @@ export function mySpace(
     async function fileDeleteHold(
         row: Upload,
         intent: FileDeletion,
-        kind: 'acquireFileDeleteHold' | 'releaseFileDeleteHold',
+        kind: 'acquireTaskInputDeleteHold' | 'releaseTaskInputDeleteHold',
     ): Promise<'held' | 'denied' | 'released'> {
-        if (!intent.executionProjectId)
-            throw new Error('Missing execution project for file deletion');
         const result = await backend(row.owner, {
             kind,
-            projectId: intent.executionProjectId,
+            spaceId: row.project,
+            fileId: row.id,
+            legacyProjectId: intent.executionProjectId,
             operationId: intent.operationId,
         });
         if (!('json' in result) || !('state' in result.json))
@@ -684,11 +736,23 @@ export function mySpace(
         const intent = fileDeletion(row.id);
         if (intent?.phase !== 'checking')
             throw new Error('Missing checking phase');
-        const state = await fileDeleteHold(
-            row,
-            intent,
-            'acquireFileDeleteHold',
-        );
+        let state;
+        try {
+            state = await fileDeleteHold(
+                row,
+                intent,
+                'acquireTaskInputDeleteHold',
+            );
+        } catch (error) {
+            if (
+                error instanceof RequestError &&
+                (error.code === 'owner_closed' || error.code === 'not_found')
+            )
+                db.prepare(
+                    'DELETE FROM space_file_deletions WHERE fileId=?',
+                ).run(row.id);
+            throw error;
+        }
         if (state === 'denied') {
             db.prepare('DELETE FROM space_file_deletions WHERE fileId=?').run(
                 row.id,
@@ -722,9 +786,11 @@ export function mySpace(
             ).run(row.id);
         }
         if (
-            intent.executionProjectId &&
-            (await fileDeleteHold(row, intent, 'releaseFileDeleteHold')) !==
-                'released'
+            (await fileDeleteHold(
+                row,
+                intent,
+                'releaseTaskInputDeleteHold',
+            )) !== 'released'
         )
             throw new Error('File deletion hold release unconfirmed');
         commitDeletionChange(() => {
@@ -744,27 +810,37 @@ export function mySpace(
         if (active.has(fileId)) throw deletionUnconfirmed();
         return locked(fileId, async () => {
             if (!fileDeletion(fileId)) {
-                const projectId = execution.deletionProject(
-                    owner,
-                    row.project,
-                    fileId,
-                );
                 commitDeletionChange(() => {
-                    db.prepare(
-                        'INSERT INTO space_file_deletions VALUES (?,?,?,?)',
-                    ).run(
+                    requireWritableProject(owner, row.project);
+                    if (upload(owner, fileId).state !== 'saved')
+                        throw notFound();
+                    if (execution.hasTaskPin(fileId))
+                        throw new RequestError(
+                            409,
+                            'project_busy',
+                            '文件正在被未结束的任务使用。',
+                        );
+                    const projectId = execution.deletionProject(
+                        owner,
+                        row.project,
                         fileId,
-                        randomUUID(),
-                        projectId,
-                        projectId ? 'checking' : 'deleting',
                     );
-                    if (!projectId) setState(row, 'deleting');
+                    db.prepare(
+                        "INSERT INTO space_file_deletions VALUES (?,?,?,'checking')",
+                    ).run(fileId, randomUUID(), projectId);
                 });
-                if (!projectId) return { deleteStatus: 202 } as const;
             }
-            const decision = await checkFileDeletion(row).catch(() => {
-                throw deletionUnconfirmed();
-            });
+            const decision = await checkFileDeletion(row).catch(
+                (error: unknown) => {
+                    if (
+                        error instanceof RequestError &&
+                        (error.code === 'owner_closed' ||
+                            error.code === 'not_found')
+                    )
+                        throw error;
+                    throw deletionUnconfirmed();
+                },
+            );
             if (decision === 'denied')
                 throw new RequestError(
                     409,
@@ -1046,6 +1122,7 @@ export function mySpace(
 
     return {
         origin: storage.origin,
+        createTask: execution.createTask,
         route,
         drain,
         async purge(owner: string) {
@@ -1081,6 +1158,7 @@ export function mySpace(
             }
             db.exec('BEGIN IMMEDIATE');
             try {
+                execution.purgeTaskIntents(owner);
                 db.prepare('DELETE FROM space_execution WHERE owner = ?').run(
                     owner,
                 );

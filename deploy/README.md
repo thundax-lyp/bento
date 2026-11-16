@@ -96,6 +96,16 @@ PASS 要求基线 Web 健康，首页和匿名会话返回 200、401。候选 We
 
 ### 配置执行服务
 
+部署方从可信 launcher 配置取得 `BENTO_EXECUTION_IMAGE_DIGEST` 和 `BENTO_EXECUTION_POLICY_DIGEST`，两项都使用 `sha256:` 加 64 位小写十六进制。导出这两项后运行：
+
+```sh
+node -e 'const {createHash}=require("node:crypto"); const imageDigest=process.env.BENTO_EXECUTION_IMAGE_DIGEST; const policyDigest=process.env.BENTO_EXECUTION_POLICY_DIGEST; if (![imageDigest,policyDigest].every(x=>/^sha256:[0-9a-f]{64}$/.test(x??""))) process.exit(2); process.stdout.write("sha256:"+createHash("sha256").update(JSON.stringify({imageDigest,policyDigest}),"utf8").digest("hex")+"\n");'
+```
+
+把输出保存到 Compose 根 `.env` 的 `BENTO_EXECUTION_ENVIRONMENT_VERSION`。执行服务启动时校验该值与宿主公开的环境版本一致。命令适配器从私有 host JSON 的 `imageDigest` 与 `policyDigest` 生成版本。模块适配器从相同的可信摘要生成 `ExecutionHost.environmentVersion`。配置缺失或不一致时拒绝启动。
+
+新建 Task 固定当前版本。可信 `provisionTask` 必须按请求中的冻结版本准备并返回独立观测到的版本、sandbox 和 volume。轮换时保留旧版本的可信配置和已准备的绑定。旧版本无法准备时保留原 Task 和冻结输入，以便恢复该版本后重新准备。
+
 在 `debug-workspace/execution.env` 选择一种受信适配器。私有文件放在 `debug-workspace/execution/`，在容器内以只读方式挂载到 `/app/private`。Orchestrator 镜像包含 Go Temporal 控制面、执行服务和 DSH Worker 源码及运行依赖。容器以 UID 1000 运行，私有文件须允许该身份读取。
 
 - `BENTO_HOST_CONFIG=/app/private/host.json` 使用命令适配器。JSON 包含 Gateway、workspace scope、mTLS 文件、固定 SDK 的 `raw.js`，以及可信的 `control` 和 `worker` 命令。命令与文件路径以容器内路径为准，二进制须匹配容器平台。控制命令负责项目导入、独立读卷、沙盒停启及观察。Worker 命令由受信启动器执行，启动器隔离 Worker 与宿主管理凭据，并向 Worker 提供 `BENTO_DSH_BOOTSTRAP`。协议见[命令宿主适配器](../apps/orchestrator/execution-service/command-host.ts)。
@@ -119,9 +129,24 @@ docker compose -f deploy/compose.yaml --profile worker-image build bento-worker
 
 仓库内的 TypeScript 启动命令使用 `node --import /app/register-paths.mjs` 解析 `@/` 路径。Compose 和 Worker 镜像已配置此参数。自定义启动器直接调用 Node 时也需加载该文件。
 
-使用 `start.ts` 的部署可设置 `BENTO_REVIEW_MODULE`，指向仅由可信部署端控制的模块。模块默认导出同步安装函数 `(reviewRun) => cleanup`。安装函数接入部署端的复核工具，并在停服时通过 `cleanup` 停止接收新请求、等待在途复核结束。复核提交须包含 `runId`、`failedGeneration`、`readyGeneration`、`stableOperationId` 和 `expectedSnapshotSha256`。模块与执行服务同进程运行，部署端应限制模块文件及复核入口的访问权限。
+使用 `start.ts` 的部署可设置 `BENTO_REVIEW_MODULE`，指向仅由可信部署端控制的模块。模块默认导出同步安装函数 `(reviewRun, closeTaskRun, readTaskClosure, closeTaskRetry, readTaskRetryClosure, reconcileTaskRetry) => cleanup`。原只接收 `reviewRun` 的模块仍可使用首参。安装函数接入部署端的复核工具，并在停服时通过 `cleanup` 停止接收新请求、等待在途复核结束。复核提交须包含 `runId`、`failedGeneration`、`readyGeneration`、`stableOperationId` 和 `expectedSnapshotSha256`。模块与执行服务同进程运行，部署端应限制模块文件及复核入口的访问权限。
+
+- `reviewRun({runId,failedGeneration,readyGeneration,stableOperationId,expectedSnapshotSha256}):Promise<void>` 在原执行结果与可信快照相符时发布该 Run。
+- `closeTaskRun({runId,decision,expectedGeneration}):Promise<void>` 在退出、撤权和静止证据通过后，以 failed 或 unconfirmed 结案。
+- `readTaskClosure(runId):TaskClosureAudit|null` 读取 Run 结案审计。项目或账号清理后仍可按原 ID 查询。
+- `closeTaskRetry({attemptId,expectedGeneration}):Promise<void>` 在可信宿主证明该恢复已停止、卷无写入者和资源可安全清理时关闭 blocked 重试。
+- `readTaskRetryClosure(attemptId):TaskRetryClosureAudit|null` 读取重试结案审计。保留规则与 Run 结案审计相同。
+- `reconcileTaskRetry({attemptId,expectedGeneration}):Promise<"pending"|"queued">` 对账原卷与会话恢复回执。两份证据均完整时沿原 attempt 排队；证据缺失时保持 pending。
+
+这些回调仅交给可信模块。业务 HTTP 不开放结案、可信对账或审计读取。
 
 项目删除和账号注销清理需要可信宿主实现幂等的工作区删除。命令宿主处理 `{action:"purge",binding}`，只删除该绑定独占的沙盒与卷，独立确认两者不存在后返回 `{sandbox,volume,absent:true}`。自定义宿主实现 `ExecutionHost.purge(binding)`。删除失败应报错，Bento 会保留清理请求以便重试。Docker 驱动的宿主可用 [dockerOpenShellPurge](../apps/orchestrator/execution-service/docker-openshell-purge.ts)，并提供与部署时一致的卷标签。
+
+### Task 事件投影
+
+Task 的 execute 请求含可选 `publicEventsUrl`，与当次 grant 一起交付 Worker。私有 DSH bootstrap 返回的 runtime 必须实现 `publicEvents(events): readonly PublicWorkerEvent[]`。收到 Task 请求但缺少此回调时，Worker 在提交 prompt 前返回待核对。旧项目请求继续使用原路径。
+
+回调以本轮 DSH 事件的零基索引作 `offset`。每个索引至多一项，按索引递增。回复、步骤和命令使用 `{offset,kind,text}`，检查使用 `{offset,kind:"check",name,status,output}`。检查状态为 passed、failed、not_run 或 unavailable。仅投影用户可见内容，命令只给出脱敏名称，检查输出只给出可公开摘要。禁止输出工具参数、环境变量、原始 DSH 帧或凭据。Worker 每批最多 100 项及 256 KiB，单个 text/output 最多 4096 UTF-8 字节，name 最多 120 字节。空批标记投影完成；发布结果前服务须收到此批。生产 bootstrap 的投影和保密性使用部署场景验收。
 
 ## Temporal 配置
 

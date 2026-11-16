@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import { randomUUID } from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { Context } from '@deepseek-ai/cordis';
@@ -7,7 +12,8 @@ import {
     reconcileSessionPersistence,
     remoteSessionPersistence,
 } from '@/apps/worker/remote-session.ts';
-import { SessionHistory } from './session-history.ts';
+import { SessionHistory, type VerifiedStopProof } from './session-history.ts';
+import { PersistenceFence } from './persistence-fence.ts';
 
 test('reconciliation retries with the same writer after a dropped RPC', async () => {
     const ctx = new Context();
@@ -87,5 +93,146 @@ test('reconciliation retries with the same writer after a dropped RPC', async ()
             server.closeAllConnections();
             history.close();
         }
+    }
+});
+
+test('a verified retry restores the checkpoint prefix and reopens with its original receipt', async (t) => {
+    const folder = await mkdtemp(join(tmpdir(), 'bento-history-checkpoint-'));
+    const path = join(folder, 'history.sqlite');
+    let history = new SessionHistory(path);
+    const db = new DatabaseSync(path);
+    t.after(async () => {
+        history.close();
+        db.close();
+        await rm(folder, { recursive: true, force: true });
+    });
+    const session = randomUUID();
+    const sourceRunId = randomUUID();
+    const newRunId = randomUUID();
+    const first = { session, run: randomUUID(), generation: 1 };
+    const old = { session, run: sourceRunId, generation: 2 };
+    const fresh = { session, run: randomUUID(), generation: 3 };
+    const call = (grant: typeof first, body: object) => {
+        const result = history.dispatch(JSON.stringify(body), grant);
+        const parsed = JSON.parse(result.body);
+        assert.equal(result.status, 200, result.body);
+        return parsed.value;
+    };
+    const create = call(first, {
+        method: 'create',
+        header: {
+            id: session,
+            version: 4,
+            createdAt: 1700000000000,
+            isSeeded: false,
+        },
+    });
+    const writeTurn = (grant: typeof first, key: string, turn: number) => {
+        const seq = (turn - 1) * 2;
+        const batch = randomUUID();
+        const events = [
+            {
+                type: 'turn/start',
+                seq,
+                time: 1700000000001 + seq,
+                data: { turn },
+            },
+            {
+                type: 'turn/end',
+                seq: seq + 1,
+                time: 1700000000002 + seq,
+                data: { turn, reason: { kind: 'completed' } },
+            },
+        ];
+        call(grant, { method: 'stage', key, batch, events });
+        call(grant, { method: 'append', key, batch, events });
+        call(grant, { method: 'reconcile', key });
+        call(grant, { method: 'flush', key });
+        call(grant, { method: 'close', key });
+    };
+    const revoke = (generation: number) =>
+        db
+            .prepare(
+                "UPDATE sessions SET owner='bento:revoked',handle=NULL WHERE id=? AND epoch=?",
+            )
+            .run(session, generation);
+    writeTurn(first, create.key, 1);
+    revoke(1);
+    const checkpoint = history.checkpoint(session, sourceRunId, 2);
+    db.prepare('UPDATE sessions SET owner=?,epoch=? WHERE id=?').run(
+        old.run,
+        old.generation,
+        session,
+    );
+    const writer = call(old, { method: 'open', access: 'write' });
+    writeTurn(old, writer.key, 2);
+    revoke(2);
+    const proof = {
+        attemptId: randomUUID(),
+        taskId: randomUUID(),
+        sourceRunId,
+        newRunId,
+        sessionId: session,
+        oldGeneration: 2,
+        newGeneration: 3,
+        checkpointSha256: checkpoint.sha256,
+    } as VerifiedStopProof;
+    const state = () => ({
+        sessions: db.prepare('SELECT * FROM sessions').all(),
+        events: db.prepare('SELECT * FROM events').all(),
+        receipts: db.prepare('SELECT * FROM batch_receipts').all(),
+        intents: db.prepare('SELECT * FROM batch_intents').all(),
+        restores: db.prepare('SELECT * FROM history_restores').all(),
+    });
+    const expectUnchanged = (changes: Partial<VerifiedStopProof> = {}) => {
+        const before = state();
+        assert.throws(() => history.restore({ ...proof, ...changes }));
+        assert.deepEqual(state(), before);
+    };
+    expectUnchanged({ sessionId: randomUUID() });
+    expectUnchanged({ oldGeneration: 1, newGeneration: 2 });
+    expectUnchanged({ checkpointSha256: 'invalid' });
+    db.prepare("UPDATE sessions SET handle='in-use' WHERE id=?").run(session);
+    expectUnchanged();
+    db.prepare('UPDATE sessions SET handle=NULL WHERE id=?').run(session);
+    db.prepare("INSERT INTO batch_intents VALUES (?,2,'pending','[]')").run(
+        session,
+    );
+    expectUnchanged();
+    db.prepare('DELETE FROM batch_intents WHERE id=?').run(session);
+    const receipts = state().receipts;
+    assert.deepEqual(history.restore(proof), checkpoint);
+    assert.deepEqual(state().receipts, receipts);
+    assert.equal(
+        history.dispatch(
+            JSON.stringify({ method: 'open', access: 'write' }),
+            old,
+        ).status,
+        400,
+    );
+    history.close();
+    history = new SessionHistory(path);
+    assert.deepEqual(history.restore(proof), checkpoint);
+    assert.equal(history.restoredDigest(proof), checkpoint.sha256);
+    assert.deepEqual(history.checkpoint(session, newRunId, 3), checkpoint);
+    expectUnchanged({ newRunId: randomUUID() });
+
+    // The queued retry was cancelled without admission; a different Run may acquire this generation.
+    assert.deepEqual(history.checkpoint(session, fresh.run, 3), checkpoint);
+    const fence = new PersistenceFence(path);
+    try {
+        assert(fence.isRevoked(session, 2));
+        fence.grant(session, 3, fresh.run);
+        assert.equal(call(fresh, { method: 'stat' }).eventCount, 2);
+        const skipped = history.dispatch(
+            JSON.stringify({ method: 'open', access: 'write' }),
+            { ...fresh, run: newRunId },
+        );
+        assert.equal(skipped.status, 400);
+        const opened = call(fresh, { method: 'open', access: 'write' });
+        writeTurn(fresh, opened.key, 2);
+        assert.equal(call(fresh, { method: 'stat' }).eventCount, 4);
+    } finally {
+        fence.close();
     }
 });

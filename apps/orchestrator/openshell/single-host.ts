@@ -1,9 +1,10 @@
+import { maxTaskEventBatchBytes } from '@/apps/worker/protocol.ts';
 import { createServer } from 'node:http';
 import { Authority } from './authority.ts';
 import { SandboxManagement } from './management.ts';
 import { PersistenceFence } from './persistence-fence.ts';
 import { createPersistenceIngress } from './persistence-ingress.ts';
-import { SessionHistory } from './session-history.ts';
+import { SessionHistory, type VerifiedStopProof } from './session-history.ts';
 import { createSdkIngress } from './sdk-ingress.ts';
 import type { SdkIngressOptions } from './sdk-ingress.ts';
 import { WorkerGate, type WorkerGrant } from './worker-gate.ts';
@@ -68,6 +69,61 @@ export class SingleHostExecution {
 
     operation(session: string, generation: number, id: string) {
         return this.authority.operation(session, generation, id);
+    }
+
+    observeTaskFixtureWrite(
+        sessionId: string,
+        oldGeneration: number,
+        operationId: string,
+        expectedFingerprint: string,
+    ) {
+        this.requireReadyHistory(sessionId, oldGeneration + 1);
+        const operation = this.authority.operation(
+            sessionId,
+            oldGeneration,
+            operationId,
+        );
+        if (!operation || operation.digest !== expectedFingerprint)
+            throw new Error('Fixture operation fingerprint mismatch');
+        if (operation.state === 'SUCCEEDED') return;
+        if (operation.state !== 'UNKNOWN')
+            throw new Error('Fixture operation outcome conflict');
+        this.authority.observeOperation(
+            sessionId,
+            oldGeneration,
+            operationId,
+            'SUCCEEDED',
+        );
+    }
+
+    historyQuiescence(sessionId: string) {
+        return this.history.quiescence(sessionId);
+    }
+
+    private requireReadyHistory(sessionId: string, generation: number) {
+        const current = this.inspect(sessionId);
+        if (
+            current.state !== 'READY' ||
+            current.run !== null ||
+            current.hasCapability ||
+            current.generation !== generation
+        )
+            throw new Error('Session authority is not ready and unassigned');
+    }
+
+    checkpointHistory(sessionId: string, runId: string, generation: number) {
+        this.requireReadyHistory(sessionId, generation);
+        return this.history.checkpoint(sessionId, runId, generation);
+    }
+
+    restoreHistory(proof: VerifiedStopProof) {
+        this.requireReadyHistory(proof.sessionId, proof.newGeneration);
+        return this.history.restore(proof);
+    }
+
+    restoredHistoryDigest(proof: VerifiedStopProof) {
+        this.requireReadyHistory(proof.sessionId, proof.newGeneration);
+        return this.history.restoredDigest(proof);
     }
 
     admit(session: string, generation: number, run: string, leaseMs: number) {
@@ -194,17 +250,41 @@ export class SingleHostExecution {
         );
     }
 
-    operationIngress(allow?: GrantFilter) {
+    operationIngress(
+        allow?: GrantFilter,
+        acceptTaskEvents?: (grant: WorkerGrant, body: unknown) => void,
+    ) {
         const server = createServer(async (request, response) => {
             try {
-                if (request.method !== 'POST' || request.url !== '/operations')
+                const projection =
+                    request.url === '/task-events' &&
+                    acceptTaskEvents !== undefined;
+                if (
+                    request.method !== 'POST' ||
+                    (!projection && request.url !== '/operations')
+                )
                     throw new Error('unexpected operation request');
                 const grant = this.grant(request.headers.authorization, allow);
-                let body = '';
+                const limit = projection ? maxTaskEventBatchBytes : 16384;
+                const parts: Buffer[] = [];
+                let bytes = 0;
                 for await (const chunk of request) {
-                    body += chunk;
-                    if (Buffer.byteLength(body) > 16384)
-                        throw new Error('oversize');
+                    const part = Buffer.from(chunk);
+                    bytes += part.length;
+                    if (bytes > limit) throw new Error('oversize');
+                    parts.push(part);
+                }
+                const body = new TextDecoder('utf-8', { fatal: true }).decode(
+                    Buffer.concat(parts),
+                );
+                if (projection) {
+                    const current = this.grant(
+                        request.headers.authorization,
+                        allow,
+                    );
+                    acceptTaskEvents(current, JSON.parse(body));
+                    response.writeHead(200).end();
+                    return;
                 }
                 const { id, input } = JSON.parse(body) as {
                     id: unknown;
