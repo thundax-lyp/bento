@@ -3,7 +3,7 @@ import { Authority } from './authority.ts';
 import { SandboxManagement } from './management.ts';
 import { PersistenceFence } from './persistence-fence.ts';
 import { createPersistenceIngress } from './persistence-ingress.ts';
-import { SessionHistory } from './session-history.ts';
+import { SessionHistory, type VerifiedStopProof } from './session-history.ts';
 import { createSdkIngress } from './sdk-ingress.ts';
 import type { SdkIngressOptions } from './sdk-ingress.ts';
 import { WorkerGate, type WorkerGrant } from './worker-gate.ts';
@@ -68,6 +68,36 @@ export class SingleHostExecution {
 
     operation(session: string, generation: number, id: string) {
         return this.authority.operation(session, generation, id);
+    }
+
+    historyQuiescence(sessionId: string) {
+        return this.history.quiescence(sessionId);
+    }
+
+    private requireReadyHistory(sessionId: string, generation: number) {
+        const current = this.inspect(sessionId);
+        if (
+            current.state !== 'READY' ||
+            current.run !== null ||
+            current.hasCapability ||
+            current.generation !== generation
+        )
+            throw new Error('Session authority is not ready and unassigned');
+    }
+
+    checkpointHistory(sessionId: string, runId: string, generation: number) {
+        this.requireReadyHistory(sessionId, generation);
+        return this.history.checkpoint(sessionId, runId, generation);
+    }
+
+    restoreHistory(proof: VerifiedStopProof) {
+        this.requireReadyHistory(proof.sessionId, proof.newGeneration);
+        return this.history.restore(proof);
+    }
+
+    restoredHistoryDigest(proof: VerifiedStopProof) {
+        this.requireReadyHistory(proof.sessionId, proof.newGeneration);
+        return this.history.restoredDigest(proof);
     }
 
     admit(session: string, generation: number, run: string, leaseMs: number) {

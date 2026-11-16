@@ -31,6 +31,28 @@ type Receipt = {
 };
 type Intent = { epoch: number; batch: string; payload: string };
 
+declare const verifiedStopProof: unique symbol;
+export type VerifiedStopProof = Readonly<{
+    attemptId: string;
+    taskId: string;
+    sourceRunId: string;
+    newRunId: string;
+    sessionId: string;
+    oldGeneration: number;
+    newGeneration: number;
+    checkpointSha256: string;
+}> & { readonly [verifiedStopProof]: true };
+
+type HistorySnapshot =
+    | { kind: 'absent' }
+    | {
+          kind: 'present';
+          header: string;
+          inherited: number;
+          next: number;
+          events: string[];
+      };
+
 const hash = (payload: string) =>
     createHash('sha256').update(payload).digest('hex');
 
@@ -77,6 +99,14 @@ export class SessionHistory {
                 id TEXT PRIMARY KEY, epoch INTEGER NOT NULL, batch TEXT NOT NULL,
                 payload TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS history_checkpoints (
+                runId TEXT PRIMARY KEY, sessionId TEXT NOT NULL,
+                authorityGeneration INTEGER NOT NULL, body TEXT NOT NULL, sha256 TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS history_restores (
+                attemptId TEXT PRIMARY KEY, sessionId TEXT NOT NULL, sourceRunId TEXT NOT NULL,
+                newRunId TEXT NOT NULL, newGeneration INTEGER NOT NULL, sha256 TEXT NOT NULL
+            );
         `);
     }
 
@@ -97,6 +127,12 @@ export class SessionHistory {
             if (grant.session === session) this.readers.delete(key);
         }
         this.transaction(() => {
+            this.db
+                .prepare('DELETE FROM history_checkpoints WHERE sessionId=?')
+                .run(session);
+            this.db
+                .prepare('DELETE FROM history_restores WHERE sessionId=?')
+                .run(session);
             for (const table of [
                 'events',
                 'batch_receipts',
@@ -107,6 +143,249 @@ export class SessionHistory {
                     .prepare('DELETE FROM ' + table + ' WHERE id = ?')
                     .run(session);
         });
+    }
+
+    quiescence(sessionId: string) {
+        const row = this.sessionRow(sessionId);
+        return {
+            handleOpen:
+                !!row?.handle ||
+                [...this.readers.values()].some(
+                    (reader) => reader.session === sessionId,
+                ),
+            pendingBatches: this.db
+                .prepare(
+                    'SELECT count(*) AS count FROM batch_intents WHERE id=?',
+                )
+                .get(sessionId)?.count as number,
+        };
+    }
+
+    private sessionRow(sessionId: string) {
+        return this.db
+            .prepare('SELECT * FROM sessions WHERE id=?')
+            .get(sessionId) as Row | undefined;
+    }
+
+    private requireQuiescent(sessionId: string) {
+        const { handleOpen, pendingBatches } = this.quiescence(sessionId);
+        if (handleOpen || pendingBatches)
+            throw new Error('Session history is not quiescent');
+    }
+
+    private snapshot(sessionId: string, row: Row | undefined): HistorySnapshot {
+        const records = this.db
+            .prepare('SELECT seq,event FROM events WHERE id=? ORDER BY seq')
+            .all(sessionId);
+        if (!row) {
+            if (records.length) throw new Error('Orphaned history events');
+            return { kind: 'absent' };
+        }
+        const header = JSON.parse(row.header) as Header;
+        assertVersion(header);
+        if (
+            header.id !== sessionId ||
+            records.length !== row.next ||
+            records.some(({ seq }, index) => seq !== index) ||
+            !row.materialized ||
+            !Number.isSafeInteger(row.inherited) ||
+            row.inherited < 0
+        )
+            throw new Error('Session history is incomplete');
+        const events = records.map(({ event }) => event as string);
+        const parsed = events.map((event) => JSON.parse(event) as Event);
+        assertContiguous(header.id, parsed, 0);
+        validateStoredEvents(header, parsed);
+        return {
+            kind: 'present',
+            header: row.header,
+            inherited: row.inherited,
+            next: row.next,
+            events,
+        };
+    }
+
+    checkpoint(sessionId: string, runId: string, authorityGeneration: number) {
+        return this.transaction(() => {
+            if (
+                !Number.isSafeInteger(authorityGeneration) ||
+                authorityGeneration < 1
+            )
+                throw new Error('Invalid history generation');
+            this.requireQuiescent(sessionId);
+            const row = this.sessionRow(sessionId);
+            const body = JSON.stringify(this.snapshot(sessionId, row));
+            const sha256 = hash(body);
+            if (
+                row &&
+                !(
+                    row.epoch === authorityGeneration - 1 &&
+                    row.owner === 'bento:revoked'
+                )
+            ) {
+                const restored =
+                    row.epoch === authorityGeneration &&
+                    row.owner === runId &&
+                    this.db
+                        .prepare(
+                            'SELECT 1 FROM history_restores WHERE sessionId=? AND newRunId=? AND newGeneration=? AND sha256=?',
+                        )
+                        .get(sessionId, runId, authorityGeneration, sha256);
+                if (!restored)
+                    throw new Error('Session history generation changed');
+            }
+            const previous = this.db
+                .prepare('SELECT * FROM history_checkpoints WHERE runId=?')
+                .get(runId);
+            if (previous) {
+                if (
+                    previous.sessionId !== sessionId ||
+                    previous.authorityGeneration !== authorityGeneration ||
+                    previous.body !== body ||
+                    previous.sha256 !== sha256
+                )
+                    throw new Error('Conflicting history checkpoint');
+            } else {
+                this.db
+                    .prepare(
+                        'INSERT INTO history_checkpoints VALUES (?,?,?,?,?)',
+                    )
+                    .run(runId, sessionId, authorityGeneration, body, sha256);
+            }
+            return { sha256 };
+        });
+    }
+
+    private restoreReceipt(proof: VerifiedStopProof) {
+        const receipt = this.db
+            .prepare('SELECT * FROM history_restores WHERE attemptId=?')
+            .get(proof.attemptId);
+        if (
+            receipt &&
+            (receipt.sessionId !== proof.sessionId ||
+                receipt.sourceRunId !== proof.sourceRunId ||
+                receipt.newRunId !== proof.newRunId ||
+                receipt.newGeneration !== proof.newGeneration ||
+                receipt.sha256 !== proof.checkpointSha256)
+        )
+            throw new Error('Conflicting history restore receipt');
+        return receipt;
+    }
+
+    restore(proof: VerifiedStopProof) {
+        return this.transaction(() => {
+            if (
+                proof.sourceRunId === proof.newRunId ||
+                !Number.isSafeInteger(proof.oldGeneration) ||
+                !Number.isSafeInteger(proof.newGeneration) ||
+                proof.oldGeneration < 1 ||
+                proof.newGeneration !== proof.oldGeneration + 1
+            )
+                throw new Error('Invalid restore generation');
+            const {
+                attemptId,
+                sessionId,
+                sourceRunId,
+                newRunId,
+                oldGeneration,
+                newGeneration,
+                checkpointSha256,
+            } = proof;
+            this.requireQuiescent(sessionId);
+            if (this.restoreReceipt(proof))
+                return { sha256: this.readRestoredDigest(proof) };
+            const checkpoint = this.db
+                .prepare('SELECT * FROM history_checkpoints WHERE runId=?')
+                .get(sourceRunId);
+            if (
+                !checkpoint ||
+                checkpoint.sessionId !== sessionId ||
+                checkpoint.authorityGeneration !== oldGeneration ||
+                checkpoint.sha256 !== checkpointSha256 ||
+                hash(checkpoint.body as string) !== checkpointSha256
+            )
+                throw new Error('Invalid history checkpoint');
+
+            const row = this.sessionRow(sessionId);
+            if (
+                row &&
+                (row.owner !== 'bento:revoked' || row.epoch !== oldGeneration)
+            )
+                throw new Error('Prior history owner is not revoked');
+            const before = JSON.parse(
+                checkpoint.body as string,
+            ) as HistorySnapshot;
+            const current = this.snapshot(sessionId, row);
+            if (
+                before.kind === 'present' &&
+                (!row ||
+                    current.kind !== 'present' ||
+                    current.header !== before.header ||
+                    current.inherited !== before.inherited ||
+                    before.next !== before.events.length ||
+                    before.events.some(
+                        (event, index) => current.events[index] !== event,
+                    ))
+            )
+                throw new Error(
+                    'Checkpoint does not match current history prefix',
+                );
+            if (before.kind === 'absent') {
+                this.db.prepare('DELETE FROM events WHERE id=?').run(sessionId);
+                this.db
+                    .prepare('DELETE FROM sessions WHERE id=?')
+                    .run(sessionId);
+            } else {
+                this.db
+                    .prepare('DELETE FROM events WHERE id=? AND seq>=?')
+                    .run(sessionId, before.next);
+                this.db
+                    .prepare(
+                        'UPDATE sessions SET header=?, inherited=?, next=?, revision=revision+1, owner=?, epoch=? WHERE id=?',
+                    )
+                    .run(
+                        before.header,
+                        before.inherited,
+                        before.next,
+                        newRunId,
+                        newGeneration,
+                        sessionId,
+                    );
+            }
+            this.db
+                .prepare('INSERT INTO history_restores VALUES (?,?,?,?,?,?)')
+                .run(
+                    attemptId,
+                    sessionId,
+                    sourceRunId,
+                    newRunId,
+                    newGeneration,
+                    checkpointSha256,
+                );
+            return { sha256: this.readRestoredDigest(proof) };
+        });
+    }
+
+    restoredDigest(proof: VerifiedStopProof) {
+        return this.transaction(() => this.readRestoredDigest(proof));
+    }
+
+    private readRestoredDigest(proof: VerifiedStopProof) {
+        if (!this.restoreReceipt(proof))
+            throw new Error('Missing history restore receipt');
+        this.requireQuiescent(proof.sessionId);
+        const row = this.sessionRow(proof.sessionId);
+        if (
+            row &&
+            (row.epoch !== proof.newGeneration || row.owner !== proof.newRunId)
+        )
+            throw new Error('Restored history owner changed');
+        const sha256 = hash(
+            JSON.stringify(this.snapshot(proof.sessionId, row)),
+        );
+        if (sha256 !== proof.checkpointSha256)
+            throw new Error('Restored history digest changed');
+        return sha256;
     }
 
     dispatch(body: string, grant: Grant) {

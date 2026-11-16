@@ -132,19 +132,9 @@ Task 首写冻结版本。可信 host 新增 `provisionTask(binding,files,enviro
 
 ## 机械执行步骤
 
-### T3 引入 DSH 检查点与可信恢复入口
-
-前置状态：Store 已持久化 Task、Run、输入门禁、事件、结果、停止和重试回执。Orchestrator typecheck 与 test 已通过，两项新 Store 用例均执行。
-
-允许修改：`apps/orchestrator/openshell/session-history.ts`、`apps/orchestrator/openshell/single-host.ts`、`apps/orchestrator/openshell/remote-session.test.ts`、`apps/orchestrator/openshell/persistence-ingress.test.ts`。禁止修改：Store、Worker 远端持久化协议和 SDK 权限。
-
-执行：在 SessionHistory 添加 `quiescence(sessionId:string):{handleOpen:boolean,pendingBatches:number}`、`checkpoint(sessionId:string,runId:string,authorityGeneration:number):{sha256:string}`、`restore(proof:VerifiedStopProof):{sha256:string}`、`restoredDigest(proof:VerifiedStopProof):string`。 `VerifiedStopProof` 是 readonly `{attemptId,taskId,sourceRunId,newRunId,sessionId,oldGeneration,newGeneration,checkpointSha256}` 与私有 unique symbol 品牌的交集。只有 T4 的 service 在证据验证后构造该类型。已存在历史时，接受 epoch 为 authorityGeneration−1 且 owner revoked，或来自已验证 retry restore receipt、epoch 为 authorityGeneration 且 owner 为本次 runId。空历史以 absent 表示。历史 JSON 的键序为 `{kind:"present",header,inherited,next,events}` 或 `{kind:"absent"}`，SHA-256 比较原字节；header 保留现有 JSON 字符串，events 按 seq 依序存现有 JSON 字符串。历史库内以 runId 存 checkpoint，以 attemptId 存 `{sessionId,sourceRunId,newRunId,newGeneration,sha256}` receipt，执行 purge 时删除两者。恢复前非空现场要求 owner revoked、epoch 为 oldGeneration；验证新代关系、session、两个 Run ID 与 receipt/检查点关联。检查点 SHA 异常、非连续序列、打开 handle 或未结 batch 时零写。 `SingleHostExecution` 暴露同签名的 historyQuiescence/checkpointHistory/restoreHistory/restoredHistoryDigest 代理，checkpoint/restore 均额外校验 authority READY、run null、无 capability 和代数。
-
-验证：`pnpm --filter @bento/orchestrator test`。PASS：空/非空检查点恢复成功，epoch/owner/receipt 一致，旧 grant 拒绝，batch receipt 保留，错 session/epoch/SHA、handle、batch intent 均零写，重开后重放同一 receipt。STOP：历史无法证明静止或恢复事务无法锁定时停在本步。
-
 ### T4a 固定受信环境和宿主恢复契约
 
-前置状态：T3 PASS。
+前置状态：SessionHistory 检查点和恢复事务已接入 SingleHostExecution。空和非空历史、旧代拒写、事务零写失败和重开回执验证通过。
 
 允许修改：`apps/orchestrator/execution-service/types.ts`、`apps/orchestrator/execution-service/start.ts`、`apps/orchestrator/execution-service/command-host.ts`、`apps/orchestrator/execution-service/local.ts`、`apps/orchestrator/execution-service/service.test.ts`、`deploy/compose.yaml`、`deploy/README.md`、`README.md`。禁止修改：Worker 启动协议与权威状态、私有 launcher 配置。
 
