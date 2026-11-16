@@ -70,6 +70,31 @@ export class SingleHostExecution {
         return this.authority.operation(session, generation, id);
     }
 
+    observeTaskFixtureWrite(
+        sessionId: string,
+        oldGeneration: number,
+        operationId: string,
+        expectedFingerprint: string,
+    ) {
+        this.requireReadyHistory(sessionId, oldGeneration + 1);
+        const operation = this.authority.operation(
+            sessionId,
+            oldGeneration,
+            operationId,
+        );
+        if (!operation || operation.digest !== expectedFingerprint)
+            throw new Error('Fixture operation fingerprint mismatch');
+        if (operation.state === 'SUCCEEDED') return;
+        if (operation.state !== 'UNKNOWN')
+            throw new Error('Fixture operation outcome conflict');
+        this.authority.observeOperation(
+            sessionId,
+            oldGeneration,
+            operationId,
+            'SUCCEEDED',
+        );
+    }
+
     historyQuiescence(sessionId: string) {
         return this.history.quiescence(sessionId);
     }

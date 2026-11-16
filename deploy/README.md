@@ -129,7 +129,16 @@ docker compose -f deploy/compose.yaml --profile worker-image build bento-worker
 
 仓库内的 TypeScript 启动命令使用 `node --import /app/register-paths.mjs` 解析 `@/` 路径。Compose 和 Worker 镜像已配置此参数。自定义启动器直接调用 Node 时也需加载该文件。
 
-使用 `start.ts` 的部署可设置 `BENTO_REVIEW_MODULE`，指向仅由可信部署端控制的模块。模块默认导出同步安装函数 `(reviewRun) => cleanup`。安装函数接入部署端的复核工具，并在停服时通过 `cleanup` 停止接收新请求、等待在途复核结束。复核提交须包含 `runId`、`failedGeneration`、`readyGeneration`、`stableOperationId` 和 `expectedSnapshotSha256`。模块与执行服务同进程运行，部署端应限制模块文件及复核入口的访问权限。
+使用 `start.ts` 的部署可设置 `BENTO_REVIEW_MODULE`，指向仅由可信部署端控制的模块。模块默认导出同步安装函数 `(reviewRun, closeTaskRun, readTaskClosure, closeTaskRetry, readTaskRetryClosure, reconcileTaskRetry) => cleanup`。原只接收 `reviewRun` 的模块仍可使用首参。安装函数接入部署端的复核工具，并在停服时通过 `cleanup` 停止接收新请求、等待在途复核结束。复核提交须包含 `runId`、`failedGeneration`、`readyGeneration`、`stableOperationId` 和 `expectedSnapshotSha256`。模块与执行服务同进程运行，部署端应限制模块文件及复核入口的访问权限。
+
+- `reviewRun({runId,failedGeneration,readyGeneration,stableOperationId,expectedSnapshotSha256}):Promise<void>` 在原执行结果与可信快照相符时发布该 Run。
+- `closeTaskRun({runId,decision,expectedGeneration}):Promise<void>` 在退出、撤权和静止证据通过后，以 failed 或 unconfirmed 结案。
+- `readTaskClosure(runId):TaskClosureAudit|null` 读取 Run 结案审计。项目或账号清理后仍可按原 ID 查询。
+- `closeTaskRetry({attemptId,expectedGeneration}):Promise<void>` 在可信宿主证明该恢复已停止、卷无写入者和资源可安全清理时关闭 blocked 重试。
+- `readTaskRetryClosure(attemptId):TaskRetryClosureAudit|null` 读取重试结案审计。保留规则与 Run 结案审计相同。
+- `reconcileTaskRetry({attemptId,expectedGeneration}):Promise<"pending"|"queued">` 对账原卷与会话恢复回执。两份证据均完整时沿原 attempt 排队；证据缺失时保持 pending。
+
+这些回调仅交给可信模块。业务 HTTP 不开放结案、可信对账或审计读取。
 
 项目删除和账号注销清理需要可信宿主实现幂等的工作区删除。命令宿主处理 `{action:"purge",binding}`，只删除该绑定独占的沙盒与卷，独立确认两者不存在后返回 `{sandbox,volume,absent:true}`。自定义宿主实现 `ExecutionHost.purge(binding)`。删除失败应报错，Bento 会保留清理请求以便重试。Docker 驱动的宿主可用 [dockerOpenShellPurge](../apps/orchestrator/execution-service/docker-openshell-purge.ts)，并提供与部署时一致的卷标签。
 

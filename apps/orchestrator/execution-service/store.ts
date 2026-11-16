@@ -1218,7 +1218,11 @@ export class Store {
             }));
     }
 
-    publishTaskResult(runId: string, input: TaskResultInput) {
+    publishTaskResult(
+        runId: string,
+        input: TaskResultInput,
+        reviewProof?: string,
+    ) {
         return this.write(() => {
             const run = this.findRun(runId);
             if (run.taskSequence === null) throw missing();
@@ -1267,6 +1271,16 @@ export class Store {
                     'diff_unavailable',
                     'Run cannot publish a result.',
                 );
+            if (
+                reviewProof !== undefined &&
+                (run.status !== 'needs_review' ||
+                    run.receipt ||
+                    !this.recoveryGeneration(runId))
+            )
+                throw conflict(
+                    'review_unavailable',
+                    'Run is not awaiting recovery review.',
+                );
             const createdAt = now();
             this.db
                 .prepare('INSERT INTO task_run_results VALUES (?,?,?)')
@@ -1276,6 +1290,10 @@ export class Store {
                     "UPDATE runs SET status='succeeded',summary=?,diff=?,updatedAt=? WHERE id=?",
                 )
                 .run(summary, input.incremental, createdAt, runId);
+            if (reviewProof !== undefined)
+                this.db
+                    .prepare('INSERT INTO run_reviews VALUES (?,?,?)')
+                    .run(runId, reviewProof, createdAt);
             return { ...JSON.parse(body), createdAt };
         });
     }
@@ -1555,6 +1573,278 @@ export class Store {
         );
     }
 
+    taskConfig(taskId: string) {
+        return this.db.prepare('SELECT * FROM tasks WHERE id=?').get(taskId) as
+            Task | undefined;
+    }
+
+    prepareTask(owner: string, id: string) {
+        return this.write(() => {
+            const task = this.taskRow(owner, id);
+            this.requireOpenOwner(owner);
+            if (
+                task.closedReason ||
+                this.isProjectDeleting(id) ||
+                this.inputDeletionHeld(id)
+            )
+                throw conflict('task_not_ready', 'Task cannot be prepared.');
+            const changed = this.db
+                .prepare(
+                    "UPDATE projects SET status='importing' WHERE id=? AND status='failed'",
+                )
+                .run(id).changes;
+            if (changed)
+                this.db
+                    .prepare(
+                        'UPDATE tasks SET prepareError=NULL,updatedAt=? WHERE id=?',
+                    )
+                    .run(now(), id);
+            return this.task(owner, id);
+        });
+    }
+
+    taskInitialFiles(taskId: string) {
+        const row = this.db
+            .prepare('SELECT source FROM projects WHERE id=?')
+            .get(taskId);
+        return textSnapshot(
+            JSON.parse((row?.source as string | null) ?? 'null'),
+        );
+    }
+
+    taskRunRows(owner: string, id: string) {
+        this.taskRow(owner, id);
+        return this.db
+            .prepare(
+                'SELECT * FROM runs WHERE projectId=? ORDER BY taskSequence',
+            )
+            .all(id) as Run[];
+    }
+
+    taskRunRow(owner: string, id: string, runId: string) {
+        this.taskRow(owner, id);
+        const run = this.findRun(runId);
+        if (run.projectId !== id) throw missing();
+        return run;
+    }
+
+    taskResultRow(runId: string) {
+        const row = this.db
+            .prepare(
+                'SELECT body,createdAt FROM task_run_results WHERE runId=?',
+            )
+            .get(runId);
+        if (!row) return null;
+        type Result = TaskResultInput & {
+            version: 1;
+            summary: string;
+            checks: NonNullable<TaskEventPayload['check']>[];
+            incrementalSha256: string;
+            cumulativeSha256: string;
+        };
+        return {
+            ...(JSON.parse(row.body as string) as Result),
+            createdAt: row.createdAt as string,
+        };
+    }
+
+    taskSourceImpact(
+        owner: string,
+        spaceId: string,
+        legacyProjectId: string | null,
+    ) {
+        const projects = this.db
+            .prepare(
+                'SELECT p.* FROM projects p JOIN tasks t ON p.id=t.id WHERE t.owner=? AND t.sourceSpaceId=?',
+            )
+            .all(owner, spaceId) as Project[];
+        if (legacyProjectId !== null)
+            projects.push(this.ownedProject(owner, legacyProjectId));
+        let runCount = 0;
+        let diffCount = 0;
+        const blockers = new Set<ProjectDeletionBlocker>();
+        for (const project of projects) {
+            const impact = this.db
+                .prepare(
+                    "SELECT count(*) AS runCount,count(CASE WHEN status='succeeded' AND diff IS NOT NULL THEN 1 END) AS diffCount FROM runs WHERE projectId=?",
+                )
+                .get(project.id) as { runCount: number; diffCount: number };
+            runCount += impact.runCount;
+            diffCount += impact.diffCount;
+            for (const blocker of this.projectDeletionBlockers(project))
+                blockers.add(blocker);
+        }
+        if (
+            this.db
+                .prepare(
+                    "SELECT 1 FROM task_input_delete_holds WHERE owner=? AND spaceId=? AND state='held'",
+                )
+                .get(owner, spaceId)
+        )
+            blockers.add('project_busy');
+        return { runCount, diffCount, blockers: [...blockers] };
+    }
+
+    hasActiveTaskRetry(id: string) {
+        return this.pendingTaskRetry(id);
+    }
+
+    taskRetryReceipt(id: string, key: string) {
+        return this.retryByKey(id, key);
+    }
+
+    nextTaskRetry() {
+        return this.db
+            .prepare(
+                "SELECT * FROM retry_attempts WHERE phase IN ('preparing','workspace_restored','history_restored') ORDER BY rowid LIMIT 1",
+            )
+            .get() as RetryAttempt | undefined;
+    }
+
+    recordTaskCheckpoint(
+        runId: string,
+        files: readonly FileText[],
+        workspaceSha256: string,
+        historySha256: string,
+    ) {
+        const workspace = JSON.stringify(files);
+        return this.write(() => {
+            const prior = this.taskCheckpoint(runId);
+            if (prior) {
+                if (
+                    prior.workspace !== workspace ||
+                    prior.workspaceSha256 !== workspaceSha256 ||
+                    prior.historySha256 !== historySha256
+                )
+                    throw new Error('Task checkpoint conflict.');
+                return;
+            }
+            this.db
+                .prepare('INSERT INTO task_run_checkpoints VALUES (?,?,?,?)')
+                .run(runId, workspace, workspaceSha256, historySha256);
+        });
+    }
+
+    taskCheckpoint(runId: string) {
+        return this.db
+            .prepare(
+                'SELECT workspace,workspaceSha256,historySha256 FROM task_run_checkpoints WHERE runId=?',
+            )
+            .get(runId) as
+            | {
+                  workspace: string;
+                  workspaceSha256: string;
+                  historySha256: string;
+              }
+            | undefined;
+    }
+
+    recordTaskAdmission(runId: string, generation: number, digest: string) {
+        const admitted = this.db
+            .prepare(
+                'UPDATE runs SET admittedGeneration=?,admittedBindingDigest=? WHERE id=? AND admittedGeneration IS NULL AND taskSequence IS NOT NULL',
+            )
+            .run(generation, digest, runId);
+        if (admitted.changes !== 1)
+            throw new Error('Task execution admission changed');
+    }
+
+    taskExit(runId: string, generation: number) {
+        return this.db
+            .prepare(
+                'SELECT bindingDigest,exitedAt FROM worker_exit WHERE runId=? AND generation=?',
+            )
+            .get(runId, generation) as
+            { bindingDigest: string; exitedAt: string } | undefined;
+    }
+
+    recordTaskExit(
+        runId: string,
+        generation: number,
+        bindingDigest: string,
+        exitedAt: string,
+    ) {
+        return this.write(() => {
+            const row = this.findRun(runId);
+            if (
+                row.admittedGeneration !== generation ||
+                row.admittedBindingDigest !== bindingDigest
+            )
+                throw new Error('Task execution identity mismatch');
+            const prior = this.taskExit(runId, generation);
+            if (prior) {
+                if (prior.bindingDigest !== bindingDigest)
+                    throw new Error('Task exit identity mismatch');
+                return prior;
+            }
+            this.db
+                .prepare('INSERT INTO worker_exit VALUES (?,?,?,?)')
+                .run(runId, generation, bindingDigest, exitedAt);
+            return { bindingDigest, exitedAt };
+        });
+    }
+
+    readTaskClosure(runId: string) {
+        return (
+            this.db
+                .prepare('SELECT * FROM task_closure_audit WHERE runId=?')
+                .get(runId) ?? null
+        );
+    }
+
+    closeTaskRun(
+        runId: string,
+        decision: 'failed' | 'unconfirmed',
+        generation: number,
+        stopDigest: string,
+    ) {
+        return this.write(() => {
+            const prior = this.readTaskClosure(runId);
+            if (prior) {
+                if (
+                    prior.decision !== decision ||
+                    prior.authorityGeneration !== generation
+                )
+                    throw conflict(
+                        'review_unavailable',
+                        'Closure decision changed.',
+                    );
+                return;
+            }
+            const run = this.findRun(runId);
+            if (
+                run.taskSequence === null ||
+                run.status !== 'needs_review' ||
+                run.receipt
+            )
+                throw conflict(
+                    'review_unavailable',
+                    'Run is not awaiting closure.',
+                );
+            const time = now();
+            this.db
+                .prepare('INSERT INTO task_closure_audit VALUES (?,?,?,?,?)')
+                .run(runId, decision, generation, stopDigest, time);
+            this.db
+                .prepare(
+                    "UPDATE runs SET status='failed',summary=?,updatedAt=? WHERE id=?",
+                )
+                .run(
+                    decision === 'unconfirmed'
+                        ? '执行结果无法确认。'
+                        : '执行失败。',
+                    time,
+                    runId,
+                );
+            if (decision === 'unconfirmed')
+                this.db
+                    .prepare(
+                        "UPDATE tasks SET closedReason='unconfirmed',updatedAt=? WHERE id=?",
+                    )
+                    .run(time, run.projectId);
+        });
+    }
+
     private hasQueueCapacity(owner: string) {
         const count = this.db
             .prepare(
@@ -1730,10 +2020,12 @@ export class Store {
         return { ...runView(run), prompt: run.prompt };
     }
 
-    cancelQueuedRun(owner: string, project: string, id: string) {
+    cancelQueuedRun(owner: string, project: string, id: string, task = false) {
         this.db.exec('BEGIN IMMEDIATE');
         try {
-            const current = this.ownedRun(owner, project, id);
+            const current = task
+                ? this.taskRunRow(owner, project, id)
+                : this.ownedRun(owner, project, id);
             if (current.status !== 'cancelled') {
                 const result = this.db
                     .prepare(
@@ -1746,7 +2038,9 @@ export class Store {
                         'The Run cannot be cancelled in its current state.',
                     );
             }
-            const run = this.run(owner, project, id);
+            const run = task
+                ? { ...runView(this.findRun(id)), prompt: current.prompt }
+                : this.run(owner, project, id);
             this.db.exec('COMMIT');
             return run;
         } catch (error) {
@@ -1760,10 +2054,13 @@ export class Store {
         project: string,
         id: string,
         generation: number,
+        task = false,
     ) {
         this.db.exec('BEGIN IMMEDIATE');
         try {
-            const current = this.ownedRun(owner, project, id);
+            const current = task
+                ? this.taskRunRow(owner, project, id)
+                : this.ownedRun(owner, project, id);
             if (
                 current.cancelGeneration === null ||
                 !['cancelling', 'cancelled', 'needs_review'].includes(
@@ -1788,7 +2085,9 @@ export class Store {
                         'The Run cannot be cancelled in its current state.',
                     );
             }
-            const run = this.run(owner, project, id);
+            const run = task
+                ? { ...runView(this.findRun(id)), prompt: current.prompt }
+                : this.run(owner, project, id);
             this.db.exec('COMMIT');
             return run;
         } catch (error) {
@@ -1849,12 +2148,23 @@ export class Store {
             .get() as Project | undefined;
     }
 
-    importResult(id: string, status: 'ready' | 'failed') {
-        this.db
-            .prepare(
-                "UPDATE projects SET status=?, source=CASE WHEN EXISTS(SELECT 1 FROM tasks WHERE id=projects.id) THEN source ELSE NULL END WHERE id=? AND status='importing'",
-            )
-            .run(status, id);
+    importResult(
+        id: string,
+        status: 'ready' | 'failed',
+        reason: string | null = null,
+    ) {
+        this.write(() => {
+            this.db
+                .prepare(
+                    "UPDATE projects SET status=?, source=CASE WHEN EXISTS(SELECT 1 FROM tasks WHERE id=projects.id) THEN source ELSE NULL END WHERE id=? AND status='importing'",
+                )
+                .run(status, id);
+            this.db
+                .prepare(
+                    'UPDATE tasks SET prepareError=?,updatedAt=? WHERE id=?',
+                )
+                .run(reason, now(), id);
+        });
     }
 
     dispatchSnapshot(slots: number) {

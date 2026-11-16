@@ -135,20 +135,9 @@ Task 首写冻结版本。可信 host 新增 `provisionTask(binding,files,enviro
 
 ## 机械执行步骤
 
-### T4b 接通 Orchestrator HTTP、恢复和结果发布
-
-前置状态：宿主版本、工作卷与退出回执契约已接入并通过 Orchestrator 测试。local fixture 通过 supportsTaskRunningCancellation 向新 Task 路径提供可信回调，既有 supportsRunningCancellation 仍控制旧项目路径。此步新增的 Task 路由先由双 HTTP 测试直接使用，Web 切换前在 T6 启用投影完成门禁。
-
-允许修改：`apps/orchestrator/execution-service/service.ts`、`apps/orchestrator/execution-service/http.ts`、`apps/orchestrator/execution-service/start.ts`、`apps/orchestrator/execution-service/store.ts`、`apps/orchestrator/execution-service/service.test.ts`、`apps/orchestrator/openshell/single-host.ts`、`deploy/README.md`。禁止修改：个人端 API、Worker 协议、History schema 和 Authority 表或状态机。
-
-执行：在 `executionHttp` 添加表中全部私有路径与 source 删除协议，认证后只取 header owner，按固定 HTTP 返回。注册 source 文件 hold/release，handler 调 Store 同名方法。HTTP 用例覆盖无 legacyProjectId 的 file-first/source-first、source deleted 的新取 404、drain 后旧键重放和 release。接通 closeTaskRetry/readTaskRetryClosure/reconcileTaskRetry，同一 attempt 只允许一个在途结案，拒绝并行恢复。在可信观察后重新检查 authority 和 Store phase，使用条件事务与审计结案；部署说明及 install 测试包含所有六个位置。从 `serveExecution` 的 import/work/driveRun/driveCancellation/finish/reviewRun 连接准备、双检查点、停止证据、可恢复 retry、可信结案和结果发布。将 restart work 扫描加到已有工作循环，按 receipt phase 前进；STOP 时保留锁和 evidence，不修改旧 Run。排队 Run 在任何 Worker admit 前取得检查点。按上述调用链接入 reconcileFixtureWrite 与 SingleHostExecution 可信桥接，禁止直接改变 authority schema。stop proof 用上文固定键序落账，可信结案另写决议 receipt。停止证据必须早于对外报告可重试的原 Run 终态。准备 retry 时先校验宿主 taskRecovery、source terminal、最新 Run、证据与当前环境绑定，再持久 attempt。调用 restoreTask 前保持 Store attempt 写门禁；排队前还须比对恢复回执、authority 和 host.running 的 sandbox/volume 绑定。排队前分别调用 `snapshotSha256(textSnapshot(await host.snapshot(binding)))` 与 `execution.restoredHistoryDigest(proof)` 并与各自预期值核对。对外 retryability 每次从当前事实计算，服务端重验。项目 source hold 用同一事务检查和冻结旧项目与全部来源 Task，与 Run/create 互斥。 `purgeOwner` 复用 owner drain、全部 Run 终态检查和 scheduler purge，清理纳入 Task 子记录。取消、恢复、清理都保持现有 slot/Temporal 条件。
-在 `deploy/README.md` 的可信 review module 说明中，同步默认导出签名 `(reviewRun, closeTaskRun, readTaskClosure, closeTaskRetry, readTaskRetryClosure, reconcileTaskRetry) => cleanup`（cleanup 继续允许 void 或 Promise<void>）。列明 `reviewRun({runId,failedGeneration,readyGeneration,stableOperationId,expectedSnapshotSha256}):Promise<void>` 确认原 Run 成功；`closeTaskRun({runId,decision:"failed"|"unconfirmed",expectedGeneration}):Promise<void>` 在可信退出及沙盒/会话前置均已确认时结案；`readTaskClosure(runId:string):TaskClosureAudit|null` 只读最小审计，业务 purge 后仍可查询。后三个回调的输入、返回和边界按上文 blocked 重试契约记录。六个参数仅由 Orchestrator 安装时传给受信模块，HTTP 不暴露；旧只接收 reviewRun 的模块可继续用第一个参数。测试启动一个只使用原参数的模块和一个使用六个参数的模块，验证安装及 cleanup、旧回调签名、Run 两种结案、blocked attempt 证据不足零状态变更、可信对账在双 receipt 均有效时仅入队原 attempt、满足清理证据后结案并放行同键清理，以及 purge 后两类审计读回，以及两类可信结案、审计 callback 均无对应公开或私有业务 HTTP 路由。
-
-验证：`pnpm --filter @bento/orchestrator test`。PASS：跨 owner 404，retry 原键不重复，source 项目门禁下无取消副作用，实际 stop 证据前 slot 不释放，SDK/UNKNOWN/缺 checkpoint 失败安全。单独篡改 proof JSON、SHA、binding、generation 时 Workspace restore 与 History restore 调用均为 0。在每个 receipt 阶段关闭并重开，以原 attempt 续作，分别验证两个摘要，历史结果不变。对 fixture 启动子进程做两次退出注入。第一次在 exits 文件和目录 fsync 完成后、onWorkerExit 调用前中止进程，确认 Store 无 worker_exit；重启后 observeWorkerExit 回原字段并写入同一 runId/generation，记录时间与宿主文件一致。第二次在宿主退出文件未持久前中止，确认重启仍无两处回执，保留 needs_review，重试 409，可信结案拒绝。对仅回调宿主另测回调未入 Store 时同样失效关闭。额外注入以下边界：reserve 成功但写入证据缺失，重启后 operation 仍 UNKNOWN、retry 409、restore 调用为 0；耐久写入及退出回执均存在但 authority 未确认，重启后同代同指纹变 SUCCEEDED，无二次追加，满足其他停止证据时可安全恢复；authority 已确认但 Store 未落 stop proof，重启后的同代观察幂等。篡改发起代、binding、操作 ID、输入或写后文件摘要均保留 UNKNOWN，且无 restore。其余断言涵盖确定失败无 retry proof 时终态不可重试、项目及账号清理后仍可由受信模块查询最小结案审计。STOP：任何歧义保留原证据与现场，禁止在本步调整 Worker's SDK effect 语义。
-
 ### T5 连接个人端 Task 与项目来源
 
-前置状态：私有 HTTP 分发和清理 receipt 可用。
+前置状态：Orchestrator 私有 Task HTTP、可信停止与重试、源文件/项目删除门禁和清理回执已验证。故障注入验证 UNKNOWN 保留和同一恢复 attempt 续作。
 
 允许修改：`apps/workspace/api/protocol.ts`、`apps/workspace/api/execution-service-http.ts`、`apps/workspace/api/server.ts`、`apps/workspace/api/space.ts`、`apps/workspace/api/space-execution.ts`、`apps/workspace/api/space-files.test.ts`、`apps/workspace/api/mock.ts`。禁止修改：Go 账号与会话实现、存储额度、旧 API 语义。
 

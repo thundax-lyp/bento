@@ -1,4 +1,5 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { wellFormed } from '@/shared/text-snapshot.ts';
 import {
     createServer,
     type IncomingMessage,
@@ -6,6 +7,8 @@ import {
 } from 'node:http';
 import {
     invalid,
+    object,
+    textSnapshot,
     missing,
     oversized,
     projectInput,
@@ -58,6 +61,352 @@ async function body(req: IncomingMessage, maxBytes: number) {
     }
 }
 
+type Tasks = {
+    environmentVersion: string;
+    runView(run: ReturnType<Store['findRun']>): unknown;
+    cancel(owner: string, taskId: string, runId: string): unknown;
+    retry(
+        owner: string,
+        taskId: string,
+        runId: string,
+        key: string,
+    ): { status: number; retry: unknown };
+    purgeSource(
+        owner: string,
+        spaceId: string,
+        operationId: string,
+    ): Promise<boolean>;
+};
+
+function taskKey(req: IncomingMessage) {
+    const keys = req.headersDistinct['idempotency-key'];
+    if (keys?.length !== 1 || !keys[0] || !uuidV4.test(keys[0]))
+        throw new RequestError(
+            400,
+            'invalid_key',
+            'A single Idempotency-Key is required.',
+        );
+    return keys[0];
+}
+
+function taskQuery(url: URL, keys: readonly string[]) {
+    for (const name of url.searchParams.keys())
+        if (!keys.includes(name) || url.searchParams.getAll(name).length !== 1)
+            throw invalid('Invalid query parameters.');
+}
+
+function emptyTaskBody(req: IncomingMessage) {
+    if (
+        Number(req.headers['content-length'] ?? 0) !== 0 ||
+        req.headers['transfer-encoding'] !== undefined
+    )
+        throw invalid('Request body must be empty.');
+}
+
+function taskIdentifier(value: string | null | undefined) {
+    if (!value || !/^[a-zA-Z0-9_-]{1,128}$/.test(value)) throw missing();
+    return value;
+}
+
+async function handleTasks(
+    req: IncomingMessage,
+    res: ServerResponse,
+    url: URL,
+    owner: string,
+    store: Store,
+    tasks: Tasks,
+    wake: () => void,
+) {
+    const pathname = url.pathname;
+    const method = req.method;
+    if (pathname === '/v1/account/drain' && method === 'POST') {
+        taskQuery(url, []);
+        emptyTaskBody(req);
+        store.drainOwner(owner);
+        return res.writeHead(204, { 'cache-control': 'no-store' }).end();
+    }
+    if (pathname === '/v1/tasks') {
+        if (method === 'GET') {
+            taskQuery(url, ['creationKey']);
+            const key = url.searchParams.get('creationKey');
+            if (key !== null && !uuidV4.test(key))
+                throw invalid('Invalid creation key.');
+            return json(res, 200, {
+                items: store.tasks(owner, key ?? undefined),
+            });
+        }
+        if (method !== 'POST') throw missing();
+        taskQuery(url, []);
+        const key = taskKey(req);
+        const data = object(await body(req, 8 * 1024 * 1024));
+        const {
+            id,
+            name,
+            sourceSpaceId,
+            inputFiles,
+            inputManifest,
+            inputDigest,
+        } = data;
+        if (
+            Object.keys(data).length !== 6 ||
+            (id !== null && (typeof id !== 'string' || !uuidV4.test(id))) ||
+            typeof name !== 'string' ||
+            [...name.trim()].length < 1 ||
+            [...name.trim()].length > 120 ||
+            !wellFormed(name) ||
+            (sourceSpaceId !== null && typeof sourceSpaceId !== 'string') ||
+            typeof inputDigest !== 'string' ||
+            !/^[0-9a-f]{64}$/.test(inputDigest) ||
+            !Array.isArray(inputManifest)
+        )
+            throw invalid('Invalid Task input.');
+        if (sourceSpaceId !== null) taskIdentifier(sourceSpaceId);
+        const manifest = inputManifest.map((entry) => {
+            const { fileId, path, bytes, sha256 } = object(entry);
+            if (
+                Object.keys(entry).length !== 4 ||
+                typeof fileId !== 'string' ||
+                typeof path !== 'string' ||
+                typeof bytes !== 'number' ||
+                !Number.isSafeInteger(bytes) ||
+                bytes < 0 ||
+                typeof sha256 !== 'string' ||
+                !/^[0-9a-f]{64}$/.test(sha256)
+            )
+                throw invalid('Invalid Task manifest.');
+            taskIdentifier(fileId);
+            return { fileId, path, bytes, sha256 };
+        });
+        const result = store.createTask(
+            owner,
+            key,
+            {
+                id,
+                name: name.trim(),
+                sourceSpaceId,
+                inputFiles: textSnapshot(inputFiles),
+                inputManifest: manifest,
+                inputDigest,
+            },
+            tasks.environmentVersion,
+        );
+        wake();
+        return json(res, result.replay ? 200 : 202, { task: result.task });
+    }
+
+    const source =
+        /^\/v1\/task-sources\/([^/]+)(?:\/(deletion)|\/files\/([^/]+)\/deletion-holds\/([^/]+))?$/.exec(
+            pathname,
+        );
+    if (source) {
+        const [, scope, impact, file, operation] = source;
+        const spaceId = taskIdentifier(scope);
+        const legacy = url.searchParams.get('legacyProjectId');
+        if (legacy !== null) taskIdentifier(legacy);
+        if (file && operation) {
+            taskQuery(url, ['legacyProjectId']);
+            emptyTaskBody(req);
+            const fileId = taskIdentifier(file);
+            if (!uuidV4.test(operation)) throw missing();
+            if (method === 'POST')
+                return json(
+                    res,
+                    200,
+                    store.acquireTaskInputDeleteHold(
+                        owner,
+                        spaceId,
+                        fileId,
+                        operation,
+                        legacy,
+                    ),
+                );
+            if (method === 'DELETE')
+                return json(
+                    res,
+                    200,
+                    store.releaseTaskInputDeleteHold(
+                        owner,
+                        spaceId,
+                        fileId,
+                        operation,
+                        legacy,
+                    ),
+                );
+            throw missing();
+        }
+        if (impact && method === 'GET') {
+            taskQuery(url, ['legacyProjectId']);
+            return json(
+                res,
+                200,
+                store.taskSourceImpact(owner, spaceId, legacy),
+            );
+        }
+        if (impact || method !== 'DELETE') throw missing();
+        taskQuery(url, ['legacyProjectId', 'phase']);
+        emptyTaskBody(req);
+        const phase = url.searchParams.get('phase');
+        if (phase !== 'hold' && phase !== 'release' && phase !== 'commit')
+            throw invalid('Invalid deletion phase.');
+        const key = taskKey(req);
+        const result = store.changeTaskSourceDeletion(
+            owner,
+            spaceId,
+            key,
+            legacy,
+            phase,
+        );
+        if (result.state === 'denied')
+            throw new RequestError(
+                409,
+                result.code ?? 'project_busy',
+                'Project deletion is blocked.',
+            );
+        if (result.state === 'held') return json(res, 202, { state: 'held' });
+        if (
+            result.state === 'committing' &&
+            (phase !== 'commit' ||
+                !(await tasks.purgeSource(owner, spaceId, key)))
+        )
+            return json(res, 202, { state: 'deleting' });
+        return res.writeHead(204, { 'cache-control': 'no-store' }).end();
+    }
+
+    const route =
+        /^\/v1\/tasks\/([^/]+)(?:\/(prepare|events|runs)(?:\/([^/]+)(?:\/(cancel|retry|results)(?:\/(1)\/diff)?)?)?)?$/.exec(
+            pathname,
+        );
+    if (!route) throw missing();
+    const [, id, section, rawRunId, action, version] = route;
+    if (!id || !uuidV4.test(id)) throw missing();
+    if (section === 'events' && !rawRunId && method === 'GET') {
+        taskQuery(url, ['after']);
+        const after = url.searchParams.get('after') ?? '0';
+        if (!/^\d+$/.test(after) || !Number.isSafeInteger(Number(after)))
+            throw invalid('Invalid event cursor.');
+        return json(res, 200, {
+            items: store.taskEvents(owner, id, Number(after)),
+        });
+    }
+    if (
+        section === 'runs' &&
+        rawRunId &&
+        action === 'results' &&
+        version &&
+        method === 'GET'
+    ) {
+        taskQuery(url, ['view', 'download']);
+        const view = url.searchParams.get('view');
+        const download = url.searchParams.get('download');
+        if (
+            (view !== 'incremental' && view !== 'cumulative') ||
+            (download !== null && download !== '1')
+        )
+            throw invalid('Invalid diff options.');
+        const run = store.taskRunRow(owner, id, rawRunId);
+        const result = store.taskResultRow(run.id);
+        if (!result || run.status !== 'succeeded')
+            throw new RequestError(
+                409,
+                'diff_unavailable',
+                'Run result is unavailable.',
+            );
+        if (download)
+            res.setHeader(
+                'content-disposition',
+                'attachment; filename="changes.patch"',
+            );
+        return send(res, 200, result[view], 'text/plain');
+    }
+    taskQuery(url, []);
+    if (!section && method === 'GET')
+        return json(res, 200, { task: store.task(owner, id) });
+    if (section === 'prepare' && !rawRunId && method === 'POST') {
+        emptyTaskBody(req);
+        const task = store.prepareTask(owner, id);
+        wake();
+        return json(res, 200, { task });
+    }
+    if (section !== 'runs') throw missing();
+    if (!rawRunId && method === 'GET')
+        return json(res, 200, {
+            items: store.taskRunRows(owner, id).map(tasks.runView),
+        });
+    if (!rawRunId && method === 'POST') {
+        const key = taskKey(req);
+        const contents = object(await body(req, 64 * 1024));
+        if (Object.keys(contents).length !== 1)
+            throw invalid('Invalid Run input.');
+        const input = runInput(contents, key);
+        const result = store.enqueueTaskRun(owner, id, key, input.prompt);
+        wake();
+        return json(res, result.replay ? 200 : 202, {
+            run: tasks.runView(result.run),
+        });
+    }
+    if (!rawRunId || !uuidV4.test(rawRunId)) throw missing();
+    if (!action && method === 'GET')
+        return json(res, 200, {
+            run: tasks.runView(store.taskRunRow(owner, id, rawRunId)),
+        });
+    if (action === 'cancel' && !version && method === 'POST') {
+        emptyTaskBody(req);
+        const run = tasks.cancel(owner, id, rawRunId);
+        wake();
+        return json(res, 200, { run });
+    }
+    if (action === 'retry' && !version && method === 'POST') {
+        emptyTaskBody(req);
+        const { status, retry } = tasks.retry(
+            owner,
+            id,
+            rawRunId,
+            taskKey(req),
+        );
+        wake();
+        return json(res, status, { retry });
+    }
+    if (action === 'results' && !version && method === 'GET') {
+        const run = store.taskRunRow(owner, id, rawRunId);
+        const result = store.taskResultRow(run.id);
+        if (!result || run.status !== 'succeeded')
+            throw new RequestError(
+                409,
+                'diff_unavailable',
+                'Run result is unavailable.',
+            );
+        const {
+            version,
+            summary,
+            checks,
+            incrementalSha256,
+            cumulativeSha256,
+            createdAt,
+        } = result;
+        return json(res, 200, {
+            result: {
+                runId: run.id,
+                version,
+                summary,
+                checks,
+                incrementalSha256,
+                cumulativeSha256,
+                createdAt,
+            },
+        });
+    }
+    throw missing();
+}
+
+export class RetryUnavailable extends RequestError {
+    readonly reason: string;
+
+    constructor(reason: string) {
+        super(409, 'run_not_retryable', 'Run cannot be retried.');
+        this.reason = reason;
+    }
+}
+
 export function executionHttp(
     store: Store,
     token: string,
@@ -69,6 +418,7 @@ export function executionHttp(
         projectId: string,
         operationId: string,
     ) => Promise<ProjectDeletionReceipt>,
+    tasks?: Tasks,
 ) {
     const authorization = digest('Bearer ' + token);
     const server = createServer(async (req, res) => {
@@ -89,6 +439,22 @@ export function executionHttp(
                 );
 
             const pathname = (req.url ?? '').split('?')[0];
+            if (
+                tasks &&
+                pathname &&
+                (/^\/v1\/tasks(?:$|\/)/.test(pathname) ||
+                    pathname.startsWith('/v1/task-sources/') ||
+                    pathname === '/v1/account/drain')
+            )
+                return await handleTasks(
+                    req,
+                    res,
+                    new URL(req.url ?? '/', 'http://127.0.0.1'),
+                    owner,
+                    store,
+                    tasks,
+                    wake,
+                );
             if (pathname === '/v1/account/purge' && req.method === 'POST') {
                 const complete = await purgeOwner(owner);
                 return json(res, complete ? 200 : 202, { complete });
@@ -241,7 +607,17 @@ export function executionHttp(
                           'Execution service request failed.',
                       );
             json(res, problem.status, {
-                error: { code: problem.code, message: problem.message },
+                error: {
+                    code:
+                        problem.code === 'payload_too_large' &&
+                        /^\/v1\/tasks(?:$|\/)/.test(req.url ?? '')
+                            ? 'too_large'
+                            : problem.code,
+                    message: problem.message,
+                    ...(problem instanceof RetryUnavailable
+                        ? { reason: problem.reason }
+                        : {}),
+                },
             });
         }
     });

@@ -5,8 +5,15 @@ import { localHost } from './local.ts';
 import { serveExecution } from './service.ts';
 import type { ExecutionHost } from './types.ts';
 
+type ExecutionService = Awaited<ReturnType<typeof serveExecution>>;
+
 type InstallReview = (
-    reviewRun: Awaited<ReturnType<typeof serveExecution>>['reviewRun'],
+    reviewRun: ExecutionService['reviewRun'],
+    closeTaskRun: ExecutionService['closeTaskRun'],
+    readTaskClosure: ExecutionService['readTaskClosure'],
+    closeTaskRetry: ExecutionService['closeTaskRetry'],
+    readTaskRetryClosure: ExecutionService['readTaskRetryClosure'],
+    reconcileTaskRetry: ExecutionService['reconcileTaskRetry'],
 ) => () => void | Promise<void>;
 
 async function main() {
@@ -114,7 +121,14 @@ async function main() {
     });
     let stopReview: ReturnType<InstallReview> | undefined;
     try {
-        stopReview = installReview?.(service.reviewRun);
+        stopReview = installReview?.(
+            service.reviewRun,
+            service.closeTaskRun,
+            service.readTaskClosure,
+            service.closeTaskRetry,
+            service.readTaskRetryClosure,
+            service.reconcileTaskRetry,
+        );
         if (installReview && typeof stopReview !== 'function')
             throw new Error(
                 'Trusted review module must return a cleanup function',

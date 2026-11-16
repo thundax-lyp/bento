@@ -6,22 +6,28 @@ import type { Socket } from 'node:net';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { SingleHostExecution } from '../openshell/single-host.ts';
+import type { VerifiedStopProof } from '../openshell/session-history.ts';
 import { unifiedDiff } from './diff.ts';
-import { executionHttp } from './http.ts';
+import { executionHttp, RetryUnavailable } from './http.ts';
 import { conflict, textSnapshot } from './input.ts';
 import { projectBinding, Store, type ProjectDeletionReceipt } from './store.ts';
 import type { TemporalRunOptions, temporalRuns } from './temporal.ts';
-import type {
-    Binding,
-    ExecutionHost,
-    FileText,
-    WorkerRequest,
-    WorkerResult,
+import {
+    executionBindingDigest,
+    sha256Digest,
+    type Binding,
+    type ExecutionHost,
+    type FileText,
+    type WorkerRequest,
+    type WorkerResult,
 } from './types.ts';
 import { operationId } from '@/apps/worker/protocol.ts';
 
 type Run = ReturnType<Store['findRun']>;
+type Attempt = ReturnType<Store['taskRetry']>;
 type Server = HttpServer | Http2Server;
+class RetryEvidenceConflict extends Error {}
+
 type Review = {
     runId: string;
     failedGeneration: number;
@@ -242,15 +248,660 @@ export async function serveExecution(options: Options) {
             stop.signal.throwIfAborted();
             if (db.reviewReceipt(runId, proof)) return;
             checkBinding();
-            db.confirmReview(runId, proof, diff);
+            if (run.taskSequence === null) db.confirmReview(runId, proof, diff);
+            else {
+                const initial = db.taskInitialFiles(run.projectId);
+                const cumulative = await unifiedDiff(initial, after);
+                stop.signal.throwIfAborted();
+                if (db.reviewReceipt(runId, proof)) return;
+                checkBinding();
+                db.publishTaskResult(
+                    runId,
+                    {
+                        baselineSha256: snapshotSha256(
+                            textSnapshot(JSON.parse(run.baseline ?? 'null')),
+                        ),
+                        initialSha256: snapshotSha256(initial),
+                        afterSha256: expectedSnapshotSha256,
+                        incremental: diff,
+                        cumulative,
+                    },
+                    proof,
+                );
+            }
+        }
+
+        function supportsCancellation(run: Run) {
+            return (
+                host.supportsRunningCancellation === true ||
+                (run.taskSequence !== null &&
+                    host.supportsTaskRunningCancellation === true)
+            );
+        }
+
+        async function taskExit(
+            run: Run,
+            binding: Binding,
+            generation: number,
+        ) {
+            const bindingDigest = executionBindingDigest(binding);
+            if (
+                run.admittedGeneration !== generation ||
+                run.admittedBindingDigest !== bindingDigest
+            )
+                return undefined;
+            const prior = db.taskExit(run.id, generation);
+            if (prior)
+                return prior.bindingDigest === bindingDigest
+                    ? prior
+                    : undefined;
+            const observed = await host.observeWorkerExit?.(
+                binding,
+                run.id,
+                generation,
+            );
+            if (
+                !observed ||
+                observed.sessionId !== binding.session ||
+                observed.runId !== run.id ||
+                observed.generation !== generation ||
+                observed.bindingDigest !== bindingDigest ||
+                !Number.isFinite(Date.parse(observed.exitedAt))
+            )
+                return undefined;
+            return db.recordTaskExit(
+                run.id,
+                generation,
+                bindingDigest,
+                observed.exitedAt,
+            );
+        }
+
+        function sameBinding(observation: Binding, binding: Binding) {
+            return (
+                executionBindingDigest(observation) ===
+                executionBindingDigest(binding)
+            );
+        }
+
+        function readyBinding(binding: Binding, generation: number) {
+            const state = execution.inspect(binding.session);
+            return (
+                state.state === 'READY' &&
+                state.run === null &&
+                !state.hasCapability &&
+                state.generation === generation &&
+                sameBinding(state, binding)
+            );
+        }
+
+        async function reconcileFixtureWrite(
+            run: Run,
+            binding: Binding,
+            generation: number,
+        ) {
+            const operation = operationId(run.id, 'local-demo');
+            if (!execution.operation(binding.session, generation, operation))
+                return;
+            const receipt = await host.taskRecovery?.readFixtureWriteReceipt?.(
+                binding,
+                run.id,
+                generation,
+            );
+            if (!receipt) return;
+            const inputDigest = sha256Digest(run.prompt);
+            const current = textSnapshot(await host.snapshot(binding)).find(
+                (file) => file.path === receipt.relativePath,
+            );
+            if (
+                receipt.sessionId !== binding.session ||
+                receipt.runId !== run.id ||
+                receipt.generation !== generation ||
+                receipt.bindingDigest !== executionBindingDigest(binding) ||
+                receipt.operationId !== operation ||
+                receipt.inputDigest !== inputDigest ||
+                !current ||
+                sha256Digest(current.text) !== receipt.fileSha256
+            )
+                throw new Error('Invalid fixture write evidence');
+            execution.observeTaskFixtureWrite(
+                binding.session,
+                generation,
+                operation,
+                sha256Digest(inputDigest),
+            );
+        }
+
+        async function stopAndProve(run: Run) {
+            const generation = run.admittedGeneration;
+            const recovery = host.taskRecovery;
+            if (generation === null || !recovery || host.sdk) return false;
+            const binding = db.binding(run);
+            const exit = await taskExit(run, binding, generation);
+            if (!exit) return false;
+            if (!readyBinding(binding, generation + 1))
+                await execution.takeover(binding.session, generation);
+            if (!readyBinding(binding, generation + 1)) return false;
+            const prior = db.readStopProof(run.id);
+            if (prior) {
+                readProof(run, generation, generation + 1);
+                return true;
+            }
+            await reconcileFixtureWrite(run, binding, generation);
+            if (execution.hasUnknownOperations(binding.session, generation))
+                return false;
+            const effect = await recovery.retryObservation(
+                binding,
+                run.id,
+                generation,
+            );
+            const history = execution.historyQuiescence(binding.session);
+            if (
+                !effect.workspaceOnly ||
+                effect.unknownOperations !== 0 ||
+                history.handleOpen ||
+                history.pendingBatches !== 0
+            )
+                return false;
+            if (!readyBinding(binding, generation + 1)) return false;
+            const proof = {
+                taskId: run.projectId,
+                runId: run.id,
+                sessionId: binding.session,
+                bindingDigest: executionBindingDigest(binding),
+                oldGeneration: generation,
+                newGeneration: generation + 1,
+                workerExitedAt: exit.exitedAt,
+                authorityState: 'READY',
+                authorityRun: null,
+                hasCapability: false,
+                unknownOperations: 0,
+                pendingBatches: 0,
+                workspaceOnly: true,
+                observedAt: new Date().toISOString(),
+            };
+            db.recordStopProof(run.id, JSON.stringify(proof));
+            return true;
+        }
+
+        function readProof(
+            run: Run,
+            oldGeneration: number,
+            newGeneration: number,
+        ) {
+            const binding = db.binding(run);
+            const receipt = db.readStopProof(run.id);
+            if (
+                !receipt ||
+                typeof receipt.canonicalJson !== 'string' ||
+                sha256Digest(receipt.canonicalJson) !== receipt.sha256
+            )
+                throw new RetryEvidenceConflict(
+                    'Task stop proof checksum mismatch',
+                );
+            const proof = JSON.parse(receipt.canonicalJson);
+            const canonical = JSON.stringify({
+                taskId: run.projectId,
+                runId: run.id,
+                sessionId: binding.session,
+                bindingDigest: executionBindingDigest(binding),
+                oldGeneration,
+                newGeneration,
+                workerExitedAt: db.taskExit(run.id, oldGeneration)?.exitedAt,
+                authorityState: 'READY',
+                authorityRun: null,
+                hasCapability: false,
+                unknownOperations: 0,
+                pendingBatches: 0,
+                workspaceOnly: true,
+                observedAt: proof.observedAt,
+            });
+            if (
+                oldGeneration !== run.admittedGeneration ||
+                oldGeneration + 1 !== newGeneration ||
+                canonical !== receipt.canonicalJson ||
+                !Number.isFinite(Date.parse(proof.workerExitedAt)) ||
+                !Number.isFinite(Date.parse(proof.observedAt)) ||
+                !readyBinding(binding, newGeneration) ||
+                execution.hasUnknownOperations(binding.session, oldGeneration)
+            )
+                throw new RetryEvidenceConflict(
+                    'Task stop proof binding mismatch',
+                );
+            return binding;
+        }
+
+        function verifiedStopProof(attempt: Attempt) {
+            const source = db.findRun(attempt.sourceRunId);
+            if (source.projectId !== attempt.taskId)
+                throw new RetryEvidenceConflict('Retry source binding changed');
+            const binding = readProof(
+                source,
+                attempt.oldGeneration,
+                attempt.newGeneration,
+            );
+            const checkpoint = db.taskCheckpoint(source.id);
+            if (
+                !checkpoint ||
+                checkpoint.workspaceSha256 !== attempt.workspaceSha256 ||
+                checkpoint.historySha256 !== attempt.historySha256 ||
+                snapshotSha256(
+                    textSnapshot(JSON.parse(checkpoint.workspace)),
+                ) !== checkpoint.workspaceSha256
+            )
+                throw new RetryEvidenceConflict('Retry checkpoint mismatch');
+            const proof = {
+                attemptId: attempt.id,
+                taskId: attempt.taskId,
+                sourceRunId: source.id,
+                newRunId: attempt.newRunId,
+                sessionId: binding.session,
+                oldGeneration: attempt.oldGeneration,
+                newGeneration: attempt.newGeneration,
+                checkpointSha256: attempt.historySha256,
+            } as VerifiedStopProof;
+            return { binding, checkpoint, proof };
+        }
+
+        const advancingRetries = new Set<string>();
+        async function advanceTaskRetry(attempt: Attempt) {
+            const phase = attempt.phase;
+            const recovery = host.taskRecovery;
+            if (
+                !recovery ||
+                phase === 'queued' ||
+                phase === 'closed' ||
+                phase === 'blocked' ||
+                advancingRetries.has(attempt.id)
+            )
+                return;
+            advancingRetries.add(attempt.id);
+            try {
+                let validated: ReturnType<typeof verifiedStopProof>;
+                try {
+                    validated = verifiedStopProof(attempt);
+                } catch (error) {
+                    if (
+                        error instanceof RetryEvidenceConflict ||
+                        error instanceof SyntaxError
+                    )
+                        throw new RetryEvidenceConflict(
+                            'Invalid persisted retry evidence',
+                        );
+                    throw error;
+                }
+                const { binding, checkpoint, proof } = validated;
+                if (phase === 'preparing') {
+                    const receipt = await recovery.queryRestore(
+                        binding,
+                        attempt.id,
+                    );
+                    if (
+                        receipt &&
+                        (receipt.sha256 !== attempt.workspaceSha256 ||
+                            receipt.attemptId !== attempt.id)
+                    )
+                        throw new RetryEvidenceConflict(
+                            'Restore receipt changed',
+                        );
+                    if (receipt?.phase !== 'ready') {
+                        const output = await recovery.restoreTask(
+                            binding,
+                            attempt.id,
+                            textSnapshot(JSON.parse(checkpoint.workspace)),
+                            attempt.workspaceSha256,
+                        );
+                        if (
+                            output.attemptId !== attempt.id ||
+                            output.sha256 !== attempt.workspaceSha256
+                        )
+                            throw new RetryEvidenceConflict(
+                                'Unexpected restore receipt',
+                            );
+                    }
+                    if (
+                        snapshotSha256(await host.snapshot(binding)) !==
+                        attempt.workspaceSha256
+                    )
+                        throw new RetryEvidenceConflict(
+                            'Restored Task volume differs',
+                        );
+                    db.advanceTaskRetry(
+                        attempt.id,
+                        phase,
+                        'workspace_restored',
+                    );
+                    return;
+                }
+                if (phase === 'workspace_restored') {
+                    if (
+                        execution.restoreHistory(proof).sha256 !==
+                        attempt.historySha256
+                    )
+                        throw new RetryEvidenceConflict(
+                            'Restored Task history differs',
+                        );
+                    db.advanceTaskRetry(attempt.id, phase, 'history_restored');
+                    return;
+                }
+                await verifyRestoredTask(attempt, binding, proof);
+                db.finalizeTaskRetry(attempt.id, phase);
+            } catch (error) {
+                if (
+                    !stop.signal.aborted &&
+                    error instanceof RetryEvidenceConflict
+                )
+                    db.advanceTaskRetry(attempt.id, phase, 'blocked');
+                // An ambiguous host response is queried under the same attempt on the next tick.
+            } finally {
+                advancingRetries.delete(attempt.id);
+            }
+        }
+
+        async function verifyRestoredTask(
+            attempt: Attempt,
+            binding: Binding,
+            proof: VerifiedStopProof,
+        ) {
+            const receipt = await host.taskRecovery?.queryRestore(
+                binding,
+                attempt.id,
+            );
+            const current = await host.running(
+                execution.inspect(binding.session),
+            );
+            if (
+                receipt?.phase !== 'ready' ||
+                receipt.attemptId !== attempt.id ||
+                receipt.sha256 !== attempt.workspaceSha256 ||
+                !current.running ||
+                !current.installed ||
+                current.sandbox !== binding.sandbox ||
+                current.volume !== binding.volume ||
+                snapshotSha256(await host.snapshot(binding)) !==
+                    attempt.workspaceSha256 ||
+                execution.restoredHistoryDigest(proof) !== attempt.historySha256
+            )
+                throw new RetryEvidenceConflict(
+                    'Inconsistent Task recovery evidence',
+                );
+        }
+
+        function retryReason(run: Run) {
+            const task = db.task(db.binding(run).tenant, run.projectId);
+            if (task.closedReason) return 'task_closed';
+            if (task.status !== 'ready') return 'task_not_ready';
+            if (run.status === 'needs_review') return 'needs_review';
+            if (db.hasActiveTaskRetry(run.projectId)) return 'task_busy';
+            if (
+                db.taskRunRows(db.binding(run).tenant, run.projectId).at(-1)
+                    ?.id !== run.id
+            )
+                return 'not_latest';
+            if (run.status !== 'failed' && run.status !== 'cancelled')
+                return 'not_terminal';
+            if (!host.taskRecovery || !db.readStopProof(run.id))
+                return 'stop_unconfirmed';
+            if (!db.taskCheckpoint(run.id)) return 'checkpoint_unavailable';
+            try {
+                if (run.admittedGeneration === null) return 'stop_unconfirmed';
+                readProof(
+                    run,
+                    run.admittedGeneration,
+                    run.admittedGeneration + 1,
+                );
+            } catch {
+                return 'stop_unconfirmed';
+            }
+            return null;
+        }
+
+        function taskRunView(run: Run) {
+            const task = db.task(db.binding(run).tenant, run.projectId);
+            return {
+                id: run.id,
+                taskId: run.projectId,
+                sequence: run.taskSequence,
+                prompt: run.prompt,
+                status: run.status,
+                retryOf: run.retryOf,
+                createdAt: run.createdAt,
+                updatedAt: run.updatedAt,
+                summary: run.summary,
+                canContinue:
+                    task.status === 'ready' &&
+                    !task.closedReason &&
+                    !db.hasActiveTaskRetry(task.id) &&
+                    db.taskRunRows(db.binding(run).tenant, task.id).at(-1)
+                        ?.id === run.id &&
+                    (run.status === 'succeeded' ||
+                        (run.status === 'cancelled' &&
+                            run.admittedGeneration === null)),
+                canCancel:
+                    run.status === 'queued' ||
+                    (run.status === 'running' &&
+                        !run.receipt &&
+                        supportsCancellation(run)),
+                retryReason: retryReason(run),
+                resultVersion: db.taskResultRow(run.id)?.version ?? null,
+            };
+        }
+
+        async function closeTaskRun(input: {
+            runId: string;
+            decision: 'failed' | 'unconfirmed';
+            expectedGeneration: number;
+        }) {
+            if (input.decision !== 'failed' && input.decision !== 'unconfirmed')
+                throw conflict('review_unavailable', 'Invalid closure.');
+            const prior = db.readTaskClosure(input.runId);
+            if (prior) {
+                if (
+                    prior.authorityGeneration !== input.expectedGeneration ||
+                    prior.decision !== input.decision
+                )
+                    throw conflict(
+                        'review_unavailable',
+                        'Closure decision changed.',
+                    );
+                return;
+            }
+            const run = db.findRun(input.runId);
+            const generation = run.admittedGeneration;
+            const binding = db.binding(run);
+            const history = execution.historyQuiescence(binding.session);
+            const exit =
+                generation === null
+                    ? undefined
+                    : await taskExit(run, binding, generation);
+            if (
+                run.taskSequence === null ||
+                run.status !== 'needs_review' ||
+                generation === null ||
+                !exit ||
+                input.expectedGeneration <= generation ||
+                !readyBinding(binding, input.expectedGeneration) ||
+                history.handleOpen ||
+                history.pendingBatches
+            )
+                throw conflict(
+                    'review_unavailable',
+                    'Task closure evidence unavailable.',
+                );
+            db.closeTaskRun(
+                run.id,
+                input.decision,
+                input.expectedGeneration,
+                sha256Digest(
+                    JSON.stringify({
+                        exitReceiptDigest: sha256Digest(JSON.stringify(exit)),
+                        bindingDigest: executionBindingDigest(binding),
+                        oldGeneration: generation,
+                        newGeneration: input.expectedGeneration,
+                    }),
+                ),
+            );
+        }
+
+        async function closeTaskRetry(input: {
+            attemptId: string;
+            expectedGeneration: number;
+        }) {
+            const prior = db.readTaskRetryClosure(input.attemptId);
+            if (prior) {
+                if (prior.authorityGeneration !== input.expectedGeneration)
+                    throw conflict(
+                        'review_unavailable',
+                        'Retry closure changed.',
+                    );
+                return;
+            }
+            const attempt = db.taskRetry(input.attemptId);
+            if (
+                attempt.phase !== 'blocked' ||
+                input.expectedGeneration !== attempt.newGeneration ||
+                advancingRetries.has(attempt.id)
+            )
+                throw conflict(
+                    'review_unavailable',
+                    'Retry is not awaiting closure.',
+                );
+            advancingRetries.add(attempt.id);
+            try {
+                const run = db.findRun(attempt.sourceRunId);
+                const binding = db.binding(run);
+                const exit = await taskExit(
+                    run,
+                    binding,
+                    attempt.oldGeneration,
+                );
+                const history = execution.historyQuiescence(binding.session);
+                if (
+                    !exit ||
+                    history.handleOpen ||
+                    history.pendingBatches ||
+                    !readyBinding(binding, input.expectedGeneration)
+                )
+                    throw conflict(
+                        'review_unavailable',
+                        'Retry cleanup evidence unavailable.',
+                    );
+                const cleanupObservation = await host.observeRetryCleanup?.(
+                    binding,
+                    attempt.id,
+                    input.expectedGeneration,
+                );
+                const bindingDigest = executionBindingDigest(binding);
+                if (
+                    !cleanupObservation ||
+                    cleanupObservation.attemptId !== attempt.id ||
+                    cleanupObservation.generation !== attempt.newGeneration ||
+                    cleanupObservation.bindingDigest !== bindingDigest ||
+                    cleanupObservation.restoreIdle !== true ||
+                    cleanupObservation.volumeWriters !== 0 ||
+                    cleanupObservation.sandboxStopped !== true ||
+                    !readyBinding(binding, input.expectedGeneration) ||
+                    !Number.isFinite(Date.parse(cleanupObservation.observedAt))
+                )
+                    throw conflict(
+                        'review_unavailable',
+                        'Retry cleanup evidence unavailable.',
+                    );
+                db.closeBlockedTaskRetry(
+                    attempt.id,
+                    input.expectedGeneration,
+                    sha256Digest(
+                        JSON.stringify({
+                            exitReceiptDigest: sha256Digest(
+                                JSON.stringify(exit),
+                            ),
+                            bindingDigest,
+                            authorityGeneration: input.expectedGeneration,
+                            cleanupObservation,
+                        }),
+                    ),
+                );
+            } finally {
+                advancingRetries.delete(attempt.id);
+            }
+        }
+
+        async function reconcileTaskRetry(input: {
+            attemptId: string;
+            expectedGeneration: number;
+        }): Promise<'pending' | 'queued'> {
+            const attempt = db.taskRetry(input.attemptId);
+            if (attempt.newGeneration !== input.expectedGeneration)
+                return 'pending';
+            if (attempt.phase === 'queued') return 'queued';
+            if (attempt.phase !== 'blocked' || advancingRetries.has(attempt.id))
+                return 'pending';
+            advancingRetries.add(attempt.id);
+            try {
+                const { binding, proof } = verifiedStopProof(attempt);
+                await verifyRestoredTask(attempt, binding, proof);
+                db.finalizeTaskRetry(attempt.id, 'blocked');
+                wake();
+                return 'queued';
+            } catch {
+                return 'pending';
+            } finally {
+                advancingRetries.delete(attempt.id);
+            }
+        }
+
+        const taskSourcePurges = new Map<string, Promise<boolean>>();
+        async function purgeTaskSource(
+            owner: string,
+            spaceId: string,
+            operationId: string,
+        ) {
+            const key = JSON.stringify([owner, spaceId, operationId]);
+            const prior = taskSourcePurges.get(key);
+            if (prior) return prior;
+            const cleanup = (async () => {
+                try {
+                    for (const binding of db.taskSourceDeletionBindings(
+                        owner,
+                        spaceId,
+                        operationId,
+                    )) {
+                        const ids = db.projectRunIds(binding.project);
+                        if (
+                            !host.purge ||
+                            ids.some((id) =>
+                                [...assigned.values()].includes(id),
+                            )
+                        )
+                            return false;
+                        if (scheduler)
+                            for (const id of ids)
+                                if (!(await scheduler.purgeClosed(id)))
+                                    return false;
+                        await execution.purge(binding, host.purge.bind(host));
+                        db.purgeProject(binding, operationId, spaceId);
+                    }
+                    return db.finishTaskSourceDeletion(
+                        owner,
+                        spaceId,
+                        operationId,
+                    );
+                } catch {
+                    return false;
+                }
+            })().finally(() => taskSourcePurges.delete(key));
+            taskSourcePurges.set(key, cleanup);
+            return cleanup;
         }
 
         function requestCancellation(
             owner: string,
             project: string,
             id: string,
+            task = false,
         ) {
-            db.run(owner, project, id);
+            if (task) db.taskRunRow(owner, project, id);
+            else db.run(owner, project, id);
             const run = db.findRun(id);
             if (run.cancelGeneration !== null)
                 return db.requestRunningCancellation(
@@ -258,9 +909,10 @@ export async function serveExecution(options: Options) {
                     project,
                     id,
                     run.cancelGeneration,
+                    task,
                 );
             if (run.status !== 'running')
-                return db.cancelQueuedRun(owner, project, id);
+                return db.cancelQueuedRun(owner, project, id, task);
 
             const current = execution.inspect(run.sessionId);
             const worker = executing.get(id);
@@ -286,7 +938,7 @@ export async function serveExecution(options: Options) {
             } else if (
                 current.state === 'RUNNING' &&
                 current.run === id &&
-                host.supportsRunningCancellation === true &&
+                supportsCancellation(run) &&
                 worker?.generation === current.generation
             ) {
                 generation = current.generation;
@@ -301,6 +953,7 @@ export async function serveExecution(options: Options) {
                 project,
                 id,
                 generation,
+                task,
             );
             if (worker?.generation === generation) {
                 worker.abort.abort();
@@ -317,6 +970,18 @@ export async function serveExecution(options: Options) {
             slot: number,
         ) {
             const current = execution.inspect(binding.session);
+            if (run.taskSequence !== null && mode === 'execute') {
+                if (
+                    run.expectedGeneration !== null &&
+                    run.expectedGeneration !== current.generation
+                )
+                    throw new Error('Queued retry generation changed');
+                db.recordTaskAdmission(
+                    run.id,
+                    current.generation,
+                    executionBindingDigest(binding),
+                );
+            }
             const grant = execution.admit(
                 binding.session,
                 current.generation,
@@ -334,7 +999,7 @@ export async function serveExecution(options: Options) {
                     : undefined;
             if (attempt) executing.set(run.id, attempt);
             const onWorkerExit =
-                attempt && host.supportsRunningCancellation === true
+                attempt && supportsCancellation(run)
                     ? () => {
                           if (
                               stop.signal.aborted ||
@@ -342,6 +1007,22 @@ export async function serveExecution(options: Options) {
                           )
                               return;
                           attempt.exitConfirmed = true;
+                          if (run.taskSequence !== null) {
+                              if (host.observeWorkerExit) {
+                                  void taskExit(
+                                      db.findRun(run.id),
+                                      binding,
+                                      grant.generation,
+                                  ).catch(() => {});
+                              } else {
+                                  db.recordTaskExit(
+                                      run.id,
+                                      grant.generation,
+                                      executionBindingDigest(binding),
+                                      new Date().toISOString(),
+                                  );
+                              }
+                          }
                           try {
                               db.markCancellationWorkerClosed(
                                   run.id,
@@ -408,7 +1089,20 @@ export async function serveExecution(options: Options) {
                     textSnapshot(JSON.parse(run.baseline ?? 'null')),
                     after,
                 );
-                db.status(run.id, 'succeeded', 'Run completed.', diff);
+                if (run.taskSequence === null)
+                    db.status(run.id, 'succeeded', 'Run completed.', diff);
+                else {
+                    const initial = db.taskInitialFiles(run.projectId);
+                    db.publishTaskResult(run.id, {
+                        baselineSha256: snapshotSha256(
+                            textSnapshot(JSON.parse(run.baseline ?? 'null')),
+                        ),
+                        initialSha256: snapshotSha256(initial),
+                        afterSha256: snapshotSha256(after),
+                        incremental: diff,
+                        cumulative: await unifiedDiff(initial, after),
+                    });
+                }
             } catch {
                 db.status(
                     run.id,
@@ -430,6 +1124,20 @@ export async function serveExecution(options: Options) {
             if (run.receipt) {
                 await finish(run);
                 return;
+            }
+            if (run.taskSequence !== null) {
+                try {
+                    if (await stopAndProve(run)) {
+                        db.status(
+                            run.id,
+                            'failed',
+                            'Run stopped before completion.',
+                        );
+                        return;
+                    }
+                } catch {
+                    // Evidence mismatch cannot turn an ambiguous result into a failure.
+                }
             }
             if (!run.reconciled) {
                 // The attempt is durable before admission. A recovery worker is never given the original prompt.
@@ -476,7 +1184,21 @@ export async function serveExecution(options: Options) {
                 const files = textSnapshot(
                     JSON.parse(project.source ?? 'null'),
                 );
-                const observation = await host.provision(binding, files);
+                const task = db.taskConfig(binding.project);
+                const observation = task
+                    ? await host.provisionTask(
+                          binding,
+                          files,
+                          task.environmentVersion,
+                      )
+                    : await host.provision(binding, files);
+                if (
+                    task &&
+                    (!('environmentVersion' in observation) ||
+                        observation.environmentVersion !==
+                            task.environmentVersion)
+                )
+                    throw new Error('Task environment observation mismatch');
                 const imported = textSnapshot(await host.snapshot(binding));
                 if (JSON.stringify(imported) !== JSON.stringify(files))
                     throw new Error('Imported snapshot differs');
@@ -501,7 +1223,7 @@ export async function serveExecution(options: Options) {
                 }
                 db.importResult(project.id, 'ready');
             } catch {
-                db.importResult(project.id, 'failed');
+                db.importResult(project.id, 'failed', 'preparation_failed');
             }
         }
 
@@ -528,6 +1250,27 @@ export async function serveExecution(options: Options) {
             )
                 throw new Error('Cancellation stop evidence unavailable');
 
+            if (run.taskSequence !== null && generation !== 0) {
+                if (!(await taskExit(run, binding, generation)))
+                    throw new Error('Task Worker exit unconfirmed');
+                let proven = false;
+                try {
+                    proven = await stopAndProve(run);
+                } catch {
+                    // An invalid or missing operation proof remains subject to review.
+                }
+                db.markCancellationWorkerClosed(run.id, generation);
+                if (
+                    !db.finishCancellation(
+                        run.id,
+                        generation,
+                        proven ? 'cancelled' : 'needs_review',
+                    )
+                )
+                    throw new Error('Task cancellation result changed');
+                executing.delete(run.id);
+                return;
+            }
             const worker = executing.get(run.id);
             if (worker?.generation === generation && worker.exitConfirmed)
                 db.markCancellationWorkerClosed(run.id, generation);
@@ -577,6 +1320,27 @@ export async function serveExecution(options: Options) {
             let before: FileText[];
             try {
                 before = textSnapshot(await host.snapshot(binding));
+                if (queued.taskSequence !== null) {
+                    const generation = execution.inspect(
+                        binding.session,
+                    ).generation;
+                    if (
+                        queued.expectedGeneration !== null &&
+                        generation !== queued.expectedGeneration
+                    )
+                        throw new Error('Queued Task generation changed');
+                    const history = execution.checkpointHistory(
+                        binding.session,
+                        queued.id,
+                        generation,
+                    );
+                    db.recordTaskCheckpoint(
+                        queued.id,
+                        before,
+                        snapshotSha256(before),
+                        history.sha256,
+                    );
+                }
             } catch {
                 db.failQueuedBaseline(queued.id);
                 return;
@@ -691,6 +1455,11 @@ export async function serveExecution(options: Options) {
             } else {
                 const unfinished = db.next('active');
                 if (unfinished) return driveRun(unfinished, 0);
+            }
+            const attempt = db.nextTaskRetry();
+            if (attempt) {
+                await advanceTaskRetry(attempt);
+                return;
             }
             const project = db.importing();
             if (project) {
@@ -813,12 +1582,75 @@ export async function serveExecution(options: Options) {
                 purgeOwner,
                 requestCancellation,
                 advanceProjectDeletion,
+                {
+                    environmentVersion: host.environmentVersion,
+                    runView: taskRunView,
+                    cancel(owner, taskId, runId) {
+                        requestCancellation(owner, taskId, runId, true);
+                        return taskRunView(db.taskRunRow(owner, taskId, runId));
+                    },
+                    retry(owner, taskId, runId, key) {
+                        const run = db.taskRunRow(owner, taskId, runId);
+                        const prior = db.taskRetryReceipt(taskId, key);
+                        if (!prior) {
+                            const reason = retryReason(run);
+                            if (reason) throw new RetryUnavailable(reason);
+                            try {
+                                readProof(
+                                    run,
+                                    run.admittedGeneration!,
+                                    run.admittedGeneration! + 1,
+                                );
+                            } catch {
+                                throw new RetryUnavailable('stop_unconfirmed');
+                            }
+                        }
+                        const checkpoint = db.taskCheckpoint(runId);
+                        const { replay, attempt } = db.acceptTaskRetry(
+                            owner,
+                            taskId,
+                            runId,
+                            key,
+                            {
+                                oldGeneration: run.admittedGeneration ?? 0,
+                                newGeneration:
+                                    (run.admittedGeneration ?? 0) + 1,
+                                workspaceSha256:
+                                    checkpoint?.workspaceSha256 ?? '',
+                                historySha256: checkpoint?.historySha256 ?? '',
+                            },
+                        );
+                        return {
+                            status: replay ? 200 : 202,
+                            retry: {
+                                id: attempt.id,
+                                runId: attempt.newRunId,
+                                state:
+                                    attempt.phase === 'workspace_restored' ||
+                                    attempt.phase === 'history_restored'
+                                        ? 'preparing'
+                                        : attempt.phase,
+                            },
+                        };
+                    },
+                    purgeSource: purgeTaskSource,
+                },
             ),
             options.port,
             options.bindHost,
         );
         wake();
-        return { url, close, reviewRun };
+        return {
+            url,
+            close,
+            reviewRun,
+            closeTaskRun,
+            closeTaskRetry,
+            reconcileTaskRetry,
+            readTaskClosure: (id: string) => db.readTaskClosure(id),
+            readTaskRetryClosure: (id: string) =>
+                db.readTaskRetryClosure(id) ?? null,
+        };
     } catch (error) {
         await close();
         throw error;
