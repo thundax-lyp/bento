@@ -132,19 +132,9 @@ Task 首写冻结版本。可信 host 新增 `provisionTask(binding,files,enviro
 
 ## 机械执行步骤
 
-### T2 建立 Task 和 Run 的原子账本
-
-前置状态：T0 已通过且 T1 已提交。B 针对本次 RUNBOOK 与两份正式契约的精确内容复审通过后，先以单独文档提交记录三份修订，再进入 T2。
-
-允许修改：`apps/orchestrator/execution-service/store.ts`、`apps/orchestrator/execution-service/service.test.ts`。禁止修改：调度器、现有 authority 与 HTTP。
-
-执行：用 Store constructor 新 schema 创建 `tasks`、`task_creation_receipts`、`task_events`、`task_run_results`、`task_run_checkpoints`、`stop_proofs`、`worker_exit`、`retry_attempts`、`task_source_deletions`、`task_source_deletion_items`、`task_closure_audit`、`task_input_refs`、`task_input_delete_holds`、`task_retry_closure_audit`。保留原 `runs` 行及调度字段，新增 nullable `taskSequence,retryOf,expectedGeneration,admittedGeneration,admittedBindingDigest`，用现有 projectId 找到 Task；旧 Run 均为 null。复用 `Store.write`/enqueueRun，使 `createTask`、`enqueueTaskRun`、`acceptTaskRetry`、`finalizeTaskRetry`、`appendTaskEvents`、`publishTaskResult`、`recordStopProof`、`readStopProof` 与 source 门禁按上文事务实施。另实现 acquireTaskInputDeleteHold、releaseTaskInputDeleteHold、closeBlockedTaskRetry、readTaskRetryClosure。ownerDrained/projectDeletionBlockers 检查 held 文件门禁及 preparing、workspace_restored、history_restored、blocked 的 retry attempt。来源级项目 hold 同样在原事务拒绝 held 文件门禁。预分配重试占用一个租户 queue 额度，finalize 释放预留并入队同一事务，不得二次占位。`ownedProject/projects` 对旧 HTTP 屏蔽 backing project，内部调度和 cleanup 继续可读。结果 hash 从 UTF-8 字节计算，摘要、检查从已投影记录构造。首次 summary 取最新 agent_reply，空时沿用既有成功提示。
-
-验证：`pnpm --filter @bento/orchestrator typecheck`，`pnpm --filter @bento/orchestrator test`。PASS：新增用例断言跨账号 404、旧入口不可绕行、同键重放、异键冲突、一次入队一个 user event、queue/活动门禁、两份结果不可变、重开同 SQLite 可读、删除 receipt 独立存续。新增断言覆盖 file/source 两种事务顺序、source deleted 的新键 404、旧键在 drain 后回放和 release、零引用 held；重开后 held/denied/released 与 lastConfirmedPhase 不变。分别断言 queued 同事务转移、closed 同事务释放、queued receipt 在实际 Run 终态后不阻塞项目删除和 owner purge。STOP：任一原调用回归，复核 backing project 隔离和同事务边界，禁止开第二套队列。
-
 ### T3 引入 DSH 检查点与可信恢复入口
 
-前置状态：T2 的 Store 账本和测试通过。
+前置状态：Store 已持久化 Task、Run、输入门禁、事件、结果、停止和重试回执。Orchestrator typecheck 与 test 已通过，两项新 Store 用例均执行。
 
 允许修改：`apps/orchestrator/openshell/session-history.ts`、`apps/orchestrator/openshell/single-host.ts`、`apps/orchestrator/openshell/remote-session.test.ts`、`apps/orchestrator/openshell/persistence-ingress.test.ts`。禁止修改：Store、Worker 远端持久化协议和 SDK 权限。
 
