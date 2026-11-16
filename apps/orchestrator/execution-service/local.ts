@@ -17,7 +17,11 @@ import {
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { filePath, RequestError, textSnapshot } from './input.ts';
-import { operationId, reserveOperation } from '@/apps/worker/protocol.ts';
+import {
+    operationId,
+    reserveOperation,
+    writeTaskProjection,
+} from '@/apps/worker/protocol.ts';
 import {
     TaskRestoreEvidenceConflict,
     executionBindingDigest,
@@ -676,6 +680,7 @@ export function localHost(root: string): ExecutionHost {
                     }
                 }
                 await persistence(request, 'close', { key: writer?.key });
+                await writeTaskProjection(request, []);
                 return 'completed';
             } finally {
                 writers.delete(id);

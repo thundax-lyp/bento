@@ -22,7 +22,7 @@ import {
     type WorkerRequest,
     type WorkerResult,
 } from './types.ts';
-import { operationId } from '@/apps/worker/protocol.ts';
+import { operationId, publicTaskEventBatch } from '@/apps/worker/protocol.ts';
 
 type Run = ReturnType<Store['findRun']>;
 type Attempt = ReturnType<Store['taskRetry']>;
@@ -163,8 +163,46 @@ export async function serveExecution(options: Options) {
             execution.persistenceIngress(canPersist),
             options.workerPort?.persistence,
         );
+        const taskProjectionEnds = new Set<string>();
+        const projectionKey = (grant: WorkerRequest['grant']) =>
+            grant.run + ':' + grant.generation;
+        function acceptTaskEvents(
+            grant: WorkerRequest['grant'],
+            body: unknown,
+        ) {
+            const run = db.findRun(grant.run);
+            if (
+                !canExecute(grant) ||
+                run.sessionId !== grant.session ||
+                run.admittedGeneration !== grant.generation ||
+                run.taskSequence === null
+            )
+                throw new Error('Task event grant mismatch');
+            const events = publicTaskEventBatch(body).map((event) =>
+                event.kind === 'check'
+                    ? {
+                          offset: event.offset,
+                          kind: event.kind,
+                          text: event.name,
+                          check: {
+                              name: event.name,
+                              status: event.status,
+                              output: event.output,
+                          },
+                      }
+                    : { ...event, check: null },
+            );
+            db.appendTaskEvents(
+                run.projectId,
+                run.id,
+                grant.generation,
+                events,
+            );
+            if (events.length === 0)
+                taskProjectionEnds.add(projectionKey(grant));
+        }
         const operationUrl = await listen(
-            execution.operationIngress(canExecute),
+            execution.operationIngress(canExecute, acceptTaskEvents),
             options.workerPort?.operation,
         );
         const gateway = host.sdk
@@ -1054,15 +1092,31 @@ export async function serveExecution(options: Options) {
                         binding,
                         grant,
                         ...ingress,
+                        ...(run.taskSequence !== null && mode === 'execute'
+                            ? {
+                                  publicEventsUrl: new URL(
+                                      '/task-events',
+                                      operationUrl,
+                                  ).href,
+                              }
+                            : {}),
                         ...(mode === 'execute' ? { prompt: run.prompt } : {}),
                     },
                     signal,
                     slot,
                     onWorkerExit,
                 );
-                return await Promise.race([task, aborted]);
+                const result = await Promise.race([task, aborted]);
+                if (
+                    result === 'completed' &&
+                    run.taskSequence !== null &&
+                    !taskProjectionEnds.has(projectionKey(grant))
+                )
+                    return 'review';
+                return result;
             } finally {
                 live.delete(grant.token);
+                taskProjectionEnds.delete(projectionKey(grant));
                 signal.removeEventListener('abort', onAbort);
                 // A replacement must wait for the single slot to close on lease expiry.
                 if (

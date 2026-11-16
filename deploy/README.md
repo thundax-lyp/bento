@@ -142,6 +142,12 @@ docker compose -f deploy/compose.yaml --profile worker-image build bento-worker
 
 项目删除和账号注销清理需要可信宿主实现幂等的工作区删除。命令宿主处理 `{action:"purge",binding}`，只删除该绑定独占的沙盒与卷，独立确认两者不存在后返回 `{sandbox,volume,absent:true}`。自定义宿主实现 `ExecutionHost.purge(binding)`。删除失败应报错，Bento 会保留清理请求以便重试。Docker 驱动的宿主可用 [dockerOpenShellPurge](../apps/orchestrator/execution-service/docker-openshell-purge.ts)，并提供与部署时一致的卷标签。
 
+### Task 事件投影
+
+Task 的 execute 请求含可选 `publicEventsUrl`，与当次 grant 一起交付 Worker。私有 DSH bootstrap 返回的 runtime 必须实现 `publicEvents(events): readonly PublicWorkerEvent[]`。收到 Task 请求但缺少此回调时，Worker 在提交 prompt 前返回待核对。旧项目请求继续使用原路径。
+
+回调以本轮 DSH 事件的零基索引作 `offset`。每个索引至多一项，按索引递增。回复、步骤和命令使用 `{offset,kind,text}`，检查使用 `{offset,kind:"check",name,status,output}`。检查状态为 passed、failed、not_run 或 unavailable。仅投影用户可见内容，命令只给出脱敏名称，检查输出只给出可公开摘要。禁止输出工具参数、环境变量、原始 DSH 帧或凭据。Worker 每批最多 100 项及 256 KiB，单个 text/output 最多 4096 UTF-8 字节，name 最多 120 字节。空批标记投影完成；发布结果前服务须收到此批。生产 bootstrap 的投影和保密性使用部署场景验收。
+
 ## Temporal 配置
 
 在 `debug-workspace/execution.env` 设置 `BENTO_TEMPORAL_ADDRESS`、`BENTO_TEMPORAL_NAMESPACE` 和 `BENTO_TEMPORAL_TASK_QUEUE`。正式环境填写受信网络内的 Temporal 服务地址。每个控制器使用独占 Task Queue，重启时保持状态卷、Namespace 和队列名。

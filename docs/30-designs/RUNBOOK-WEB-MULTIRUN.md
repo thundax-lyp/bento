@@ -135,19 +135,9 @@ Task 首写冻结版本。可信 host 新增 `provisionTask(binding,files,enviro
 
 ## 机械执行步骤
 
-### T6 接通 Worker 的可公开事件
-
-前置状态：私有与个人端 Task HTTP 已连通，双 HTTP 测试通过重启重放、来源 pin、文件删除门禁及无空间服务查询。服务能发布版本化结果。
-
-允许修改：`apps/worker/protocol.ts`、`apps/worker/dsh-worker.ts`、`apps/orchestrator/openshell/single-host.ts`、`apps/orchestrator/execution-service/service.ts`、`apps/orchestrator/execution-service/service.test.ts`、`apps/orchestrator/execution-service/local.ts`、`deploy/README.md`。禁止修改：Binding/Grant/WorkerResult 形态、Agent 的恢复协议、SessionHistory 或断开栅栏。 `WorkerRequest` 只新增 `publicEventsUrl?: string`。保留 `mode,binding,grant,prompt?,persistenceUrl,operationUrl,gateway?` 的类型，以及 `grant.run` 作为唯一 Run ID。warm/stdio 仍按原 JSON 传递；旧 fixture 省略新字段时跳过公开投影，`/operations` 行为不变。
-
-执行：`protocol.ts` 新增 `PublicWorkerEvent` 与 `publicEventsUrl`。`apps/orchestrator/execution-service/service.ts::serveExecution` 中，将既有 `listen(execution.operationIngress(canExecute), options.workerPort?.operation)` 改为传第二个参数 `acceptTaskEvents`。其内部 `worker` 仅对 Task execute 请求加 `publicEventsUrl: new URL("/task-events", operationUrl).href`。 `apps/orchestrator/openshell/single-host.ts::SingleHostExecution.operationIngress` 在现有 `createServer` handler 内增加 `POST /task-events` 分支，通过原 `grant(authorization, allow)` 校验，并在读完有限正文后再次检查 allow，再调用 `acceptTaskEvents(grant, parsedBody)`。公开事件入口复用该私有监听地址；`POST /operations` 保留原路径、限制和响应。 `runDshWorker` 在既有 event slice 上调用公有投影并逐批 POST，响应未确认以同一 event ID 重试一次，重复失败走 review。Orchestrator 按活跃 execute grant、同绑定与本 Run generation 校验并去重，完成前校验已收投影结束批次，空投影也必须发 `{items:[]}` 作为结束。Store 在 T2 的 appendTaskEvents 同一事务记录 `(runId,generation)` 的投影结束标记，结束后仅接受原批次重放。此处在 T6 校验 T2 已具备的标记。 `localHost.worker` 在成功回执前沿同一 URL 发送 fixture 投影和结束批。原消息、结果摘要和 checks 在 Store 只读路径分别投影，保持旧事件的不变性。部署手册记录私有 bootstrap callback 的字段、限额与敏感边界。
-
-验证：`pnpm --filter @bento/worker typecheck`，`pnpm --filter @bento/orchestrator test`。PASS：两个 Run 调用同 DSH Session，另 Task 隔离；重放/旧代/伪造拒绝；公开 payload 无凭据和原始参数；丢回执不会造成重复事件、成功前可查询已收批。STOP：可信 bootstrap 可公开事件契约无法满足时明确该 adapter 未覆盖并禁止公开原始事件。
-
 ### T7 交付 Web Task 路由和状态
 
-前置状态：公开 HTTP、Worker 事件和版本化结果通过测试。
+前置状态：公开 HTTP、Worker 事件和版本化结果均通过测试，含同会话多轮、重复事件、旧代拒绝与脱敏字段断言。
 
 允许修改：`apps/workspace/web/src/main.tsx`、`apps/workspace/web/src/api.ts`、`apps/workspace/web/src/pages.tsx`、`apps/workspace/web/src/space.tsx`、`apps/workspace/web/e2e/task.spec.ts`。禁止修改：上传状态机、旧 Run URL 的解析和行为、认证、全局样式。
 

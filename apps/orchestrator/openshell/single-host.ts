@@ -1,3 +1,4 @@
+import { maxTaskEventBatchBytes } from '@/apps/worker/protocol.ts';
 import { createServer } from 'node:http';
 import { Authority } from './authority.ts';
 import { SandboxManagement } from './management.ts';
@@ -249,17 +250,41 @@ export class SingleHostExecution {
         );
     }
 
-    operationIngress(allow?: GrantFilter) {
+    operationIngress(
+        allow?: GrantFilter,
+        acceptTaskEvents?: (grant: WorkerGrant, body: unknown) => void,
+    ) {
         const server = createServer(async (request, response) => {
             try {
-                if (request.method !== 'POST' || request.url !== '/operations')
+                const projection =
+                    request.url === '/task-events' &&
+                    acceptTaskEvents !== undefined;
+                if (
+                    request.method !== 'POST' ||
+                    (!projection && request.url !== '/operations')
+                )
                     throw new Error('unexpected operation request');
                 const grant = this.grant(request.headers.authorization, allow);
-                let body = '';
+                const limit = projection ? maxTaskEventBatchBytes : 16384;
+                const parts: Buffer[] = [];
+                let bytes = 0;
                 for await (const chunk of request) {
-                    body += chunk;
-                    if (Buffer.byteLength(body) > 16384)
-                        throw new Error('oversize');
+                    const part = Buffer.from(chunk);
+                    bytes += part.length;
+                    if (bytes > limit) throw new Error('oversize');
+                    parts.push(part);
+                }
+                const body = new TextDecoder('utf-8', { fatal: true }).decode(
+                    Buffer.concat(parts),
+                );
+                if (projection) {
+                    const current = this.grant(
+                        request.headers.authorization,
+                        allow,
+                    );
+                    acceptTaskEvents(current, JSON.parse(body));
+                    response.writeHead(200).end();
+                    return;
                 }
                 const { id, input } = JSON.parse(body) as {
                     id: unknown;

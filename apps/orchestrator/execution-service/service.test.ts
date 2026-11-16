@@ -5008,3 +5008,179 @@ test(
         assert.equal(await readlink(pointer), previousVolume);
     },
 );
+
+test(
+    'Task event projection deduplicates retries and rejects stale grants and private fields',
+    { timeout: 15_000 },
+    async (t) => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-task-projection-'));
+        const base = localHost(join(state, 'volume'));
+        const requests: WorkerRequest[] = [];
+        const canary = 'fixture-credential-must-not-project';
+        async function project(request: WorkerRequest, items: unknown[]) {
+            assert(request.publicEventsUrl);
+            const response = await fetch(request.publicEventsUrl, {
+                method: 'POST',
+                headers: {
+                    authorization: 'Bearer ' + request.grant.token,
+                    'content-type': 'application/json',
+                },
+                body: JSON.stringify({ items }),
+                signal: AbortSignal.timeout(3000),
+            });
+            await response.body?.cancel();
+            return response.status;
+        }
+        const service = await start(state, {
+            ...base,
+            async worker(request, signal, slot, exit) {
+                if (request.mode === 'execute' && request.publicEventsUrl) {
+                    requests.push(request);
+                    assert.equal(
+                        await project(request, [
+                            {
+                                offset: 0,
+                                kind: 'agent_reply',
+                                text: canary,
+                                token: canary,
+                            },
+                        ]),
+                        403,
+                    );
+                    const items = [
+                        { offset: 0, kind: 'agent_reply', text: '任务结果' },
+                        { offset: 1, kind: 'command', text: '确定性检查' },
+                        {
+                            offset: 2,
+                            kind: 'check',
+                            name: 'fixture check',
+                            status: 'passed',
+                            output: 'ok',
+                        },
+                    ];
+                    assert.equal(await project(request, items), 200);
+                    assert.equal(await project(request, items), 200);
+                    assert.equal(
+                        await project(request, [
+                            {
+                                offset: 0,
+                                kind: 'agent_reply',
+                                text: 'conflict',
+                            },
+                        ]),
+                        403,
+                    );
+                    const result = await base.worker(
+                        request,
+                        signal,
+                        slot,
+                        exit,
+                    );
+                    assert.equal(
+                        await project(request, [
+                            { offset: 3, kind: 'step', text: 'late' },
+                        ]),
+                        403,
+                    );
+                    return result;
+                }
+                return base.worker(request, signal, slot, exit);
+            },
+        });
+        t.after(async () => {
+            await service.close();
+            await rm(state, { recursive: true, force: true });
+        });
+        async function api(
+            path: string,
+            method = 'GET',
+            body?: unknown,
+            key?: string,
+        ) {
+            const response = await fetch(service.url + '/v1' + path, {
+                method,
+                headers: {
+                    authorization: 'Bearer ' + testToken,
+                    'x-bento-owner-id': 'account-a',
+                    ...(key ? { 'idempotency-key': key } : {}),
+                    ...(body === undefined
+                        ? {}
+                        : { 'content-type': 'application/json' }),
+                },
+                ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+                signal: AbortSignal.timeout(5000),
+            });
+            const text = await response.text();
+            return { status: response.status, text, body: JSON.parse(text) };
+        }
+        async function create() {
+            const task = await api(
+                '/tasks',
+                'POST',
+                {
+                    id: null,
+                    name: 'Projected Task',
+                    sourceSpaceId: null,
+                    inputFiles: [],
+                    inputManifest: [],
+                    inputDigest: snapshotSha256([]),
+                },
+                randomUUID(),
+            );
+            assert.equal(task.status, 202, task.text);
+            const path = '/tasks/' + task.body.task.id;
+            await until(
+                () => api(path),
+                (r) => r.body.task.status === 'ready',
+                'Projected Task ready',
+            );
+            return path;
+        }
+        async function run(task: string) {
+            const response = await api(
+                task + '/runs',
+                'POST',
+                { prompt: 'noop' },
+                randomUUID(),
+            );
+            assert.equal(response.status, 202, response.text);
+            const path = task + '/runs/' + response.body.run.id;
+            await until(
+                () => api(path),
+                (r) => r.body.run.status === 'succeeded',
+                'Projected Run published',
+            );
+            const result = await api(path + '/results');
+            assert.equal(result.body.result.summary, '任务结果');
+            assert.deepEqual(result.body.result.checks, [
+                { name: 'fixture check', status: 'passed', output: 'ok' },
+            ]);
+        }
+        const task = await create();
+        await run(task);
+        await run(task);
+        const separate = await create();
+        await run(separate);
+        assert.equal(requests[0]!.grant.session, requests[1]!.grant.session);
+        assert.notEqual(requests[0]!.grant.session, requests[2]!.grant.session);
+        assert.equal(
+            await project(requests[0]!, [
+                { offset: 10, kind: 'step', text: 'old' },
+            ]),
+            403,
+        );
+        const { body, text } = await api(task + '/events');
+        assert.deepEqual(
+            body.items.map((event: { sequence: number }) => event.sequence),
+            [1, 2, 3, 4, 5, 6, 7, 8],
+        );
+        assert.equal(
+            body.items.filter(
+                (event: { kind: string }) => event.kind === 'check',
+            ).length,
+            2,
+        );
+        assert.equal(text.includes(canary), false);
+        assert.equal((await api(separate + '/events')).body.items.length, 4);
+    },
+);
