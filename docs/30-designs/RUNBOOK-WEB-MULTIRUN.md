@@ -115,29 +115,9 @@ Task 首写冻结版本。可信 host 新增 `provisionTask(binding,files,enviro
 
 ## 机械执行步骤
 
-### T0 验证审定稿与干净基线
-
-前置状态：B 已对 SHA-256 给出 Executable。任务分支顶端为只含审定 RUNBOOK 的提交。
-
-允许修改：无。禁止修改：工作树、基线及部署环境。
-
-执行：从 checkout 根执行以下命令。文件列表命令只允许输出 RUNBOOK 路径。SHA 命令输出逐字与 B 审查记录比对。依赖使用该 checkout 已安装版本，缺失时按仓库部署说明准备后重跑。只有处理环境连接时读取本 checkout 根的 `ENVIRONMENTS.md`，缺失再读主 checkout 根受控文件。
-
-```sh
-test "$(git branch --show-current)" = codex/web-task-lifecycle
-test "$(git rev-parse HEAD^)" = d791d69363dd28c5076a3fc61ef0aedc9ed39ef1
-git diff-tree --no-commit-id --name-only -r HEAD
-git show HEAD:docs/30-designs/RUNBOOK-WEB-MULTIRUN.md | shasum -a 256
-test -z "$(git status --porcelain)"
-git diff HEAD^ HEAD --check
-pnpm check
-```
-
-PASS：基线、单文件提交、哈希和干净状态均匹配，命令全部成功。STOP：任一不符时保留当前分支与文件，禁止进入 T1。
-
 ### T1 固化正式跨边界契约
 
-前置状态：T0 PASS。
+前置状态：基线和审定稿单文件提交核验通过，根 pnpm check 退出码为 0。
 
 允许修改：`docs/20-interfaces/WEB-INTERFACE.md`、`docs/30-designs/WEB-DESIGN.md`、`docs/00-governance/ARCHITECTURE.md`。禁止修改：Requirements、Readiness 和代码。
 
