@@ -115,19 +115,9 @@ Task 首写冻结版本。可信 host 新增 `provisionTask(binding,files,enviro
 
 ## 机械执行步骤
 
-### T1 固化正式跨边界契约
-
-前置状态：基线和审定稿单文件提交核验通过，根 pnpm check 退出码为 0。
-
-允许修改：`docs/20-interfaces/WEB-INTERFACE.md`、`docs/30-designs/WEB-DESIGN.md`、`docs/00-governance/ARCHITECTURE.md`。禁止修改：Requirements、Readiness 和代码。
-
-执行：在接口的「任务与补丁 · 现有」后追加「Task 生命周期」并写入本文件的 HTTP 表、DTO、状态/错误、source 删除阶段和环境字段，在「错误语义与兼容」添加公开 Task 入口的兼容说明。设计的「工作区初始化」「提交与交付」「执行环境与任务交互」按本稿分别写冻结及 pin、Task 路由及结果、stop proof/双事务 saga，保留原入口明示适用范围。Requirements 和设计索引的现有双向链接保留并核对。架构「当前实现接线」记录当前 TS Orchestrator 新增 Task 权威记录及 Worker 依旧只持当次 grant，Go 目标章节保持。以上均写成目标契约，覆盖验证只写在 T8。
-
-验证：`git diff --check`，`pnpm exec prettier --check docs/20-interfaces/WEB-INTERFACE.md docs/30-designs/WEB-DESIGN.md docs/00-governance/ARCHITECTURE.md`，`rg -n "WEB-DESIGN.md|WEB-REQUIREMENTS.md" docs/10-requirements/README.md docs/30-designs/WEB-DESIGN.md`。PASS：HTTP 每行、四类 DTO、三方所有权、错误、冻结与清理顺序逐款一致。STOP：正式契约冲突无法按既有入口并行共存时保留草稿并退审。
-
 ### T2 建立 Task 和 Run 的原子账本
 
-前置状态：正式契约已落账。
+前置状态：审定稿独立提交后的 T0 已通过，Task 契约已写入 WEB-INTERFACE、WEB-DESIGN 与 ARCHITECTURE。
 
 允许修改：`apps/orchestrator/execution-service/store.ts`、`apps/orchestrator/execution-service/service.test.ts`。禁止修改：调度器、现有 authority 与 HTTP。
 
