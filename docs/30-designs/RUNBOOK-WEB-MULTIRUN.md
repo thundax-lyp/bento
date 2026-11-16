@@ -135,9 +135,26 @@ Task 首写冻结版本。可信 host 新增 `provisionTask(binding,files,enviro
 
 ## 机械执行步骤
 
+### T4c 区分恢复证据冲突与暂时未知
+
+前置状态：T4b 已通过并提交于 `8f6f4a2`。本次修订经 B 对精确 SHA-256 复审后单独提交 RUNBOOK，再按本步修复。T5 已有个人端协议在途改动，保留工作区且不暂存到本步。
+
+允许修改：`apps/orchestrator/execution-service/types.ts`、`apps/orchestrator/execution-service/local.ts`、`apps/orchestrator/execution-service/store.ts`、`apps/orchestrator/execution-service/service.ts`、`apps/orchestrator/execution-service/service.test.ts`。禁止修改：个人端、Authority、历史库和可信结案调用签名。
+
+执行：
+
+1. 在 types.ts 定义并导出 `TaskRestoreEvidenceConflict extends Error`。localHost 的 queryRestore 和 restoreTask 只在确定持久证据冲突时抛此类型，包括已有恢复回执 JSON 解析失败、回执 attempt/binding/phase/SHA 不匹配、指针与原卷或 staging 的关联不匹配、prepared 已登记 staging 缺失或越出可信根、以及 staging 摘要错误。prepared staging 校验仍在独占区且先于指针切换；初次查询无回执回 null。其余 I/O、超时、abort 及回包未知保留原错误，不伪造冲突或成功。恢复过程中校验回执后实际卷摘要不匹配同样抛该类型。
+2. `serveExecution.advanceTaskRetry` 捕获本地和受信适配器显式抛出的 `TaskRestoreEvidenceConflict` 与现有 `RetryEvidenceConflict`，使用 `Store.advanceTaskRetry(id,phase,'blocked')` 原子持久停止。保留 lastConfirmedPhase、预留、写门禁和证据，原可信结案可继续处理；不执行第二次 restore。遇普通错误且未关闭时保留原 phase，在后续轮次按原 attempt 优先查询 host receipt。重开后跳过 blocked。可信结案或恢复对账仍沿用原观测与门禁规则。
+3. `Store.nextTaskRetry(afterRowId:number)` 返回 pending phase 的下一项及其 SQLite rowid；先取 rowid 大于 cursor 的最小项，无项时环回第一项。 `serveExecution.work` 保存进程内 cursor，初值 0；每次最多处理一个恢复阶段，取到项时更新 cursor，然后继续本轮既有的导入/排队流程（停止检查仍生效）。同 Task 的普通 Run 继续由 Store 门禁阻塞，不同 Task 可前进。cursor 不承担持久正确性，重启从 0 重新观察持久 phase。
+4. `service.test.ts` 在既有 staging 损坏用例追加 typed error 断言。新增 Orchestrator 受信适配器注入用例：同一 attempt 首次恢复丢回包，保持 preparing 并再次查原回执；已准备 staging 损坏则进入 blocked，指针不变；重开后读取 blocked 与 lastConfirmedPhase、restore 调用次数不增加，可信结案证据缺失时无写入，证据齐备后转 closed 并释放预留。无 Temporal 场景同时存在两个准备恢复的 attempt，以及另一个可入队 Task，断言第一个暂时失败未阻止第二项恢复和另一 Task 成功。
+
+验证：`pnpm --filter @bento/orchestrator typecheck`、`pnpm --filter @bento/orchestrator test`、`pnpm exec eslint apps/orchestrator/execution-service/{types,local,store,service,service.test}.ts`、`git diff --check`。
+
+PASS：冲突保持原指针并持久 blocked，重启可读回并可信结案；未知按原键对账；独立 Task 持续推进；既有测试通过。STOP：无法区分持久证据冲突与暂时未知时保留现场，禁止移除证据检查或扩大调度范围。
+
 ### T5 连接个人端 Task 与项目来源
 
-前置状态：Orchestrator 私有 Task HTTP、可信停止与重试、源文件/项目删除门禁和清理回执已验证。故障注入验证 UNKNOWN 保留和同一恢复 attempt 续作。
+前置状态：Orchestrator 私有 Task HTTP、可信停止与重试、源文件/项目删除门禁和清理回执已验证。T4c 通过持久 blocked、临时错误重试和调度进展断言。
 
 允许修改：`apps/workspace/api/protocol.ts`、`apps/workspace/api/execution-service-http.ts`、`apps/workspace/api/server.ts`、`apps/workspace/api/space.ts`、`apps/workspace/api/space-execution.ts`、`apps/workspace/api/space-files.test.ts`、`apps/workspace/api/mock.ts`。禁止修改：Go 账号与会话实现、存储额度、旧 API 语义。
 
