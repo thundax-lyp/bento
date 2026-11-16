@@ -13,6 +13,7 @@ import {
     remoteSessionPersistence,
 } from '@/apps/worker/remote-session.ts';
 import { SessionHistory, type VerifiedStopProof } from './session-history.ts';
+import { PersistenceFence } from './persistence-fence.ts';
 
 test('reconciliation retries with the same writer after a dropped RPC', async () => {
     const ctx = new Context();
@@ -110,7 +111,7 @@ test('a verified retry restores the checkpoint prefix and reopens with its origi
     const newRunId = randomUUID();
     const first = { session, run: randomUUID(), generation: 1 };
     const old = { session, run: sourceRunId, generation: 2 };
-    const fresh = { session, run: newRunId, generation: 3 };
+    const fresh = { session, run: randomUUID(), generation: 3 };
     const call = (grant: typeof first, body: object) => {
         const result = history.dispatch(JSON.stringify(body), grant);
         const parsed = JSON.parse(result.body);
@@ -201,7 +202,6 @@ test('a verified retry restores the checkpoint prefix and reopens with its origi
     db.prepare('DELETE FROM batch_intents WHERE id=?').run(session);
     const receipts = state().receipts;
     assert.deepEqual(history.restore(proof), checkpoint);
-    assert.equal(call(fresh, { method: 'stat' }).eventCount, 2);
     assert.deepEqual(state().receipts, receipts);
     assert.equal(
         history.dispatch(
@@ -216,4 +216,23 @@ test('a verified retry restores the checkpoint prefix and reopens with its origi
     assert.equal(history.restoredDigest(proof), checkpoint.sha256);
     assert.deepEqual(history.checkpoint(session, newRunId, 3), checkpoint);
     expectUnchanged({ newRunId: randomUUID() });
+
+    // The queued retry was cancelled without admission; a different Run may acquire this generation.
+    assert.deepEqual(history.checkpoint(session, fresh.run, 3), checkpoint);
+    const fence = new PersistenceFence(path);
+    try {
+        assert(fence.isRevoked(session, 2));
+        fence.grant(session, 3, fresh.run);
+        assert.equal(call(fresh, { method: 'stat' }).eventCount, 2);
+        const skipped = history.dispatch(
+            JSON.stringify({ method: 'open', access: 'write' }),
+            { ...fresh, run: newRunId },
+        );
+        assert.equal(skipped.status, 400);
+        const opened = call(fresh, { method: 'open', access: 'write' });
+        writeTurn(fresh, opened.key, 2);
+        assert.equal(call(fresh, { method: 'stat' }).eventCount, 4);
+    } finally {
+        fence.close();
+    }
 });

@@ -218,22 +218,10 @@ export class SessionHistory {
             const sha256 = hash(body);
             if (
                 row &&
-                !(
-                    row.epoch === authorityGeneration - 1 &&
-                    row.owner === 'bento:revoked'
-                )
-            ) {
-                const restored =
-                    row.epoch === authorityGeneration &&
-                    row.owner === runId &&
-                    this.db
-                        .prepare(
-                            'SELECT 1 FROM history_restores WHERE sessionId=? AND newRunId=? AND newGeneration=? AND sha256=?',
-                        )
-                        .get(sessionId, runId, authorityGeneration, sha256);
-                if (!restored)
-                    throw new Error('Session history generation changed');
-            }
+                (row.epoch !== authorityGeneration - 1 ||
+                    row.owner !== 'bento:revoked')
+            )
+                throw new Error('Session history generation changed');
             const previous = this.db
                 .prepare('SELECT * FROM history_checkpoints WHERE runId=?')
                 .get(runId);
@@ -341,14 +329,13 @@ export class SessionHistory {
                     .run(sessionId, before.next);
                 this.db
                     .prepare(
-                        'UPDATE sessions SET header=?, inherited=?, next=?, revision=revision+1, owner=?, epoch=? WHERE id=?',
+                        // Admission advances the revoked writer fence. A queued retry may never execute.
+                        'UPDATE sessions SET header=?, inherited=?, next=?, revision=revision+1 WHERE id=?',
                     )
                     .run(
                         before.header,
                         before.inherited,
                         before.next,
-                        newRunId,
-                        newGeneration,
                         sessionId,
                     );
             }
@@ -377,7 +364,7 @@ export class SessionHistory {
         const row = this.sessionRow(proof.sessionId);
         if (
             row &&
-            (row.epoch !== proof.newGeneration || row.owner !== proof.newRunId)
+            (row.epoch !== proof.oldGeneration || row.owner !== 'bento:revoked')
         )
             throw new Error('Restored history owner changed');
         const sha256 = hash(
