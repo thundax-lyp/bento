@@ -135,19 +135,9 @@ Task 首写冻结版本。可信 host 新增 `provisionTask(binding,files,enviro
 
 ## 机械执行步骤
 
-### T7 交付 Web Task 路由和状态
-
-前置状态：公开 HTTP、Worker 事件和版本化结果均通过测试，含同会话多轮、重复事件、旧代拒绝与脱敏字段断言。
-
-允许修改：`apps/workspace/web/src/main.tsx`、`apps/workspace/web/src/api.ts`、`apps/workspace/web/src/pages.tsx`、`apps/workspace/web/src/space.tsx`、`apps/workspace/web/e2e/task.spec.ts`。禁止修改：上传状态机、旧 Run URL 的解析和行为、认证、全局样式。
-
-执行：`main.tsx` 在受保护路由新增 `/tasks/:taskId` → `TaskDetails`。 `Dashboard/Composer` 用 blank create，空间文件选择器以 snapshot create 连接该路由。 读取 `GET /api/tasks` 仅在收到 503 tasks_unavailable 时显示旧 mock 创建 UI。Playwright 的新路径通过 `page.route` 提供可重入 Task fixtures，旧流程继续使用默认 mockBackend。 `TaskList` 合并新 Task 与旧 Run 入口，保留 `/runs/:runId?project=<projectId>` 的既有 `RunDetails` 解析、读取、取消和下载。旧地址不重定向、不查 Task。由 Task 产生的 Run 详情只通过 `/tasks/:taskId?run=<runId>` 选择，缺 run 参数选最新，参数不属本 Task 时显示找不到该 Run 并避免读取。 `api.ts` 新增 DTO 和 Task fetch helpers，复用 session account query 隔离。浏览器以 account、操作、Task 或 source 作为 pending key scope，sessionStorage 保存 key 和规范请求标识，未知回包重读或原键重试，确定受理后清除；失败准备按钮调用原址 prepare，重试请求禁止提交另一个 prompt。 `TaskDetails` 首次读取 Task、Run 列表和 after=0，再按已确认最大 sequence 串行轮询，按 event id 去重。断线保留同账号的已确认内容，登录丢失或归属失效清除。显示冻结文件、版本、准备错误、状态、blocked reconciliation 原因和 closedReason、可继续/取消/重试原因、恢复可能丢弃本轮变更提示，按选定 Run/version/view 共用预览和下载 URL。
-
-验证：`pnpm --filter @bento/web check`，`pnpm --filter @bento/web exec playwright test e2e/task.spec.ts`。PASS：空白/空间创建、原址、另一浏览器重准备失败任务、同 key 报错重试、旧 URL、双浏览器重复轮询、两轮结果与安全 retry、unsafe 禁用和旧 result 下载字节均有明确断言，blocked 的公开核对原因可见且无法续写。STOP：UI 推断超出服务端状态时退回 API 或页面本步的原职责修复。
-
 ### T8 验证、Readiness 与删除 RUNBOOK
 
-前置状态：T1–T7 全部已提交并保留验证记录。核对最新 `origin/main` 的当前需求、Readiness 证据与共享改动；如需同步或复验，先按 PR 规则在仍有明确步进边界时完成，变更契约须复审。
+前置状态：任务账本、会话恢复、宿主、两层 HTTP、Worker 投影和 Web 交付步骤均已提交。Web check 与 task.spec.ts 浏览器组全部通过。核对最新 `origin/main` 的当前需求、Readiness 证据与共享改动；如需同步或复验，先按 PR 规则在仍有明确步进边界时完成，变更契约须复审。
 
 允许修改：`docs/40-readiness/CURRENT-READINESS.md` 和删除本 RUNBOOK。禁止修改：生产、测试、长期契约与部署文件。若发现问题回到对应步骤修复和重验。
 

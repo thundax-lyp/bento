@@ -17,7 +17,13 @@ import {
     transferFile,
 } from './space-api.ts';
 import type { PreviewResult, Space, Upload } from './space-api.ts';
-import { ApiError } from './api.ts';
+import {
+    ApiError,
+    createTask,
+    taskListQuery,
+    taskUrl,
+    tasksUnavailable,
+} from './api.ts';
 import { Button, Notice } from './ui';
 
 function message(error: unknown) {
@@ -319,6 +325,10 @@ function CloudProject({ account, id }: { account: string; id: string }) {
     const client = useQueryClient();
     const space = useQuery(spaceQuery(account));
     const project = useQuery(spaceProjectQuery(account, id));
+    const tasks = useQuery(taskListQuery(account));
+    const taskEnabled = tasks.isSuccess;
+    const legacyEnabled = tasksUnavailable(tasks.error);
+
     const navigate = useNavigate();
     const deletionKey = JSON.stringify(['bento:project-delete', account, id]);
     const [confirmProject, setConfirmProject] = useState(false);
@@ -561,6 +571,20 @@ function CloudProject({ account, id }: { account: string; id: string }) {
         },
         onSettled: refresh,
     });
+    const snapshotTask = useMutation({
+        mutationFn: ({ name, fileIds }: { name: string; fileIds: string[] }) =>
+            createTask(account, name, {
+                kind: 'space_snapshot',
+                spaceId: id,
+                fileIds,
+            }),
+        async onSuccess(task) {
+            await client.invalidateQueries({
+                queryKey: taskListQuery(account).queryKey,
+            });
+            await navigate(taskUrl(task.id));
+        },
+    });
     if (serverDeleting || projectAccepted || (missing && confirmedProject)) {
         return (
             <main className="mx-auto max-w-4xl space-y-5 px-5 py-10">
@@ -606,8 +630,10 @@ function CloudProject({ account, id }: { account: string; id: string }) {
             ? message(remove.error)
             : '暂未确认删除结果，请刷新后重试。');
     const selectable =
-        execution.state === 'uninitialized' ||
-        (execution.state === 'failed' && !execution.projectId);
+        taskEnabled ||
+        (legacyEnabled &&
+            (execution.state === 'uninitialized' ||
+                (execution.state === 'failed' && !execution.projectId)));
     const tree = savedFileTree(uploads);
     const pendingUploads = uploads.filter(
         (file): file is Upload & { state: Exclude<Upload['state'], 'saved'> } =>
@@ -886,9 +912,11 @@ function CloudProject({ account, id }: { account: string; id: string }) {
             </form>
             <section className="space-y-3 rounded-xl border border-zinc-200 p-5">
                 <h2 className="font-semibold">文件与执行范围</h2>
-                <p role="status" className="text-sm text-zinc-600">
-                    {executionLabels[execution.state]}
-                </p>
+                {legacyEnabled && (
+                    <p role="status" className="text-sm text-zinc-600">
+                        {executionLabels[execution.state]}
+                    </p>
+                )}
                 {(tree.directories.size > 0 || tree.files.length > 0) &&
                     renderSavedFiles(tree, '已保存文件')}
                 <ul className="divide-y divide-zinc-200">
@@ -972,15 +1000,26 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                         disabled={
                             !executionFiles.length ||
                             init.isPending ||
+                            snapshotTask.isPending ||
                             remove.isPending
                         }
-                        onClick={() => init.mutate(executionFiles)}
+                        onClick={() =>
+                            taskEnabled
+                                ? snapshotTask.mutate({
+                                      name,
+                                      fileIds: executionFiles,
+                                  })
+                                : init.mutate(executionFiles)
+                        }
                     >
-                        准备执行文件
+                        {taskEnabled ? '从所选文件新建任务' : '准备执行文件'}
                     </Button>
                 )}
                 {cancel.error && <Notice message={message(cancel.error)} />}
                 {init.error && <Notice message={message(init.error)} />}
+                {snapshotTask.error && (
+                    <Notice message={message(snapshotTask.error)} />
+                )}
                 {execution.issues?.map((issue, index) => (
                     <Notice
                         key={index}

@@ -21,6 +21,7 @@ import {
     Register,
     RunDetails,
     TaskList,
+    TaskDetails,
     Workspace,
     Workbench,
 } from './pages';
@@ -117,6 +118,11 @@ const router = createBrowserRouter([
             { path: '/workspaces/:workspaceId', Component: Workspace },
             { path: '/space/:spaceId', Component: CloudProjectRoute },
             { path: '/runs', Component: TaskList },
+            {
+                path: '/tasks/:taskId',
+                Component: TaskDetails,
+                ErrorBoundary: RouteError,
+            },
             { path: '/account', Component: AccountSettings },
             {
                 path: '/runs/:runId',

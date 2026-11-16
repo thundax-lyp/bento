@@ -30,6 +30,8 @@ export class ApiError extends Error {
     constructor(
         readonly status: number,
         message: string,
+        readonly code?: string,
+        readonly reason?: string,
     ) {
         super(message);
     }
@@ -45,12 +47,14 @@ export function isUnavailableRun(error: unknown): boolean {
 export async function request(path: string, init?: RequestInit) {
     const response = await fetch(path, { credentials: 'same-origin', ...init });
     if (!response.ok) {
-        const body: { error?: { message?: string } } | null = await response
-            .json()
-            .catch(() => null);
+        const body: {
+            error?: { message?: string; code?: string; reason?: string };
+        } | null = await response.json().catch(() => null);
         throw new ApiError(
             response.status,
             body?.error?.message ?? '请求失败，请稍后重试。',
+            body?.error?.code,
+            body?.error?.reason,
         );
     }
     return response;
@@ -168,4 +172,241 @@ export const diffQuery = (account: string, project: string, run: string) =>
         refetchOnReconnect: 'always',
         queryFn: async ({ signal }) =>
             (await request(runApi(project, run) + '/diff', { signal })).text(),
+    });
+
+export type Task = {
+    id: string;
+    name: string;
+    sourceSpaceId: string | null;
+    inputDigest: string;
+    environmentVersion: string;
+    status: 'preparing' | 'ready' | 'failed' | 'deleting';
+    prepareError: string | null;
+    closedReason: string | null;
+    reconciliation: {
+        attemptId: string;
+        state: 'blocked';
+        reason: 'restore_conflict';
+    } | null;
+    inputs: { fileId: string; path: string; bytes: number; sha256: string }[];
+    createdAt: string;
+    updatedAt: string;
+};
+export type TaskRun = {
+    id: string;
+    taskId: string;
+    sequence: number;
+    prompt: string;
+    status: Run['status'];
+    retryOf: string | null;
+    canContinue: boolean;
+    canCancel: boolean;
+    retryReason: string | null;
+    resultVersion: number | null;
+    summary: string | null;
+    createdAt: string;
+    updatedAt: string;
+};
+export type TaskCheck = {
+    name: string;
+    status: 'passed' | 'failed' | 'not_run' | 'unavailable';
+    output: string | null;
+};
+export type TaskEvent = {
+    id: string;
+    sequence: number;
+    runId: string;
+    at: string;
+    kind: 'user_message' | 'agent_reply' | 'step' | 'command' | 'check';
+    text: string;
+    check: TaskCheck | null;
+};
+export type TaskResult = {
+    runId: string;
+    version: number;
+    summary: string;
+    checks: TaskCheck[];
+    incrementalSha256: string;
+    cumulativeSha256: string;
+    createdAt: string;
+};
+type TaskSource =
+    | { kind: 'blank' }
+    | { kind: 'space_snapshot'; spaceId: string; fileIds: string[] };
+type TaskRetry = {
+    id: string;
+    runId: string;
+    state: 'preparing' | 'queued' | 'blocked' | 'closed';
+};
+
+export const taskUrl = (taskId: string, runId?: string) =>
+    '/tasks/' +
+    encodeURIComponent(taskId) +
+    (runId ? '?' + new URLSearchParams({ run: runId }) : '');
+export const taskApi = (taskId: string) => '/api' + taskUrl(taskId);
+const taskRunApi = (taskId: string, runId: string) =>
+    taskApi(taskId) + '/runs/' + encodeURIComponent(runId);
+
+export const taskListQuery = (account: string) =>
+    queryOptions({
+        queryKey: ['account', account, 'tasks'],
+        queryFn: async ({ signal }) =>
+            (await json<{ items: Task[] }>('/api/tasks', { signal })).items,
+    });
+export const taskDetailsQuery = (account: string, id: string) =>
+    queryOptions({
+        queryKey: ['account', account, 'task', id],
+        queryFn: async ({ signal }) =>
+            (await json<{ task: Task }>(taskApi(id), { signal })).task,
+        refetchInterval: 1000,
+    });
+export const taskRunsQuery = (account: string, id: string) =>
+    queryOptions({
+        queryKey: ['account', account, 'task-runs', id],
+        queryFn: async ({ signal }) =>
+            (
+                await json<{ items: TaskRun[] }>(taskApi(id) + '/runs', {
+                    signal,
+                })
+            ).items,
+        refetchInterval: 1000,
+    });
+export const taskEventsQuery = (account: string, id: string) =>
+    queryOptions({
+        queryKey: ['account', account, 'task-events', id],
+        queryFn: async ({ signal, client, queryKey }) => {
+            const prior = client.getQueryData<TaskEvent[]>(queryKey) ?? [];
+            const after = prior.at(-1)?.sequence ?? 0;
+            const incoming = (
+                await json<{ items: TaskEvent[] }>(
+                    taskApi(id) + '/events?after=' + after,
+                    { signal },
+                )
+            ).items;
+            const events = new Map(prior.map((event) => [event.id, event]));
+            for (const event of incoming)
+                if (!events.has(event.id)) events.set(event.id, event);
+            return [...events.values()].sort((a, b) => a.sequence - b.sequence);
+        },
+        refetchInterval: 1000,
+    });
+
+export const taskResultQuery = (
+    account: string,
+    taskId: string,
+    runId: string,
+    version: number | null,
+) =>
+    queryOptions({
+        queryKey: ['account', account, 'task-result', taskId, runId, version],
+        queryFn: async ({ signal }) =>
+            (
+                await json<{ result: TaskResult }>(
+                    taskRunApi(taskId, runId) + '/results',
+                    { signal },
+                )
+            ).result,
+        enabled: !!version,
+    });
+export type DiffView = 'incremental' | 'cumulative';
+export const taskDiffUrl = (
+    taskId: string,
+    runId: string,
+    version: number,
+    view: DiffView,
+    download = false,
+) =>
+    taskRunApi(taskId, runId) +
+    '/results/' +
+    version +
+    '/diff?' +
+    new URLSearchParams({ view, ...(download ? { download: '1' } : {}) });
+
+export const tasksUnavailable = (error: unknown) =>
+    error instanceof ApiError &&
+    error.status === 503 &&
+    error.code === 'tasks_unavailable';
+
+async function taskMutation<T>(
+    account: string,
+    kind: string,
+    scope: string,
+    path: string,
+    body?: unknown,
+) {
+    const digest = await crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(JSON.stringify(body ?? null)),
+    );
+    const signature = Array.from(new Uint8Array(digest), (byte) =>
+        byte.toString(16).padStart(2, '0'),
+    ).join('');
+    const storageKey = JSON.stringify([
+        'bento:task-mutation',
+        account,
+        kind,
+        scope,
+        signature,
+    ]);
+    const key = sessionStorage.getItem(storageKey) ?? crypto.randomUUID();
+    sessionStorage.setItem(storageKey, key);
+    try {
+        const result =
+            body === undefined
+                ? await json<T>(path, {
+                      method: 'POST',
+                      headers: { 'Idempotency-Key': key },
+                      signal: AbortSignal.timeout(15_000),
+                  })
+                : await post<T>(path, body, key);
+        sessionStorage.removeItem(storageKey);
+        return result;
+    } catch (error) {
+        if (
+            error instanceof ApiError &&
+            error.status >= 400 &&
+            error.status < 500
+        )
+            sessionStorage.removeItem(storageKey);
+        throw error;
+    }
+}
+
+export const createTask = (
+    account: string,
+    name: string,
+    source: TaskSource,
+) => {
+    const normalized =
+        source.kind === 'space_snapshot'
+            ? { ...source, fileIds: [...source.fileIds].sort() }
+            : source;
+    return taskMutation<{ task: Task }>(
+        account,
+        'create',
+        source.kind === 'blank' ? 'blank' : source.spaceId,
+        '/api/tasks',
+        { name: name.trim(), source: normalized },
+    ).then((result) => result.task);
+};
+export const createTaskRun = (account: string, id: string, prompt: string) =>
+    taskMutation<{ run: TaskRun }>(
+        account,
+        'continue',
+        id,
+        taskApi(id) + '/runs',
+        { prompt: prompt.trim() },
+    ).then((result) => result.run);
+export const retryTaskRun = (account: string, id: string, runId: string) =>
+    taskMutation<{ retry: TaskRetry }>(
+        account,
+        'retry',
+        id + ':' + runId,
+        taskRunApi(id, runId) + '/retry',
+    ).then((result) => result.retry);
+export const prepareTask = (id: string) =>
+    json<{ task: Task }>(taskApi(id) + '/prepare', { method: 'POST' });
+export const cancelTaskRun = (id: string, runId: string) =>
+    json<{ run: TaskRun }>(taskRunApi(id, runId) + '/cancel', {
+        method: 'POST',
     });
