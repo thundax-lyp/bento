@@ -4401,20 +4401,26 @@ test(
     'Task operation reconciliation stays conservative across four controller crash boundaries',
     { timeout: 30_000 },
     async (t) => {
-        for (const fault of [
-            'before-write',
-            'before-receipt',
-            'before-authority',
-            'after-authority',
-        ]) {
-            await t.test(fault, async (t) => {
+        for (const [fault, decision] of [
+            ['before-write', 'failed'],
+            ['before-receipt', 'failed'],
+            ['before-receipt', 'unconfirmed'],
+            ['before-authority', 'failed'],
+            ['after-authority', 'failed'],
+        ] as const) {
+            const label =
+                decision === 'unconfirmed' ? fault + ' unconfirmed' : fault;
+            await t.test(label, async (t) => {
                 const state = await mkdtemp(
                     join(tmpdir(), 'bento-task-crash-'),
                 );
                 const child = spawn(
                     process.execPath,
                     [
-                        ...process.execArgv,
+                        ...process.execArgv.filter(
+                            (arg) => !arg.startsWith('--test-name-pattern='),
+                        ),
+                        '--test-name-pattern=^$',
                         testFile,
                         '--task-crash-controller',
                         state,
@@ -4618,29 +4624,122 @@ test(
                     );
                 }
                 if (fault === 'before-receipt') {
-                    await service.closeTaskRun({
-                        runId,
-                        decision: 'failed',
-                        expectedGeneration: 3,
-                    });
+                    const blocked = await call('/account/purge', 'POST');
+                    assert.equal(blocked.status, 202);
+                    assert.equal(blocked.body.complete, false);
+                    assert.equal(
+                        (await call(runPath)).body.run.status,
+                        'needs_review',
+                    );
+                    assert.equal(
+                        (await host.snapshot(binding))[0]?.text,
+                        'append once\n',
+                    );
+                    assert.equal(service.readTaskClosure(runId), null);
+
+                    const closure = { runId, decision, expectedGeneration: 3 };
+                    await service.closeTaskRun(closure);
                     const closedRun = await call(runPath);
                     assert.equal(closedRun.body.run.status, 'failed');
+                    if (decision === 'failed') {
+                        assert.equal(
+                            closedRun.body.run.retryReason,
+                            'stop_unconfirmed',
+                        );
+                    } else {
+                        assert.equal(
+                            (await call(path)).body.task.closedReason,
+                            'unconfirmed',
+                        );
+                        assert.equal(
+                            (
+                                await call(
+                                    path + '/runs',
+                                    'POST',
+                                    { prompt: 'new write' },
+                                    randomUUID(),
+                                )
+                            ).status,
+                            409,
+                        );
+                    }
+                    const audit = service.readTaskClosure(runId);
+                    assert.ok(audit);
+                    assert.equal(audit.runId, runId);
+                    assert.equal(audit.decision, decision);
                     assert.equal(
-                        closedRun.body.run.retryReason,
-                        'stop_unconfirmed',
+                        audit.authorityGeneration,
+                        closure.expectedGeneration,
+                    );
+                    assert.match(audit.stopDigest as string, /^[a-f0-9]{64}$/);
+                    assert.ok(
+                        Number.isFinite(Date.parse(audit.closedAt as string)),
+                    );
+
+                    await service.closeTaskRun(closure);
+                    assert.deepEqual(service.readTaskClosure(runId), audit);
+                    await assert.rejects(
+                        service.closeTaskRun({
+                            ...closure,
+                            decision:
+                                decision === 'failed'
+                                    ? 'unconfirmed'
+                                    : 'failed',
+                        }),
+                        { code: 'review_unavailable' },
+                    );
+                    await assert.rejects(
+                        service.closeTaskRun({
+                            ...closure,
+                            expectedGeneration: 4,
+                        }),
+                        { code: 'review_unavailable' },
+                    );
+
+                    await service.close();
+                    assert.equal(controllers.pop(), service);
+                    const reopened = await start(
+                        state,
+                        localHost(join(state, 'volume')),
+                    );
+                    controllers.push(reopened);
+                    root = reopened.url;
+                    assert.deepEqual(reopened.readTaskClosure(runId), audit);
+                    const purged = await call('/account/purge', 'POST');
+                    assert.equal(purged.status, 200);
+                    assert.equal(purged.body.complete, true);
+                    assert.equal((await call(path)).status, 404);
+                    assert.equal((await call(runPath)).status, 404);
+                    await assert.rejects(
+                        readdir(join(state, 'volume', binding.project)),
+                        { code: 'ENOENT' },
                     );
                     assert.equal(
-                        service.readTaskClosure(runId)?.decision,
-                        'failed',
+                        authority
+                            .prepare(
+                                'SELECT 1 FROM execution_sessions WHERE session=?',
+                            )
+                            .get(binding.session),
+                        undefined,
                     );
-                    assert.equal(
-                        (await call('/account/purge', 'POST')).body.complete,
-                        true,
+                    const history = new DatabaseSync(
+                        join(state, 'history.sqlite'),
+                        { readOnly: true },
                     );
-                    assert.equal(
-                        service.readTaskClosure(runId)?.decision,
-                        'failed',
-                    );
+                    try {
+                        assert.equal(
+                            history
+                                .prepare('SELECT 1 FROM sessions WHERE id=?')
+                                .get(binding.session),
+                            undefined,
+                        );
+                    } finally {
+                        history.close();
+                    }
+                    assert.deepEqual(reopened.readTaskClosure(runId), audit);
+                    const replay = await call('/account/purge', 'POST');
+                    assert.equal(replay.status, 200);
+                    assert.equal(replay.body.complete, true);
                 }
                 if (fault === 'before-authority') {
                     const key = randomUUID();
