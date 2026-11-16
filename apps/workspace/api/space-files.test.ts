@@ -3014,8 +3014,24 @@ test(
             objects.delete(key);
         };
         storage.download = async (key) => 'https://fixture.invalid/' + key;
+        const checkingFile = randomUUID();
+        let announceChecking = () => {};
+        let releaseChecking = () => {};
+        const checking = new Promise<void>((resolve) => {
+            announceChecking = resolve;
+        });
+        const held = new Promise<void>((resolve) => {
+            releaseChecking = resolve;
+        });
         let loseCreate = true;
         const backend: typeof real = async (ownerId, operation) => {
+            if (
+                operation.kind === 'acquireTaskInputDeleteHold' &&
+                operation.fileId === checkingFile
+            ) {
+                announceChecking();
+                await held;
+            }
             const received = await real(ownerId, operation);
             if (
                 operation.kind === 'createTask' &&
@@ -3044,6 +3060,7 @@ test(
         let web = await makeWeb();
         t.after(async () => {
             release();
+            releaseChecking();
             await web.close();
             await execution.close();
             await rm(state, { recursive: true, force: true });
@@ -3114,7 +3131,29 @@ test(
         seed(selected, 'README.md', Buffer.from('frozen\n'));
         seed(unrelated, 'unrelated.txt', Buffer.from('unrelated'));
         seed(invalid, 'invalid.txt', Buffer.from([0xff]));
+        seed(checkingFile, 'checking.txt', Buffer.from('deletion in progress'));
         db.close();
+        const deleting = call('/api/space/files/' + checkingFile, 'DELETE');
+        await checking;
+        const legacy = await call(
+            '/api/space/projects/' + sourceId + '/execution',
+            'POST',
+            { fileIds: [checkingFile] },
+            randomUUID(),
+        );
+        assert.equal(legacy.status, 404, legacy.text);
+        const inspecting = new DatabaseSync(dbPath);
+        assert.equal(
+            inspecting
+                .prepare(
+                    'SELECT count(*) AS count FROM space_execution WHERE spaceId=?',
+                )
+                .get(sourceId)?.count,
+            0,
+        );
+        inspecting.close();
+        releaseChecking();
+        assert.equal((await deleting).status, 202);
 
         const source = {
             kind: 'space_snapshot',

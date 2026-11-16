@@ -166,8 +166,6 @@ export function spaceExecution(
     }
 
     function start(owner: string, spaceId: string, key: string, body: unknown) {
-        project(owner, spaceId);
-        requireWritableProject(owner, spaceId);
         const { fileIds } = object(body);
         if (
             !Array.isArray(fileIds) ||
@@ -187,62 +185,74 @@ export function spaceExecution(
                 '执行输入最多 100 个文件。',
             );
         const sorted = (fileIds as string[]).slice().sort();
-        const prior = db
-            .prepare(
-                'SELECT * FROM space_execution WHERE spaceId = ? AND key = ?',
-            )
-            .get(spaceId, key) as Init | undefined;
-        if (prior) {
-            const previousIds = (JSON.parse(prior.inputs) as Input[]).map(
-                (file) => file.fileId,
-            );
-            if (JSON.stringify(previousIds) !== JSON.stringify(sorted))
+        const result = transaction(() => {
+            project(owner, spaceId);
+            requireWritableProject(owner, spaceId);
+            const prior = db
+                .prepare(
+                    'SELECT * FROM space_execution WHERE spaceId = ? AND key = ?',
+                )
+                .get(spaceId, key) as Init | undefined;
+            if (prior) {
+                const previousIds = (JSON.parse(prior.inputs) as Input[]).map(
+                    (file) => file.fileId,
+                );
+                if (JSON.stringify(previousIds) !== JSON.stringify(sorted))
+                    throw new RequestError(
+                        409,
+                        'idempotency_conflict',
+                        '此提交键已用于其他文件。',
+                    );
+                return {
+                    executionStatus: 200,
+                    execution: view(prior),
+                } as const;
+            }
+            const existing = current(spaceId);
+            if (
+                existing &&
+                (existing.state !== 'failed' || existing.projectId)
+            ) {
                 throw new RequestError(
                     409,
-                    'idempotency_conflict',
-                    '此提交键已用于其他文件。',
+                    'execution_already_bound',
+                    '项目已有工作区或正在初始化，请查看原记录。',
                 );
-            return { executionStatus: 200, execution: view(prior) } as const;
-        }
-        const existing = current(spaceId);
-        if (existing && (existing.state !== 'failed' || existing.projectId)) {
-            throw new RequestError(
-                409,
-                'execution_already_bound',
-                '项目已有工作区或正在初始化，请查看原记录。',
+            }
+            const available = new Map(
+                files(owner, spaceId).map((file) => [file.fileId, file]),
             );
-        }
-        const available = new Map(
-            files(owner, spaceId).map((file) => [file.fileId, file]),
-        );
-        const selected = sorted.map((id) => {
-            const file = available.get(id);
-            if (!file) throw notFound();
-            return file;
-        });
-        if (
-            selected.reduce((sum, file) => sum + file.size, 0) >
-            maxSnapshotBytes
-        )
-            throw new RequestError(
-                413,
-                'execution_input_too_large',
-                '执行输入合计最多 1 MiB。',
-                selected.map(({ fileId, path }) => ({
-                    fileId,
-                    path,
-                    code: 'execution_input_too_large',
-                })),
-            );
-        db.prepare(
-            `
+            const selected = sorted.map((id) => {
+                const file = available.get(id);
+                if (!file || fileDeletionPending(file.fileId)) throw notFound();
+                return file;
+            });
+            if (
+                selected.reduce((sum, file) => sum + file.size, 0) >
+                maxSnapshotBytes
+            )
+                throw new RequestError(
+                    413,
+                    'execution_input_too_large',
+                    '执行输入合计最多 1 MiB。',
+                    selected.map(({ fileId, path }) => ({
+                        fileId,
+                        path,
+                        code: 'execution_input_too_large',
+                    })),
+                );
+            db.prepare(
+                `
             INSERT INTO space_execution (spaceId,owner,key,state,inputs)
             VALUES (?,?,?,'validating',?)
         `,
-        ).run(spaceId, owner, key, JSON.stringify(selected));
-        const execution = view(current(spaceId));
-        wake();
-        return { executionStatus: 202, execution } as const;
+            ).run(spaceId, owner, key, JSON.stringify(selected));
+            const execution = view(current(spaceId));
+
+            return { executionStatus: 202, execution } as const;
+        });
+        if (result.executionStatus === 202) wake();
+        return result;
     }
 
     async function validate(row: Init) {
@@ -356,22 +366,18 @@ export function spaceExecution(
             .get(fileId);
     }
 
+    function fileDeletionPending(fileId: string) {
+        return !!db
+            .prepare('SELECT 1 FROM space_file_deletions WHERE fileId=?')
+            .get(fileId);
+    }
+
     function taskFiles(owner: string, spaceId: string, fileIds: string[]) {
         const available = files(owner, spaceId);
         const selected = fileIds.map((id) =>
             available.find((file) => file.fileId === id),
         );
-        if (
-            selected.some(
-                (file) =>
-                    !file ||
-                    db
-                        .prepare(
-                            'SELECT 1 FROM space_file_deletions WHERE fileId=?',
-                        )
-                        .get(file.fileId),
-            )
-        )
+        if (selected.some((file) => !file || fileDeletionPending(file.fileId)))
             throw notFound();
         const input = selected as Input[];
         if (
