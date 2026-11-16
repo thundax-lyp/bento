@@ -195,6 +195,21 @@ test('built auth pages retain the OIDC login, logout and account closure contrac
     const settings = await checkAsset('/auth', 'account.html', firstCookie);
     assert.match(settings, /method="post" action="\/api\/oidc\/logout"/);
     assert.match(settings, /method="post" action="\/api\/oidc\/close"/);
+    const confirmation = settings.indexOf('name="confirmed"');
+    assert.ok(confirmation >= 0);
+    const beforeConfirmation = settings
+        .slice(0, confirmation)
+        .replace(/\s+/g, ' ');
+    assert.ok(
+        beforeConfirmation.includes(
+            '注销会立即结束此 Bento 账号的所有会话。已提交的任务会继续执行。任务结束、待核对事项结案且未完成上传的签发地址到期后，系统会继续清理。',
+        ),
+    );
+    assert.ok(
+        beforeConfirmation.includes(
+            '项目、工作区、上传文件、任务记录和补丁清理后无法恢复。',
+        ),
+    );
     assert.match(settings, /name="confirmed"\s+value="yes"\s+required/);
     for (const path of ['/api/oidc/close', '/api/oidc/logout']) {
         await status(
