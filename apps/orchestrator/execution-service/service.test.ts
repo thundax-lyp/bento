@@ -5051,7 +5051,7 @@ test(
                         { offset: 0, kind: 'agent_reply', text: '任务结果' },
                         { offset: 1, kind: 'command', text: '确定性检查' },
                         {
-                            offset: 2,
+                            offset: 10,
                             kind: 'check',
                             name: 'fixture check',
                             status: 'passed',
@@ -5060,6 +5060,19 @@ test(
                     ];
                     assert.equal(await project(request, items), 200);
                     assert.equal(await project(request, items), 200);
+                    assert.equal(
+                        await project(request, [
+                            { offset: 2, kind: 'step', text: 'out of order' },
+                            {
+                                offset: 11,
+                                kind: 'step',
+                                text: 'must not commit',
+                            },
+                        ]),
+                        403,
+                    );
+                    assert.equal(await project(request, [items[0]!]), 200);
+
                     assert.equal(
                         await project(request, [
                             {

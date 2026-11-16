@@ -1180,17 +1180,29 @@ export class Store {
                     'SELECT 1 FROM task_projection_ends WHERE runId=? AND generation=?',
                 )
                 .get(runId, generation);
-            for (const { offset, ...value } of events) {
-                const eventId = [runId, generation, offset].join(':');
-                if (
-                    ended &&
-                    !this.db
-                        .prepare(
-                            'SELECT 1 FROM task_events WHERE taskId=? AND eventId=?',
-                        )
-                        .get(taskId, eventId)
+            const prefix = runId + ':' + generation + ':';
+            const previous = this.db
+                .prepare(
+                    `SELECT max(CAST(substr(eventId,?) AS INTEGER)) AS offset
+                 FROM task_events WHERE taskId=? AND runId=? AND substr(eventId,1,?)=?`,
                 )
-                    throw new Error('Task projection already ended.');
+                .get(prefix.length + 1, taskId, runId, prefix.length, prefix);
+            let highWater =
+                typeof previous?.offset === 'number' ? previous.offset : -1;
+            const existing = this.db.prepare(
+                'SELECT 1 FROM task_events WHERE taskId=? AND eventId=?',
+            );
+            for (const { offset, ...value } of events) {
+                const eventId = prefix + offset;
+                if (!existing.get(taskId, eventId)) {
+                    if (ended)
+                        throw new Error('Task projection already ended.');
+                    if (offset <= highWater)
+                        throw new Error(
+                            'Task event offset precedes a confirmed event.',
+                        );
+                    highWater = offset;
+                }
                 this.appendTaskEvent(taskId, runId, eventId, value);
             }
             if (events.length === 0)
