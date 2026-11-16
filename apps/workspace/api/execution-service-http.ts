@@ -1,12 +1,14 @@
 import {
     RequestError,
+    isTaskOperation,
+    taskResponse,
     conflict,
     notFound,
     projectDeletionConflicts,
     object,
     publicJson,
 } from './protocol.ts';
-import type { Backend, Operation } from './protocol.ts';
+import type { Backend, Operation, Result, TaskOperation } from './protocol.ts';
 
 function route(operation: Operation): string {
     if (operation.kind === 'purgeOwner') return '/v1/account/purge';
@@ -73,6 +75,169 @@ function upstreamError(status: number, operation: Operation): RequestError {
     }
 }
 
+function taskForward(operation: TaskOperation) {
+    if (operation.kind === 'drainOwner')
+        return { method: 'POST', path: '/v1/account/drain' };
+    if (operation.kind === 'createTask')
+        return {
+            method: 'POST',
+            path: '/v1/tasks',
+            key: operation.key,
+            body: operation.input,
+        };
+    if (operation.kind === 'taskCreationReceipt')
+        return {
+            method: 'GET',
+            path: '/v1/tasks?creationKey=' + encodeURIComponent(operation.key),
+        };
+    if (operation.kind === 'taskRequest')
+        return {
+            method: operation.method,
+            path:
+                '/v1' +
+                operation.path +
+                (operation.query ? '?' + operation.query : ''),
+            key: operation.key,
+            body:
+                operation.prompt === undefined
+                    ? undefined
+                    : { prompt: operation.prompt },
+        };
+    const params = new URLSearchParams();
+    if (operation.legacyProjectId !== null)
+        params.set('legacyProjectId', operation.legacyProjectId);
+    let path = '/v1/task-sources/' + encodeURIComponent(operation.spaceId);
+    if (operation.kind === 'taskSourceDeletion') {
+        params.set('phase', operation.phase);
+        return {
+            method: 'DELETE',
+            path: path + '?' + params.toString(),
+            key: operation.operationId,
+        };
+    }
+    const query = params.size ? '?' + params.toString() : '';
+    if (operation.kind === 'taskSourceImpact')
+        return { method: 'GET', path: path + '/deletion' + query };
+    path +=
+        '/files/' +
+        encodeURIComponent(operation.fileId) +
+        '/deletion-holds/' +
+        encodeURIComponent(operation.operationId);
+    return {
+        method:
+            operation.kind === 'acquireTaskInputDeleteHold' ? 'POST' : 'DELETE',
+        path: path + query,
+    };
+}
+
+async function forwardTask(
+    origin: string,
+    operation: TaskOperation,
+    headers: Headers,
+    signal: AbortSignal,
+): Promise<Result> {
+    const { method, path, key, body } = taskForward(operation);
+    if (key) headers.set('Idempotency-Key', key);
+    if (body !== undefined) headers.set('Content-Type', 'application/json');
+    const response = await fetch(origin + path, {
+        method,
+        headers,
+        redirect: 'error',
+        signal,
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const { status } = response;
+    const type = response.headers
+        .get('content-type')
+        ?.split(';')[0]
+        ?.trim()
+        .toLowerCase();
+    if (!response.ok) {
+        if (status === 404) {
+            await response.body?.cancel();
+            throw notFound();
+        }
+        if (type === 'application/json' && (status === 400 || status === 409)) {
+            const { code, reason } = object(
+                object(await response.json()).error,
+            );
+            const accepted =
+                status === 400
+                    ? ['invalid_input', 'invalid_key']
+                    : [
+                          'idempotency_conflict',
+                          'task_not_ready',
+                          'task_busy',
+                          'run_not_cancellable',
+                          'run_not_retryable',
+                          'diff_unavailable',
+                          'project_busy',
+                          'project_importing',
+                          'owner_closed',
+                          'deletion_released',
+                          'deletion_not_held',
+                          'deletion_committed',
+                      ];
+            if (typeof code === 'string' && accepted.includes(code))
+                throw new RequestError(
+                    status,
+                    code,
+                    '当前请求无法执行。',
+                    undefined,
+                    code === 'run_not_retryable' &&
+                        typeof reason === 'string' &&
+                        [
+                            'task_closed',
+                            'not_latest',
+                            'not_terminal',
+                            'needs_review',
+                            'stop_unconfirmed',
+                            'checkpoint_unavailable',
+                            'environment_unavailable',
+                            'task_busy',
+                            'task_not_ready',
+                        ].includes(reason)
+                        ? reason
+                        : undefined,
+                );
+            throw new Error('Unexpected Task error code');
+        }
+        await response.body?.cancel();
+        throw upstreamError(status, operation);
+    }
+    if (
+        status === 204 &&
+        (operation.kind === 'drainOwner' ||
+            operation.kind === 'taskSourceDeletion')
+    )
+        return { status };
+    if (operation.kind === 'taskRequest' && operation.action === 'taskDiff') {
+        if (status !== 200 || type !== 'text/plain')
+            throw new Error('Invalid Task diff');
+        return {
+            status,
+            diff: new TextDecoder('utf-8', {
+                fatal: true,
+                ignoreBOM: true,
+            }).decode(await response.arrayBuffer()),
+        };
+    }
+    const accepts202 =
+        operation.kind === 'createTask' ||
+        operation.kind === 'taskSourceDeletion' ||
+        (operation.kind === 'taskRequest' &&
+            (operation.action === 'createTaskRun' ||
+                operation.action === 'retryTaskRun'));
+    if (
+        type !== 'application/json' ||
+        (status !== 200 && !(accepts202 && status === 202))
+    ) {
+        await response.body?.cancel();
+        throw new Error('Invalid Task response');
+    }
+    return { status, json: taskResponse(operation, await response.json()) };
+}
+
 export function httpBackend(
     origin: string,
     bearer: string,
@@ -99,6 +264,8 @@ export function httpBackend(
 
         const signal = AbortSignal.timeout(timeoutMs);
         try {
+            if (isTaskOperation(operation))
+                return await forwardTask(origin, operation, headers, signal);
             const response = await fetch(origin + route(operation), {
                 method:
                     operation.kind === 'releaseFileDeleteHold' ||
@@ -196,7 +363,7 @@ export function httpBackend(
             if (error instanceof RequestError) {
                 throw error;
             }
-            if (signal.aborted) {
+            if (signal.aborted && !isTaskOperation(operation)) {
                 throw new RequestError(
                     504,
                     'backend_timeout',

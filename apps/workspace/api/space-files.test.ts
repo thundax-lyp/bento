@@ -171,9 +171,9 @@ test('file deletion retains quota until storage and execution cleanup are confir
     const release: string[] = [];
     const fallback = mockBackend();
     const spaceBackend: typeof fallback = async (caller, operation) => {
-        if (operation.kind === 'acquireFileDeleteHold') {
+        if (operation.kind === 'acquireTaskInputDeleteHold') {
             assert.equal(caller, owner);
-            assert.equal(operation.projectId, executionProjectId);
+            assert.equal(operation.legacyProjectId, executionProjectId);
             acquire.push(operation.operationId);
             if (acquire.length === 1)
                 return { status: 200, json: { state: 'denied' } };
@@ -181,9 +181,9 @@ test('file deletion retains quota until storage and execution cleanup are confir
                 throw new Error('Fixture lost acquisition receipt');
             return { status: 200, json: { state: 'held' } };
         }
-        if (operation.kind === 'releaseFileDeleteHold') {
+        if (operation.kind === 'releaseTaskInputDeleteHold') {
             assert.equal(caller, owner);
-            assert.equal(operation.projectId, executionProjectId);
+            assert.equal(operation.legacyProjectId, executionProjectId);
             release.push(operation.operationId);
             if (release.length === 1)
                 throw new Error('Fixture lost release receipt');
@@ -399,15 +399,20 @@ test('project deletion space retains frozen progress and retires object IDs glob
         operation,
     ) => {
         assert.equal(caller, owner);
-        if (operation.kind === 'projectDeletionImpact') {
-            assert.equal(operation.projectId, binding);
+        if (operation.kind === 'taskSourceImpact') {
+            assert.equal(operation.spaceId, target);
             return {
                 status: 200,
-                json: { runCount: 2, diffCount: 1, blockers: [] },
+                json: {
+                    runCount: operation.legacyProjectId === binding ? 2 : 0,
+                    diffCount: operation.legacyProjectId === binding ? 1 : 0,
+                    blockers: [],
+                },
             };
         }
-        assert.equal(operation.kind, 'advanceProjectDeletion');
-        assert.equal(operation.projectId, binding);
+        assert.equal(operation.kind, 'taskSourceDeletion');
+        assert.equal(operation.legacyProjectId, binding);
+        if (operation.phase === 'release') return { status: 204 };
         operations.push(operation.operationId);
         if (deny)
             throw new RequestError(409, 'project_busy', 'fixture rejection');
@@ -2959,5 +2964,290 @@ test(
         } finally {
             await f.dispose();
         }
+    },
+);
+
+test(
+    'Task snapshot replay and file holds survive personal API restart',
+    { timeout: 25_000 },
+    async (t) => {
+        t.mock.timers.enable({ apis: ['setInterval'] });
+        const state = await mkdtemp(join(tmpdir(), 'bento-task-space-'));
+        const dbPath = join(state, 'space.sqlite');
+        const origin = 'http://127.0.0.1:31811';
+        const token = 'fixture-only-task-space-bearer';
+        const owner = { ownerId: 'owner-a', account: 'a', inviteSha256: '' };
+        const auth = sessionAuth(mockAccounts([owner]), false);
+        const cookie = auth
+            .startSession(
+                { headers: {} } as Parameters<typeof auth.startSession>[0],
+                owner,
+            )
+            .cookie.split(';')[0]!;
+        const base = localHost(join(state, 'volume'));
+        let release = () => {};
+        const wait = new Promise<void>((resolve) => {
+            release = resolve;
+        });
+        const execution = await serveExecution({
+            state: join(state, 'execution'),
+            token,
+            retryMs: 20,
+            host: {
+                ...base,
+                async worker(request, signal, slot, exit) {
+                    if (request.prompt === 'pause') await wait;
+                    return base.worker(request, signal, slot, exit);
+                },
+            },
+        });
+        const real = httpBackend(execution.url, token, 3000);
+        const storage = spaceStorage(
+            'http://127.0.0.1:1',
+            'fixture',
+            'us-east-1',
+        );
+        const objects = new Map<string, Buffer>();
+        storage.read = async (key) => Buffer.from(objects.get(key)!);
+        storage.size = async (key) => objects.get(key)?.length ?? null;
+        storage.remove = async (key) => {
+            objects.delete(key);
+        };
+        storage.download = async (key) => 'https://fixture.invalid/' + key;
+        let loseCreate = true;
+        const backend: typeof real = async (ownerId, operation) => {
+            const received = await real(ownerId, operation);
+            if (
+                operation.kind === 'createTask' &&
+                operation.input.sourceSpaceId !== null &&
+                loseCreate
+            ) {
+                loseCreate = false;
+                throw new RequestError(
+                    502,
+                    'backend_error',
+                    'fixture lost receipt',
+                );
+            }
+            return received;
+        };
+        const makeWeb = (withSpace = true) =>
+            taskEntryServer({
+                port: 0,
+                origin,
+                auth,
+                backend,
+                ...(withSpace
+                    ? { space: mySpace(dbPath, storage, backend) }
+                    : {}),
+            });
+        let web = await makeWeb();
+        t.after(async () => {
+            release();
+            await web.close();
+            await execution.close();
+            await rm(state, { recursive: true, force: true });
+        });
+        async function call(
+            path: string,
+            method = 'GET',
+            body?: unknown,
+            key?: string,
+        ) {
+            const response = await fetch(web.origin + path, {
+                method,
+                headers: {
+                    Cookie: cookie,
+                    Origin: origin,
+                    ...(key ? { 'Idempotency-Key': key } : {}),
+                    ...(body === undefined
+                        ? {}
+                        : { 'Content-Type': 'application/json' }),
+                },
+                ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+                redirect: 'manual',
+                signal: AbortSignal.timeout(5000),
+            });
+            const text = await response.text();
+            return {
+                status: response.status,
+                text,
+                json: () => JSON.parse(text),
+            };
+        }
+        async function until<T>(
+            operation: () => Promise<T>,
+            ok: (value: T) => boolean,
+        ) {
+            for (let i = 0; i < 400; i++) {
+                const v = await operation();
+                if (ok(v)) return v;
+                await delay(25);
+            }
+            throw new Error('Task API fixture did not settle');
+        }
+        const sourceId = randomUUID();
+        const selected = randomUUID();
+        const unrelated = randomUUID();
+        const invalid = randomUUID();
+        const db = new DatabaseSync(dbPath);
+        db.prepare("INSERT INTO space_projects VALUES (?,?,'Source')").run(
+            sourceId,
+            owner.ownerId,
+        );
+        function seed(id: string, path: string, bytes: Buffer) {
+            objects.set(spaceObjectKey(id), bytes);
+            db.prepare(
+                "INSERT INTO space_uploads(id,project,owner,path,size,manifest,state,expires) VALUES (?,?,?,?,?,?,'saved',?)",
+            ).run(
+                id,
+                sourceId,
+                owner.ownerId,
+                path,
+                bytes.length,
+                JSON.stringify([
+                    createHash('sha256').update(bytes).digest('base64'),
+                ]),
+                Date.now() + 60000,
+            );
+        }
+        seed(selected, 'README.md', Buffer.from('frozen\n'));
+        seed(unrelated, 'unrelated.txt', Buffer.from('unrelated'));
+        seed(invalid, 'invalid.txt', Buffer.from([0xff]));
+        db.close();
+
+        const source = {
+            kind: 'space_snapshot',
+            spaceId: sourceId,
+            fileIds: [selected],
+        };
+        const input = { name: 'Snapshot', source };
+        const key = randomUUID();
+        const failed = await call(
+            '/api/tasks',
+            'POST',
+            { name: 'Invalid', source: { ...source, fileIds: [invalid] } },
+            randomUUID(),
+        );
+        assert.equal(failed.status, 400, failed.text);
+        assert.equal((await call('/api/tasks')).json().items.length, 0);
+        assert.equal(
+            (await call('/api/tasks', 'POST', input, key)).status,
+            502,
+        );
+        await web.close();
+        web = await makeWeb();
+        const recovered = await call('/api/tasks', 'POST', input, key);
+        assert.equal(recovered.status, 200, recovered.text);
+        const taskId = recovered.json().task.id;
+        assert.equal((await call('/api/tasks')).json().items.length, 1);
+        assert.equal(
+            (
+                await call(
+                    '/api/tasks',
+                    'POST',
+                    { ...input, name: 'Changed' },
+                    key,
+                )
+            ).status,
+            409,
+        );
+        const task = '/api/tasks/' + taskId;
+        await until(
+            async () => call('/api/tasks', 'POST', input, key),
+            (r) => r.json().task.status === 'ready',
+        );
+        const runKey = randomUUID();
+        const run = await call(
+            task + '/runs',
+            'POST',
+            { prompt: 'pause' },
+            runKey,
+        );
+        assert.equal(run.status, 202, run.text);
+        const runId = run.json().run.id;
+        assert.equal(
+            (
+                await call(task + '/runs', 'POST', { prompt: 'pause' }, runKey)
+            ).json().run.id,
+            runId,
+        );
+        const inputFile = '/api/space/files/' + selected;
+        assert.equal((await call(inputFile, 'DELETE')).status, 409);
+        assert.equal((await call(inputFile + '/download')).status, 302);
+        release();
+        await until(
+            () => call(task + '/runs/' + runId),
+            (r) => r.json().run.status === 'succeeded',
+        );
+        assert.equal((await call(inputFile, 'DELETE')).status, 202);
+        assert.equal(
+            (
+                await call(
+                    task + '/runs',
+                    'POST',
+                    { prompt: 'later' },
+                    randomUUID(),
+                )
+            ).status,
+            409,
+        );
+        const unrelatedFile = '/api/space/files/' + unrelated;
+        assert.equal((await call(unrelatedFile, 'DELETE')).status, 202);
+        await web.close();
+        web = await makeWeb();
+        t.mock.timers.tick(30_000);
+        await until(
+            () => call(unrelatedFile, 'DELETE'),
+            (r) => r.status === 204,
+        );
+        await until(
+            () => call(inputFile, 'DELETE'),
+            (r) => r.status === 204,
+        );
+        const followup = await call(
+            task + '/runs',
+            'POST',
+            { prompt: 'later' },
+            randomUUID(),
+        );
+        assert.equal(followup.status, 202, followup.text);
+        await until(
+            () => call(task + '/runs/' + followup.json().run.id),
+            (r) => r.json().run.status === 'succeeded',
+        );
+        const events = (await call(task + '/events?after=0')).json().items;
+        assert.equal(events.length, 2);
+        assert(events.every((event: object) => !('key' in event)));
+        assert.equal(
+            (
+                await call(
+                    task + '/runs/' + runId + '/results/1/diff?view=cumulative',
+                )
+            ).status,
+            200,
+        );
+
+        await web.close();
+        web = await makeWeb(false);
+        const missingSpace = await call(
+            '/api/tasks',
+            'POST',
+            input,
+            randomUUID(),
+        );
+        assert.equal(missingSpace.status, 503);
+        assert.equal(missingSpace.json().error.code, 'source_unavailable');
+        const blank = await call(
+            '/api/tasks',
+            'POST',
+            { name: 'Blank', source: { kind: 'blank' } },
+            randomUUID(),
+        );
+        assert.equal(blank.status, 202, blank.text);
+        assert.equal((await call('/api/tasks')).json().items.length, 2);
+        assert.equal((await call(task)).json().task.id, taskId);
+        assert.equal((await call(task + '/events')).json().items.length, 2);
+        assert.equal((await call(task + '/runs')).json().items.length, 2);
     },
 );

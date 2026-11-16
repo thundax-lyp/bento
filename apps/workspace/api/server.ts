@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Server } from 'node:http';
 import { Server as TcpServer } from 'node:net';
 import { Context } from '@deepseek-ai/cordis';
@@ -7,6 +8,7 @@ import type { keycloakAuth } from './oidc.ts';
 import type { sessionAuth } from './auth.ts';
 import {
     notFound,
+    parseTaskRequest,
     projectInput,
     RequestError,
     resourceId,
@@ -182,9 +184,17 @@ export async function taskEntryServer({
                 spaceRequired,
             } of await auth.pendingPurges()) {
                 if (closing) return;
-                if (space && !space.drain(owner)) continue;
+                space?.drain(owner);
                 if (inFlight.has(owner)) continue;
                 try {
+                    const drained = await backend(owner, {
+                        kind: 'drainOwner',
+                    });
+                    if (
+                        drained.status !== 204 ||
+                        (space && !space.drain(owner, true))
+                    )
+                        continue;
                     const result = await backend(owner, { kind: 'purgeOwner' });
                     if (
                         !('json' in result) ||
@@ -327,6 +337,85 @@ export async function taskEntryServer({
                 }
                 return json(response, 200, result);
             }
+            if (path === '/api/tasks' || path.startsWith('/api/tasks/')) {
+                const operation = await parseTaskRequest(
+                    path,
+                    query,
+                    request.method,
+                    request.headersDistinct['idempotency-key'],
+                    async () => {
+                        try {
+                            return await readJson(request, 64 * 1024);
+                        } catch (error) {
+                            if (
+                                error instanceof RequestError &&
+                                error.status === 400
+                            )
+                                throw new RequestError(
+                                    400,
+                                    'invalid_input',
+                                    '任务请求内容无效。',
+                                );
+                            throw error;
+                        }
+                    },
+                    () => {
+                        if (
+                            Number(request.headers['content-length'] ?? 0) !==
+                                0 ||
+                            request.headers['transfer-encoding'] !== undefined
+                        )
+                            throw new RequestError(
+                                400,
+                                'invalid_input',
+                                '此任务请求不接受正文。',
+                            );
+                    },
+                );
+                let result;
+                if (operation.kind === 'taskSubmission') {
+                    if (operation.input.source.kind === 'blank') {
+                        result = await backend(account.ownerId, {
+                            kind: 'createTask',
+                            key: operation.key,
+                            input: {
+                                id: null,
+                                name: operation.input.name,
+                                sourceSpaceId: null,
+                                inputFiles: [],
+                                inputManifest: [],
+                                inputDigest: createHash('sha256')
+                                    .update('[]')
+                                    .digest('hex'),
+                            },
+                        });
+                    } else {
+                        if (!space)
+                            throw new RequestError(
+                                503,
+                                'source_unavailable',
+                                '空间文件入口暂不可用。',
+                            );
+                        result = await space.createTask(
+                            account.ownerId,
+                            operation.key,
+                            operation.input.name,
+                            operation.input.source,
+                        );
+                    }
+                } else result = await backend(account.ownerId, operation);
+                if ('diff' in result) {
+                    if (new URLSearchParams(query).get('download') === '1')
+                        response.setHeader(
+                            'Content-Disposition',
+                            'attachment; filename="changes.patch"',
+                        );
+                    return reply(response, 200, 'text/plain', result.diff);
+                }
+                if (!('json' in result))
+                    throw new Error('Invalid Task response');
+                return json(response, result.status, result.json);
+            }
             const operation = await route(request, path);
             const result = await backend(account.ownerId, operation);
             if ('diff' in result) {
@@ -357,6 +446,7 @@ export async function taskEntryServer({
                     code: failure.code,
                     message: failure.message,
                     ...(failure.issues ? { issues: failure.issues } : {}),
+                    ...(failure.reason ? { reason: failure.reason } : {}),
                 },
             });
         } finally {

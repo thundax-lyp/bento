@@ -135,19 +135,9 @@ Task 首写冻结版本。可信 host 新增 `provisionTask(binding,files,enviro
 
 ## 机械执行步骤
 
-### T5 连接个人端 Task 与项目来源
-
-前置状态：Orchestrator 私有 Task HTTP、可信停止与重试、源文件/项目删除门禁和清理回执已验证。持久 blocked、临时错误重试和调度进展断言均已执行通过。
-
-允许修改：`apps/workspace/api/protocol.ts`、`apps/workspace/api/execution-service-http.ts`、`apps/workspace/api/server.ts`、`apps/workspace/api/space.ts`、`apps/workspace/api/space-execution.ts`、`apps/workspace/api/space-files.test.ts`、`apps/workspace/api/mock.ts`。禁止修改：Go 账号与会话实现、存储额度、旧 API 语义。
-
-执行：`protocol.ts` 增 `TaskOperation` 严格并入 `Operation`，解析与 `publicJson` 按表逐字段验证。 `httpBackend` 仅负责 Operation→method/path/body/header 和错误映射。 `taskEntryServer` 调用现有 account/Origin 校验，使用新 parser，再从 backend 转发。未配置 space 时 blank、Task list/detail/events、所有 Run 路径照常转发；snapshot 返回 503。 `spaceExecution` 新增 `space_tasks` 表，唯一 `(owner,key)`，持久 `id,owner,spaceId,key,hash,name,fileIds,state,canonicalBody,lastError`，state 为 pinned/frozen/submitted/ready/failed/abandoned，后 2 个字段可空。另建 `space_task_inputs(taskId,fileId,readPinned)`，pin 与已保存文件校验同一事务。读文件时再次验证 owner、path、字节、UTF-8 与限额，完整 frozen body 写入 SQLite 后才调用上游。READY 回执核对 taskId、inputDigest 后释放 pin。来源无效且从未送达时释放 pin，保持失败原意图可按键回读，用户可改选择并用新键。未确认提交用原 canonicalBody 和 key。 `mySpace` 的 file delete 对 pinned 文件返回既有冲突语义，其他文件使用独立的 acquireTaskInputDeleteHold / releaseTaskInputDeleteHold Operation，`httpBackend` 映射新私有方法与回执，`mockBackend` 复用相同回执状态且继续检查 legacyProjectId。`advanceProjectDeletion` 按上文持久 phase 和单一 Orchestrator receipt 完成 hold/commit/release，最后物理清理。account sweep 使用 owner drain 和 receipt 收敛规则，不触发 Run 停止。mockBackend 显式区分 Task Operation，与旧 project 分支隔离。mock 的 Task 业务路由回 503 tasks_unavailable，source impact 返回零计数。mock 的 source hold/commit/release 执行同一内存回执状态机，有旧项目时同时持有该旧项目门禁，直接项目删除保持原路径。
-
-验证：`pnpm --filter @bento/workspace-api check`。PASS：双 HTTP 实测 space undefined 的全部读取和 Run 透传、snapshot 503、回包丢失原 ID、输入不合规零上游写、项目删除/文件删除并发及 owner purge 重开对账、无事件 key 暴露。在 space-files.test.ts 的双 HTTP 场景新增断言，覆盖入队先提交时文件 DELETE 409、hold 先提交时 Run POST 409、对象存储和 HTTP 回包丢失后重启按原键释放、终态删除后原快照可继续、无关文件可删。覆盖从未被 Task 或旧映射使用的文件在 DELETE 取空集合 hold 后重启并按原键完成 release。另覆盖仅旧项目忙和仅 Task 忙时零清理、hold/release/commit 丢回包乱序重放、release tombstone 阻止晚到 hold、owner drain 不打断已受理 commit。STOP：跨 SQLite 结论未知时保留原意图，禁止放行 pin 或另建 Task。
-
 ### T6 接通 Worker 的可公开事件
 
-前置状态：服务能用 Store 发布 Run 结果且受信绑定校验通过。
+前置状态：私有与个人端 Task HTTP 已连通，双 HTTP 测试通过重启重放、来源 pin、文件删除门禁及无空间服务查询。服务能发布版本化结果。
 
 允许修改：`apps/worker/protocol.ts`、`apps/worker/dsh-worker.ts`、`apps/orchestrator/openshell/single-host.ts`、`apps/orchestrator/execution-service/service.ts`、`apps/orchestrator/execution-service/service.test.ts`、`apps/orchestrator/execution-service/local.ts`、`deploy/README.md`。禁止修改：Binding/Grant/WorkerResult 形态、Agent 的恢复协议、SessionHistory 或断开栅栏。 `WorkerRequest` 只新增 `publicEventsUrl?: string`。保留 `mode,binding,grant,prompt?,persistenceUrl,operationUrl,gateway?` 的类型，以及 `grant.run` 作为唯一 Run ID。warm/stdio 仍按原 JSON 传递；旧 fixture 省略新字段时跳过公开投影，`/operations` 行为不变。
 
