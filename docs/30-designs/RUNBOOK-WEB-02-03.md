@@ -60,22 +60,9 @@ A、B 及原开发栈共用宿主，Compose 网络、挂载和端口隔离，此
 
 PASS 同步基线、独占租约、私有命令入口、浏览器严格 TLS 和 PUT CORS、组织成员关系及只读检查权限均已核对，环境基线已封存。当前技术预检通过，计划提交及 MASTER 审核仍待完成。STOP 任一 T0 核对失败，或验收及清理窗口超出最早到期时间。
 
-### T3：完成 A03 真实额度闭环
-
-前置状态为候选 `3e11d9b` 同一实栈两轮均输出 `WEB_A02_PASS`，同账号空间已归零。100 MB 轮次确认 Chromium 旧签名 PUT 403、缺块 2–6 新签名 PUT 200、下载摘要匹配。允许修改本 RUNBOOK。执行如下命令。
-
-```bash
-/tmp/bento-a-web02-t0/browser-run --quota
-node --import ./register-paths.mjs --test --test-name-pattern='WEB-A03' apps/workspace/api/space-files.test.ts
-```
-
-实栈和 HTTP 验收断言满足后，在 T3 PASS 前执行私有命令契约的 Withdrawal 小节。先走正常 API 清理并逐 ID 回读对象和 multipart 均不存在，确认账号用量归零。再撤下候选 Workspace、回读 A 与原开发栈环境指纹、以同一远端 Chromium 核对 Web 404 和未签名 S3 403、撤销本轮临时账号及只读策略。四条命令全部退出 0 且各自输出契约所列标记。清理未确认时保留租约及恢复记录，禁止宣告 T3 PASS。
-
-PASS 撤场和环境回读全部通过。同一账号实际保存两个 100,000,000 字节对象，HEAD 核对且无 multipart 残留；用量为 200,000,000/0，新增 1 字节返回 409 space_quota，仍为原值。删除一个对象后，两笔 100 MB 并发预占仅成功一笔；取消、物理清理、额度再用和最终回到基线得到 WEB_A03_PASS。HTTP 受控时钟 5/5，覆盖签名未失效时取消和上传记录过期、存储清理失败保留预占、确认后额度复用。STOP 按部署手册保存 recovery.json 和原 ID，执行正常 API 清理。清理未确认时保留租约和现场。
-
 ### T4：完成 A04 / A05 验收并收口
 
-前置状态为同候选 A02、A03 验收及 T3 撤场回读已记录，测试对象、分块及用量已对账。允许修改 `docs/40-readiness/CURRENT-READINESS.md` 和删除本 RUNBOOK。
+前置状态为同候选 `3e11d9b` A02、A03 已通过，A03 实栈输出 `WEB_A03_PASS`，受控时钟 HTTP 5/5。测试对象与分块已回收，用量归零。候选已撤下，A 与原开发栈指纹匹配，严格 TLS 恢复至 Web 404 与 S3 403，临时身份已撤销。允许修改 `docs/40-readiness/CURRENT-READINESS.md` 和删除本 RUNBOOK。
 
 ```bash
 node --import ./register-paths.mjs --test apps/workspace/api/space-files.test.ts
