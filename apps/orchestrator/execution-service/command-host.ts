@@ -38,24 +38,37 @@ type Settings = {
     controlTimeoutMs?: number;
 };
 
-export async function schemaDecoder(raw: string): Promise<Decode> {
+async function loadSchemas(raw: string) {
     const require = createRequire(raw);
-    const { fromBinary } = (await import(
+    const protobuf = (await import(
         pathToFileURL(require.resolve('@bufbuild/protobuf')).href
     )) as {
-        fromBinary(schema: unknown, bytes: Uint8Array): Decoded;
+        fromBinary<T>(
+            schema: unknown,
+            bytes: Uint8Array,
+            options?: { readUnknownFields: boolean },
+        ): T;
+        toBinary(schema: unknown, message: object): Uint8Array;
     };
     const schemas = (await import(pathToFileURL(raw).href)) as Record<
         string,
         unknown
     >;
+    return { protobuf, schemas };
+}
+
+export async function schemaDecoder(raw: string): Promise<Decode> {
+    const {
+        protobuf: { fromBinary },
+        schemas,
+    } = await loadSchemas(raw);
     const workspace = (request: Request) => {
         const selection = request.workspaceScope?.selection;
         return selection?.case === 'workspace' ? selection.value : '';
     };
     return (method, bytes) => {
         if (method === 'ExecSandboxInteractive') {
-            const { payload } = fromBinary(
+            const { payload } = fromBinary<Decoded>(
                 schemas.ExecSandboxInputSchema,
                 bytes,
             );
@@ -69,7 +82,7 @@ export async function schemaDecoder(raw: string): Promise<Decode> {
             };
         }
         const lookup = method === 'GetSandbox';
-        const request = fromBinary(
+        const request = fromBinary<Decoded>(
             lookup
                 ? schemas.GetSandboxRequestSchema
                 : schemas.ExecSandboxRequestSchema,
@@ -79,6 +92,33 @@ export async function schemaDecoder(raw: string): Promise<Decode> {
             sandbox: (lookup ? request.name : request.sandbox) ?? '',
             workspace: workspace(request),
         };
+    };
+}
+
+export async function schemaExecEventDecoder(
+    raw: string,
+): Promise<NonNullable<SdkIngressOptions['decodeExecEvent']>> {
+    const { protobuf, schemas } = await loadSchemas(raw);
+    const schema = schemas.ExecSandboxEventSchema;
+    if (!schema) throw new Error('SDK Exec event schema unavailable');
+    return (bytes) => {
+        const message = protobuf.fromBinary<{
+            payload: { case?: string; value?: { exitCode?: number } };
+        }>(schema, bytes, { readUnknownFields: false });
+        if (!Buffer.from(bytes).equals(protobuf.toBinary(schema, message)))
+            throw new Error('Invalid SDK Exec event encoding');
+        const { case: kind, value } = message.payload;
+        if (kind === 'stdout' || kind === 'stderr') return { kind: 'output' };
+        const code = value?.exitCode;
+        if (
+            kind !== 'exit' ||
+            typeof code !== 'number' ||
+            !Number.isInteger(code) ||
+            code < -0x80000000 ||
+            code > 0x7fffffff
+        )
+            throw new Error('Invalid SDK Exec exit event');
+        return { kind: 'exit', code };
     };
 }
 
