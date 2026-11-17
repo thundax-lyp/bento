@@ -102,28 +102,11 @@ T4 已通过离线 `bash web05/acceptance/run.sh probe`，覆盖目标及对照 
 5. `run.sh observe <task-id> <run-id>` 只输出匹配状态、计数和非秘密摘要。此步用合成 SQLite、控制 JSON 和 Worker 探针输入，离线验证调度候选过滤、故障匹配、活跃状态判定、放行及泄露扫描正控制。不启动或连接真实栈，不执行真实领取、Worker 或沙盒观察。
 6. 锁定 `run.sh verify` 和 `cleanup` 的 T6 调用。前者从租约根使用 `bash web05/storage-stage.sh issue`、`bash web05/stack-stage.sh start`、`bash web05/stack-stage.sh invite acceptance`，然后运行 Playwright。后者调用 `bash web05/stack-stage.sh stop` 与 `bash web05/storage-stage.sh revoke`。T5a/T5c 实现这些固定签名，T6 不改已有 runner。
 
-## T5a：装配 B 副本的独占存储与短期授权
-
-前置状态：已通过私有 runner 离线控制预检；启用 B 独占窗口。此步独立于浏览器场景和 Worker 探针。原 A13 的 S3 容器、桶及长期身份保留。八个原 Compose 服务镜像均在 B 本地。
-
-允许修改与专门核对（10 个文件）：新增 `web05/storage-stage.sh`、`web05/storage/compose.s3.yaml`、`web05/storage/scope.json`、`web05/storage/sts/main.go`、`web05/storage/sts/operations.go`；原 `web-a13/s3.candidate.override.yaml`、`web-a13/s3.cors-single-origin.override.yaml`、本地锁定 STS 源码 `debug-workspace/web08-sts-r2/main.go` 与 `debug-workspace/web08-sts-r2/operations.go`（四者只读）；更新本 RUNBOOK。Go 锁定依赖及证书和授权运行产物由固定复制及签发步骤生成，凭据不提交。
-
-执行：原 MinIO 容器的 Compose 标签回读为 `bento/deploy/compose.yaml`、`web-a13/compose.override.yaml`、`web-a13/s3.candidate.override.yaml`、`web-a13/s3.cors-single-origin.override.yaml`。此步仅取两个 S3 覆盖作为直接模板，基础栈模板留在 T5c。以当前 Docker 标签核对原镜像 ID，从 B 本地已验证镜像启动同一 MinIO 形状的新实例，使用副本 Compose 项目、全新命名卷、独占桶与符合现有 Web 对象键的 `space/*` 授权范围，TLS 使用新副本 CA 和 SAN，禁止连接原桶或复用原管理员身份。已核对原 STS 二进制将项目、桶和 origin 固定编入且严格校验，不能直接用于副本。仅在副本复制现有 STS 源码和锁定依赖，用新 scope 固定这三项与本地相对路径，复用原 `probe`、`issue`、`revoke` 及前缀正反控制。临时字段只能由已验证签发器写入副本 0600 文件，初次短授权进 T6 前完成时效检查，过期用同入口续领。
-
-验证（B 租约根目录）：
-
-```bash
-bash web05/storage-stage.sh prepare
-bash web05/storage-stage.sh probe
-```
-
-PASS：独占 MinIO 的项目、镜像、卷、TLS 和桶均已对账。短时授权仅对新桶的必要前缀生效，越界被拒绝，探针授权已撤销。原资源状态保持。记录脚本及 scope 指纹。保留 `storage-stage.sh issue`、`revoke` 供 T5c/T6 使用。
-
-STOP：权限、证书、镜像或桶归属不明，或正负控制失败。用 `bash web05/storage-stage.sh cleanup` 先撤销本轮 STS，再按已登记副本项目、容器 ID 与卷标签停止测试资源。状态不明则保留。PASS 后只提交 RUNBOOK 证据及步骤移除。
+B 独占 MinIO 已通过 `bash web05/storage-stage.sh prepare` 和 `probe`。核对了新项目与卷、桶、TLS、限定前缀的 STS 及越界拒绝。探针短授权已撤销，session 与 env 已移除。原 A13 S3 保持运行。后续复用此副本的 `storage-stage.sh issue`、`revoke`。发布材料中 `storage-stage.sh` 191 LOC，`main.go` 356 LOC，`operations.go` 360 LOC。脚本 SHA-256 为 `003e0fbebeaab96239fb9087a11d5d1346f3a67b410cd222bfff594260f13a93`，scope 为 `058860b381e75f75b27bf670b2d4be86cd15b2a69e54193f0222f845af7d30ae`，Linux STS 二进制为 `437773f345e921a54b085218b4986c3a2e1f68bf5c16626e4f6850b932a66281`。
 
 ## T5b：生成 B 副本的邀请与登录材料
 
-前置状态：T5a 独占存储预检已通过。只生成独立 realm 与邀请材料，实际登录在 T5c。
+前置状态：独占存储预检已通过，副本 scope 与 HTTPS 回环 origin 已固定。只生成独立 realm 与邀请材料，实际登录在 T5c。
 
 允许修改与专门核对（8 个文件）：新增 `web05/auth-stage.sh`、`web05/realm.json`、`web05/auth-provision.py`、`web05/auth-login.cjs`；只读核对 `web-a13/full-stack/realm-candidate.json`、`web-a13/full-stack/a13-auth/provision.py`、`web-a13/full-stack/a13-auth/login.cjs`；更新本 RUNBOOK。
 
@@ -214,9 +197,9 @@ STOP：必须增加公共协议、改 A13 语义或授权不明确。保留原 f
 
 ## T5c：启动独占栈并核验真实 Worker 入口
 
-前置状态：T4a/T4b 验收接口、T5 浏览器枚举、T5a 存储与 T5b 认证材料均已通过。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
+前置状态：T4a/T4b 验收接口、T5 浏览器枚举、独占存储与 T5b 认证材料均已通过。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
 
-允许修改与专门核对（10 个文件）：新增 `web05/stack-stage.sh`、`web05/compose.stack.yaml`，更新 `web05/stack.env`；只读核对 `bento/deploy/compose.yaml`、`web-a13/compose.override.yaml`、`web-a13/orchestrator-entry.sh`、`web-a13/full-stack/independent-candidates/compose/stage-env.py`、`web-a13/full-stack/independent-candidates/compose/start-seven.sh`、`web-a13/full-stack/independent-candidates/a13/run-live-a13.r2.sh`；更新本 RUNBOOK。T5a/T5b 输出作为只读、已锁定的运行时输入。
+允许修改与专门核对（10 个文件）：新增 `web05/stack-stage.sh`、`web05/compose.stack.yaml`，更新 `web05/stack.env`；只读核对 `bento/deploy/compose.yaml`、`web-a13/compose.override.yaml`、`web-a13/orchestrator-entry.sh`、`web-a13/full-stack/independent-candidates/compose/stage-env.py`、`web-a13/full-stack/independent-candidates/compose/start-seven.sh`、`web-a13/full-stack/independent-candidates/a13/run-live-a13.r2.sh`；更新本 RUNBOOK。存储与 T5b 输出作为只读、已锁定的运行时输入。
 
 执行：`stack-stage.sh stage` 从上述模板复用七服务启动与 HTTPS/Chromium CA 方式。全部项目名、状态目录、issuer、Temporal 队列与 S3 scope 指向副本。Keycloak、MySQL、Postgres、Temporal、Mailpit 使用新命名卷，Workspace 及 Orchestrator SQLite 从副本空目录起步。保留 `stack-stage.sh start`、`invite probe|acceptance`、`stop` 签名，invite 只转交 T5b 的同名副本入口。
 
@@ -235,7 +218,7 @@ STOP：原数据挂载、凭据或 realm 错配，或存在 Worker/沙盒实际�
 
 ## T6：真实验收、全量校验与 Readiness 收口
 
-前置状态：控制、浏览器、T5a 独占存储、T5b 认证和 T5c 实栈启动探针均已通过。B 独占窗口与脚本指纹复核成功。
+前置状态：控制、浏览器、独占存储、T5b 认证和 T5c 实栈启动探针均已通过。B 独占窗口与脚本指纹复核成功。
 
 允许修改：[Readiness](../40-readiness/CURRENT-READINESS.md) 的 WEB-05 一行、本 RUNBOOK、隔离副本的 `web05/host.json` 和 `web05/stack.env`。另只读核对 `web05/acceptance/run.sh`、`web05/acceptance/SHA256SUMS`、`web05/stack-stage.sh`、`web05/storage-stage.sh`、`release/web05/versions.json`、`apps/workspace/web/acceptance/web-05-environment.spec.ts`，共 10 个文件。runner 的探针和 Compose 覆盖通过锁定清单复核，运行时依赖沿用已装配副本。实机仅使用 T0 审核后的副本资源。
 
@@ -243,7 +226,7 @@ STOP：原数据挂载、凭据或 realm 错配，或存在 Worker/沙盒实际�
 
 执行：
 
-1. 核对 T4b 最终锁定 runner 及 T5a/T5c 启动脚本指纹，运行 `run.sh verify`。runner 依次调用 `storage-stage.sh issue`、`stack-stage.sh start`、`stack-stage.sh invite acceptance`。新邀请只作用于 B 副本 realm/client 和本轮临时邮箱，不使用 T5c 的探针账号。以该受邀账号生成受控 storage state，运行唯一真实场景，记录启动指纹及各断言结果。runner 内固定使用 `pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --workers=1 acceptance/web-05-environment.spec.ts`。真实模式禁用重试、截图、视频、trace 和不必要的日志。
+1. 核对 T4b 最终锁定 runner 及 存储与 T5c 启动脚本指纹，运行 `run.sh verify`。runner 依次调用 `storage-stage.sh issue`、`stack-stage.sh start`、`stack-stage.sh invite acceptance`。新邀请只作用于 B 副本 realm/client 和本轮临时邮箱，不使用 T5c 的探针账号。以该受邀账号生成受控 storage state，运行唯一真实场景，记录启动指纹及各断言结果。runner 内固定使用 `pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --workers=1 acceptance/web-05-environment.spec.ts`。真实模式禁用重试、截图、视频、trace 和不必要的日志。
 2. 在 T5 场景指定的轮换点首次实机执行 `run.sh rotate <task-id> <run-id>`。核对目标处于 hold、原 Run 为 `queued` 且无 `run_dispatches` 记录。停止并等待唯一旧 Orchestrator 退出。在停机窗口原子更换 `web05/host.json` 的 `imageDigest/policyDigest` 和 `web05/stack.env` 的 `BENTO_EXECUTION_ENVIRONMENT_VERSION`，启动前重算并对账。复用原 B 隔离副本的同一 Compose 项目与参数，执行 `up -d --no-deps --force-recreate orchestrator` 只重建 Orchestrator，使单文件 bind mount 指向新 inode。确认只有一个运行中的实例，从容器内读回已挂载 JSON 的两个摘要及容器环境版本，与新版记录核对，只输出匹配结果。保持同一业务库、authority 库、Temporal namespace/task queue、Gateway、对象、控制文件与绑定。确认同一 Run 仍排队且无 reservation，再 release，核对领取的是同一 Run。
 3. 实机结束或失败时执行 `bash web05/acceptance/run.sh cleanup`，依次调用 `stack-stage.sh stop` 与 `storage-stage.sh revoke`，核对副本应用服务退出、短授权已撤销。若本轮通过且所有 Run 终态、无活动 Worker 与待清沙盒，按 B transport 与 Gateway 的所有权记录撤场专用 transport、relay 与 Gateway，保留发布材料及证据。失败或状态不明时保留所需副本 Gateway、transport 与 Run 证据，避免更换任务或重发写入遮盖失败。所有路径按原已签核脚本执行，前后 SHA 必须与锁定记录一致。
 4. 所有真实断言通过后将 WEB-05 改为「已实现」，记录日期、候选版本、真实验证范围、结果与未覆盖项。长期配置行为仍引用现有 Task 接口及部署说明。删除本 RUNBOOK 及仅指向它的引用，再运行最终验证。全部通过后按 WORKER/PR 规则交付。若最终验证失败，保留失败证据、恢复本步骤的 RUNBOOK 和此前的 Readiness 状态，交 MASTER 处理。
