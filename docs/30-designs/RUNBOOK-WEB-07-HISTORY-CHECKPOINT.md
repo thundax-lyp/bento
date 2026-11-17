@@ -4,7 +4,7 @@
 
 ## 执行者契约
 
-T0 由作者与审核者完成。剩余实施、验证和收口按 T2–T3，依现有 WORKER 规则 PASS 后逐步提交。STOP 时保留现场，报告最后 PASS、触发断言、路径和脱敏输出。T2 只用临时本地 DB 和本地宿主 fixture，不依赖 A 独占 OpenShell 租约。B 先合共享 Readiness，T3 等 B 合入并同步复验后再改该文件。上游独立改动若改变本 RUNBOOK 固定的入口或契约，停止交还作者。
+T0 由作者与审核者完成。剩余验证和收口按 T3，依现有 WORKER 规则 PASS 后逐步提交。STOP 时保留现场，报告最后 PASS、触发断言、路径和脱敏输出。已完成的本地验收只用临时本地 DB 和本地宿主 fixture，不依赖 A 独占 OpenShell 租约。B 先合共享 Readiness，T3 等 B 合入并同步复验后再改该文件。上游独立改动若改变本 RUNBOOK 固定的入口或契约，停止交还作者。
 
 ## 目标、依据与范围
 
@@ -54,30 +54,9 @@ pnpm exec prettier --check docs/30-designs/RUNBOOK-WEB-07-HISTORY-CHECKPOINT.md
 
 PASS：版本与审核结论可追溯，运行契约一致。STOP：工作树有归属不明的改动、独立审核未通过或入口与草稿不同。继续前记录具体差异。
 
-### T2：接通 retry 受理和首次卷恢复门禁
-
-前置状态：`SessionHistory.validateRestoreCheckpoint` 和 `HistoryCheckpointUnavailable` 已提交。历史 focused 验证 3 项和 Orchestrator typecheck 已通过。允许修改：`apps/orchestrator/openshell/single-host.ts`、`apps/orchestrator/execution-service/service.ts`、`apps/orchestrator/execution-service/service.test.ts`、本 RUNBOOK。禁止修改：Store schema、host 实现、HTTP/SDK 协议、浏览器、Readiness。
-
-执行：
-
-1. 在 `SingleHostExecution` 增加同名同参 `validateRestoreCheckpoint(...): void`。先调用既有 `requireReadyHistory(sessionId, oldGeneration + 1)` 再调用 SessionHistory 只读方法。入口为 Orchestrator 内部同步调用。
-2. `service.ts::retryReason` 保留现有检查顺序。保存 `db.taskCheckpoint(run.id)` 结果，按现有位置处理缺行。让既有 `readProof` 块返回或赋值可信 binding 和已校验旧代。其后使用 `binding.session, run.id, oldGeneration, checkpoint.historySha256` 调用只读入口。仅捕获 `HistoryCheckpointUnavailable` 并返回 `checkpoint_unavailable`，其余错误上抛。POST 仍先调用 `db.taskRetryReceipt(taskId, key)`。仅在无 prior 的分支调用 `retryReason` 和原 stop proof 检查。已有 prior 继续直接进入原 `Store.acceptTaskRetry` 的重放/键冲突分支，绕过此次新增的历史校验。该同步路径到 `Store.acceptTaskRetry` 无新 await。
-3. `advanceTaskRetry` 的 preparing 分支内，先运行既有只读 `queryRestore` 与 receipt 绑定校验，然后用 `proof.sessionId, proof.sourceRunId, proof.oldGeneration, proof.checkpointSha256` 校验历史。紧接着按原有 receipt 条件调用 `restoreTask` 或继续既有读回。最终校验放在 query 的 await 之后，覆盖等待期间的证据失效。外层已有 blocked 条件加入 `HistoryCheckpointUnavailable`。当 workspace 已恢复，原 `SessionHistory.restore` 自身事务校验仍生效，失败时不排队并保留已发生的现场。
-4. 扩展现有 `private Task HTTP preserves earlier results across a fenced retry`。在停止证据恢复原值之后、首次合法 retry 之前，保存 `history.sqlite` 中 secondRun 的完整 checkpoint 行。依次做缺行和篡改 body 两项负控，保留正确业务 checkpoint 和 stop proof，每项之后恢复该历史行。断言 GET Run 的 reason，POST 409 的 code/reason，`retry_attempts` 无对应 sourceRunId，Run 数仍为 2，原卷文件摘要不变，宿主 restore 未调用。使用测试 wrapper 从 Worker 捕获该 Task binding，用 host.snapshot 对前后快照求摘要。从首次 `start` 起，在初始 host 的 `restoreTask` wrapper 入口递增 `initialRestoreCalls`，每个 409 后断言为 0。保留原 wrapper 的暂缓恢复行为。随后执行原合法 retry、丢回包重放及先前结果保留断言，重启后的独立 `restoreCalls` 恰为 1。重试成功后再删除源历史检查点，用原 retryKey 重放，断言 200、原 attempt ID、原预分配 Run ID、state 为 queued，恢复调用仍为 1。将历史行恢复原值再继续原测试。
-5. 在同文件新增 `Task retry blocks when its history checkpoint disappears before workspace restore`。沿用上个测试的 `start`、`localHost`、Task HTTP 请求/鉴权和读取习惯，创建带 README 的独立 Task。它的首轮在 local Worker 确认写入并正常关闭后由 wrapper 返回 review，等到明确 failed 且 retryReason 为 null，确认其首轮 DSH checkpoint 为显式 absent。记录当前卷摘要。分别用两份独立临时 DB 执行缺历史行和当前历史内容损坏子场景。在第一次 `queryRestore` wrapper 中，缺行场景删 sourceRun 对应的历史行，内容损坏场景把当前 Session 行的 header 改为非法 JSON，保留源 checkpoint 行和其摘要。两次均在注入后调用本地原 query，并从初次启动起计数 restoreTask 调用。原 POST 必须 202。轮询同键 POST 至 200 blocked，核对两个 ID 一致、GET 预分配 Run 为 404、`lastConfirmedPhase="preparing"`、Task reconciliation 为 `restore_conflict`、恢复调用数为 0 且卷摘要不变。两种故障均按上述断言验收。直接关闭临时控制器并清理临时目录，不尝试解除 blocked。
-
-验证：
-
-```bash
-pnpm --filter @bento/orchestrator exec node --import ../../register-paths.mjs --experimental-strip-types --test --test-name-pattern='private Task HTTP preserves earlier results|Task retry blocks when its history checkpoint disappears' execution-service/service.test.ts
-pnpm --filter @bento/orchestrator check
-```
-
-PASS：两条 focused 测试执行并覆盖全部断言，已接受的正常重试保持原重放，完整 Orchestrator 检查通过。仅允许既有两个显式可选 Temporal 测试按环境跳过。STOP：恢复先于检查、错误映射不同或回执/写锁发生非预期变化。不得把已发卷恢复的运行归为负控通过。
-
 ### T3：同步 B 后记录覆盖并收口
 
-前置状态：T2 PASS，MASTER 确认 B 的 Readiness 已先合入，当前分支已同步其合入点。允许修改：`docs/40-readiness/CURRENT-READINESS.md` 和删除本 RUNBOOK。禁止修改：原实栈草稿、WEB-05 行、WEB-07 状态和外部配置。
+前置状态：新 retry 预检及首次卷恢复门禁已提交，focused HTTP 用例和 Orchestrator 完整检查通过。MASTER 确认 B 的 Readiness 已先合入，当前分支已同步其合入点。允许修改：`docs/40-readiness/CURRENT-READINESS.md` 和删除本 RUNBOOK。禁止修改：原实栈草稿、WEB-05 行、WEB-07 状态和外部配置。
 
 执行：
 
