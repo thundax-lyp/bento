@@ -1039,6 +1039,24 @@ test('Task routes retain idempotency, history, and versioned results across brow
     const snapshot = new URL(page.url()).origin + new URL(page.url()).pathname;
     const reopened = await context.newPage();
     await reopened.goto(snapshot);
+    const createAnother = reopened.getByRole('button', {
+        name: '更换输入或环境，另建任务',
+    });
+    const confirmAnother = reopened.getByRole('link', { name: '确认另建' });
+    await createAnother.click();
+    await expect(
+        reopened.getByText(
+            '另建任务将使用重新选择的输入和当前运行环境，原任务及失败记录会保留。',
+        ),
+    ).toBeVisible();
+    await expect(confirmAnother).toBeVisible();
+    await reopened.getByRole('button', { name: '返回', exact: true }).click();
+    await expect(confirmAnother).toBeHidden();
+    await expect(reopened).toHaveURL(snapshot);
+    await expect(reopened.getByText('任务准备失败。')).toBeVisible();
+    expect(tasks.size).toBe(2);
+    await createAnother.click();
+    await expect(confirmAnother).toHaveAttribute('href', '/space/' + sourceId);
     await reopened.getByRole('button', { name: '按原输入重新准备' }).click();
     await expect(reopened.getByLabel('任务要求')).toBeEnabled();
     expect(reopened.url()).toBe(snapshot);

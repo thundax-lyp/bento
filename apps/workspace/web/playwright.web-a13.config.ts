@@ -24,6 +24,7 @@ if (
 
 export default defineConfig({
     testDir: './acceptance',
+    testMatch: '**/web-a13.spec.ts',
     workers: 1,
     retries: 0,
     timeout: 15 * 60 * 1000,

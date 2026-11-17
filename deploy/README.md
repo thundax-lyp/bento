@@ -156,6 +156,8 @@ Task 的 execute 请求含可选 `publicEventsUrl`，与当次 grant 一起交�
 pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --workers=1
 ```
 
+该配置仅选择 WEB-A13。WEB-05 独占 runner 使用 `playwright.web05.config.ts` 和对应的 B 环境。
+
 ## Temporal 配置
 
 在 `debug-workspace/execution.env` 设置 `BENTO_TEMPORAL_ADDRESS`、`BENTO_TEMPORAL_NAMESPACE` 和 `BENTO_TEMPORAL_TASK_QUEUE`。正式环境填写受信网络内的 Temporal 服务地址。每个控制器使用独占 Task Queue，重启时保持状态卷、Namespace 和队列名。

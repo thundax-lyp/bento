@@ -1130,6 +1130,7 @@ function TaskDetailsContent({ account, id }: { account: string; id: string }) {
     const [params] = useSearchParams();
     const [prompt, setPrompt] = useState('');
     const [confirmRetry, setConfirmRetry] = useState<string | null>(null);
+    const [confirmNewTask, setConfirmNewTask] = useState(false);
     const online = useSyncExternalStore(subscribeOnline, isOnline);
     const task = useQuery(taskDetailsQuery(account, id));
     const runs = useQuery({
@@ -1304,6 +1305,37 @@ function TaskDetailsContent({ account, id }: { account: string; id: string }) {
                     >
                         按原输入重新准备
                     </Button>
+                    <Button
+                        type="button"
+                        disabled={!mutable || pending}
+                        onClick={() => setConfirmNewTask(true)}
+                    >
+                        更换输入或环境，另建任务
+                    </Button>
+                    {confirmNewTask && mutable && !pending && (
+                        <div className="space-y-2">
+                            <p>
+                                另建任务将使用重新选择的输入和当前运行环境，原任务及失败记录会保留。
+                            </p>
+                            <Link
+                                className="underline"
+                                to={
+                                    data.sourceSpaceId
+                                        ? '/space/' +
+                                          encodeURIComponent(data.sourceSpaceId)
+                                        : '/'
+                                }
+                            >
+                                确认另建
+                            </Link>
+                            <Button
+                                type="button"
+                                onClick={() => setConfirmNewTask(false)}
+                            >
+                                返回
+                            </Button>
+                        </div>
+                    )}
                 </section>
             )}
             {data.closedReason && (
