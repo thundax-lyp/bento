@@ -106,27 +106,11 @@ B 独占 MinIO 已通过 `bash web05/storage-stage.sh prepare` 和 `probe`。核
 
 B 副本认证材料的 `bash web05/auth-stage.sh stage` 与 `check` 已通过。副本 realm/client、Mailpit、回环 origin 和邀请链接的异源、异 realm 负例已验证；组织邀请、邮件登记与 Chromium 实际登录留待 T5c。后续调用 `auth-stage.sh invite probe|acceptance`。 `auth-stage.sh`（73 LOC）SHA-256 为 `8c908fe27b236d45e3e0e24193486268c70bc14561ee893166ac38a4862eb8db`，`auth-provision.py`（139 LOC）为 `25c4c6ed7e9a922a130fbaf8c27b65167fbbb36bd36f08c5eda2cd073a058a42`，`auth-login.cjs`（58 LOC）为 `e06b5a308bae897c0942e984b97384a353f05a4fa2efe5690fc9c63ee2252a0d`，`realm.json` 为 `c0735cc8e057d46f0bf16da9d36dec8bd661cc8908d0123023ee15ca69d3e3fe`。
 
-## T4a-0：把活跃暂停判定绑定到 B 私有 Run lease
-
-前置状态：T4 离线控制已通过。原 Worker 启动器有 `request.grant.run`、`request.binding.project` 与对应的私有 lease 目录，但没有向 Worker 提供可信的 armed 判定。MASTER 审核后执行。
-
-允许修改与专门核对（7 个文件）：新增 `web05/acceptance/worker-entry.mjs`；更新 `web05/acceptance/compose.yaml` 和 `SHA256SUMS`；只读核对 `debug-workspace/execution/web08-worker.mjs`、`web05/acceptance/control.json`、`web05/acceptance/probe.mjs`；更新本 RUNBOOK。禁止修改生产启动器、两版适配器、公开 Worker 协议与镜像。
-
-执行：在副本 `worker-entry.mjs` 复用原启动器全部授权和目录检查。它从已挂载的受信 `control.json` 读 `activePause.taskId`，仅在与 `request.binding.project` 相等时 armed。创建原有 lease 目录后、请求 launcher 启动前，以独占创建、0600 写入同一目录下的 `web05-active-arm.json`。精确结构为 `{taskId:string,runId:string,armed:boolean}`，前两项来自已校验的 binding 和 grant。仅将已有 Compose 覆盖中 Worker 命令脚本挂载切换到此副本，容器内路径保持一致。Worker 后续只读已有 per-lease 挂载中的该文件，核对两个 ID。浏览器无法写入，任意提示词无法启用暂停。不存在控制文件、结构损坏、重复标记或 binding 不匹配时拒绝该验收启动。
-
-验证（B 租约根目录）：
-
-```bash
-node --check web05/acceptance/worker-entry.mjs
-node web05/acceptance/worker-entry.mjs --fixture
-sha256sum -c web05/acceptance/SHA256SUMS
-```
-
-PASS：固定输入证明同 Task armed、其它 Task 未 armed、已存在或损坏的标记被拒绝，且 lease 之外无写入。锁定包装器与 Compose 覆盖指纹，清理 fixture，删除本步骤并只提交 RUNBOOK 证据。STOP：需要新增 Worker 挂载、公开字段或绕过原授权。撤回本步私有包装器及覆盖差异，保留已通过的 T4/T5a/T5b 证据。
+B 私有 Worker 启动包装器已锁定。语法、固定输入中同 Task armed/其它 Task 未 armed、重复或损坏标记拒绝、lease 范围与 0600 检查均通过。包装器 SHA-256 为 `a3f6bc567307f54fda06e3d5a353272d89d11039fe5ff812af633c3b582c2539`，六项材料清单为 `89772c4b70b95d0da8d42549383e0fa23bd368c21670036e977e6e5f2356e772`。
 
 ## T4a：在 B 私有 Worker fixture 接入真实 SDK 与暂停见证
 
-前置状态：T4 离线预检、B transport 和 T4a-0 的 per-lease armed 判定已通过。MASTER 审核本步骤后执行。
+前置状态：T4 离线预检、B transport 和 per-lease armed 判定已通过。MASTER 审核本步骤后执行。
 
 允许修改及专门核对（10 个文件）：修改 `web05/bootstrap/base.ts`、`web05/acceptance/worker-probe.ts`、`web05/acceptance/run.sh`、`web05/acceptance/SHA256SUMS`；新增 `web05/acceptance/watch-active.mjs`；只读核对原 `bootstrap/base.ts`、`worker-loopback.mjs`、`debug-workspace/execution/web08-worker.mjs` 与两版 `host-daemon.mjs`；更新本 RUNBOOK。现有 companion 文件从锁定 bootstrap 目录复用，禁止修改原 A13、公开代码、发布适配器、Worker 镜像或模型 provider。
 
