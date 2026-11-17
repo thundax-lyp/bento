@@ -83,13 +83,40 @@ STOP：任何归属、授权、指纹或入口无法复核。当前唯一未能�
 
 私有命令的工作目录统一为 B 租约根目录。仓库命令从绑定 checkout 执行。所有 T0 复制来源只读。发布包保留两版发行构件、T3 材料与校验命令；T4 文件仅保留在私有验收副本。原 WEB-A13 文件、配置、沙盒和库保持原状。新文件计入所属步骤，因当前尚无代码，新增 LOC 在该步提交前据实回读。已有 12 个公开代码文件、1028 LOC 满足基线门槛。私有和附加基线核对范围：T3 原 `host-daemon.mjs::boundContainer/volumeAction` 汇集原文件第 241–260、302–375 行，共 94 个物理行；T4 `service.ts::work` 第 1472–1509 行、`store.ts::dispatchSnapshot/dispatchReserved/schedulableRuns` 第 2184–2249 行，共 96 个非空非注释行；准备故障直接复核第 1233–1280 行的 46 LOC，已计入基线，不重复计。这些附加行未计入 1028 LOC；待实现私有源码的非空、非纯注释行逐个路径记录。
 
+## T2a：建立 B 副本的专用 Gateway 与控制 socket
+
+前置状态：两版构件已通过验证，分支基线为 `155fe81ec52555fa6442cc2b0b5df50961997671`。MASTER 审核本步骤后才运行。原 A13 Gateway 在运行，原 socket 不存在；`web05` 仍未占用。
+
+允许修改与专门核对（10 个文件）：新增 `web05/gateway-bootstrap.sh`、`web05/gateway.toml`、`web05/web08-manifest.json`；只读核对原 `gateway.toml`、`web08-manifest.json`、`host-daemon.mjs`、`gateway-probe-v2.mjs`、`relay-host.mjs`、`debug-workspace/execution/ingress-tunnel.mjs`；更新本 RUNBOOK。安装产物为 B 专用 Gateway 容器、同其绑定的新的 DB/证书/签名与 CLI 状态、控制进程及 socket，均由脚本生成并按相同归属清理；不暂存这些产物或凭据。
+
+禁止修改：原 A13 Gateway、端口、签名、TLS 文件、SQLite、Compose 和任何已有沙盒。禁止改共享 Docker 或 OpenShell 设置。
+
+执行：
+
+1. `gateway-bootstrap.sh prepare` 在 B 租约根用原 manifest 与 Docker inspect 对账原容器及镜像 ID，只复用本地同一不可变 Gateway 镜像。已检查原容器以 host 网络的 loopback 监听，Docker driver、mTLS、operator auth 均开启，无公布端口及 privileged。副本延续该网络启动方式，以原租约 owner 后缀 `-web05` 构造唯一的 Gateway 容器名、Gateway ID 与 Docker sandbox namespace/label；开始前确认名称未占用。用本机 socket 选两处不同的空闲回环端口供 API 与 health，启动期间持租约锁，实际绑定失败直接 STOP。副本 manifest 记录非秘密命名、镜像 ID、两个端口、旧环境版本、Gateway endpoint 与 workspace，以及 `web05` 下的 TLS 材料、控制 socket 和 relay socket 的受限路径引用。本轮 volumeBindings 从空对象起步。仅登记引用，证书、私钥与凭据内容均不入 manifest。
+2. 从原 `gateway.toml` 派生副本，只改 B 独占命名、loopback 端口与副本路径，保留原 Docker driver 及 auth 策略。原 mTLS 客户端材料可读且有效，但旧 Gateway 服务端私钥位于受限的原状态挂载。使用当前 B SSH 租约权限，在 `web05/gateway-state` 用本机 OpenSSL 生成一套独占短期 CA、含 loopback SAN 的 server cert、clientAuth client cert 和新签名密钥。参考原客户端证书的公开身份格式，签发新客户端，私钥文件仅限租约或容器必需权限，原凭据不复制。新 DB、签名与配置均绑定到副本路径；启动时复用原入口的 `--enable-mtls-auth --enable-operator-auth`，禁止匿名通过。本轮 TLS 配置和客户端 JSON 仅做静默输入。
+3. `gateway-bootstrap.sh start` 使用 `docker run -d --network host` 启新命名容器，镜像用第 1 步核对的本地 ID。复制原已查明的挂载形状：副本 TOML 只读、新状态目录可写、现有 Docker socket；后两个状态挂载分别用受控新目录和 Docker driver 现有入口。沿用原命令的 `--bind-address 127.0.0.1 --port` 和 TLS 参数，值改为副本已验证路径。为副本标记所有权。以 B 租约账号使用 `WEB08_DIR` 指向 `web05`、`WEB08_GATEWAY_PORT` 指向新回环端口，启动现有 `host-daemon.mjs` 的未改副本入口，供 T3 切换到两版适配器。daemon 沿用 `control/control.sock` 相对路径，在副本目录内生成 socket，0600，归租约账号所有。复用 `relay-host.mjs`，以相同副本目录与端口运行，生成独立的 `web05/relay/gateway.sock`。脚本将独占容器 ID 及 daemon、relay 的 PID、启动身份和 argv 指纹记入副本 manifest，禁止使用原 PID 或原 socket。
+4. `gateway-bootstrap.sh probe` 复用 `gateway-probe-v2.mjs` 的 mTLS 和 SDK 观察方式，核对新客户端只连接新端口、无客户端证书被拒绝、空 Gateway scope 可独立读取；只读判断控制 socket 存在、可连接且所有权匹配。复核新旧容器 ID、端口、状态目录和标签均不同，原 A13 容器及配置指纹和状态保持一致。此步不创建沙盒或运行验收场景。
+
+验证（B 租约根目录）：
+
+```bash
+bash web05/gateway-bootstrap.sh prepare
+bash web05/gateway-bootstrap.sh start
+bash web05/gateway-bootstrap.sh probe
+```
+
+PASS：独占 Gateway 可通过新 mTLS SDK 入口读取，负例拒绝，独占 socket 可连接，原 A13 无变化。记录脚本、非秘密配置及 manifest 的指纹和新增代码 LOC。仓库只提交剩余 RUNBOOK 的步骤移除及证据；私有实现保留在 B 租约。
+
+STOP：镜像、身份或受信路径不符，端口绑定失败，健康/mTLS/socket 核对失败，或所有权不明确。用 `bash web05/gateway-bootstrap.sh cleanup`，先按副本 PID、启动身份、argv 指纹及 socket 所有权停止 daemon 和 relay，再按保存的容器 ID 与副本标签停止、移除该容器。回收本轮短期凭据与临时监听，保留脱敏证据；其它资源保持原样。所有权不明时保留现场。
+
 ## T3：在现有 host adapter 接入两版
 
-前置状态：两版发行构件已在 B 租约根目录构建并通过 `bash release/web05/build.sh verify`。隔离副本的专用 Gateway 与控制入口须可用。
+前置状态：两版发行构件已在 B 租约根目录构建并通过 `bash release/web05/build.sh verify`。T2a 的隔离 Gateway 与控制 socket 预检须通过。
 
 构件留在 B 私有发布目录。Dockerfile 11 LOC，build.sh 91 LOC，共 102 LOC。两份策略及版本 JSON 为构件数据。 `versions.json` SHA-256 为 `e6558e1e55a8c47332c43da6cf5ce064c95911a01352926e32f2e82cfa478537`，`build.sh` SHA-256 为 `73a456756b24d21ff5e72dda2268fa840c3a0bfc78d0fcc4165e08f166cbe3d6`，`Dockerfile` SHA-256 为 `05eea309a1a8b6e81e1e223783599136bf323bd1f185aca80a3e575b38c0ced3`。两版镜像 ID、策略摘要与环境版本各自不同，旧构件与现有记录一致。
 
-允许修改（10 个文件）：原 `host-daemon.mjs`（只读）、原 `host-probe.mjs`（只读）、`release/web05/versions.json`（只读）、`release/web05/host-daemon.mjs`、`release/web05/host-probe.mjs`、`release/web05/host-adapter.sh`、隔离副本 `web05/compose.adapter.yaml`、`web05/host.json`、`web05/stack.env`、本 RUNBOOK。
+允许修改（10 个文件）：原 `host-daemon.mjs`（只读）、`web05/web08-manifest.json`（只读交接输入）、`release/web05/versions.json`（只读）、`release/web05/host-daemon.mjs`、`release/web05/host-probe.mjs`、`release/web05/host-adapter.sh`、隔离副本 `web05/compose.adapter.yaml`、`web05/host.json`、`web05/stack.env`、本 RUNBOOK。
 
 禁止修改：公开协议、原 A13 ledger、沙盒、数据库、镜像与 daemon 文件。
 
@@ -97,7 +124,9 @@ STOP：任何归属、授权、指纹或入口无法复核。当前唯一未能�
 
 未知版本、损坏配置或不一致 ledger 在改变资源前拒绝。实际镜像或生效策略不符时拒绝 ready 回执和正常执行，仅清理本次新建且通过 ownership 校验的沙盒、卷和 creating 记录；已有记录只告警并保留现场。对外沿用脱敏 `preparation_failed`。所有失败验证都检查版本或原始错误没有泄漏。
 
-安装：`host-adapter.sh install` 以旧版初始化副本 `web05/host.json` 的 `imageDigest/policyDigest` 和 `web05/stack.env` 的 `BENTO_EXECUTION_ENVIRONMENT_VERSION`；`compose.adapter.yaml` 只读挂载该 JSON 到现有容器路径，并复用 B 的控制 socket 与 Worker 启动方式。
+安装：`host-adapter.sh install` 读取 T2a 的副本 manifest，以旧版初始化 `web05/host.json` 的 `imageDigest/policyDigest` 和 `web05/stack.env` 的 `BENTO_EXECUTION_ENVIRONMENT_VERSION`。把 `commandHost.gateway` 设为副本 relay 对应的本容器 `https://127.0.0.1:<port>`，`workspace` 取副本清单核对值，`ca/cert/key` 只引用 T2a 新 TLS 文件的容器内只读路径。`compose.adapter.yaml` 只读挂载该 JSON、TLS 目录和副本的 control、relay 父目录到现有容器路径。继续使用 Orchestrator 原隔离 Compose bridge 及现有 `ingress-tunnel.mjs`，在容器内监听上述回环端口，通过独占 `gateway.sock` 连到新 Gateway 的回环端口。TLS 仍由新 Gateway 终止，SAN 必须覆盖 `127.0.0.1`。不得复用原 A13 网络入口、socket 或证书。
+
+接管前以 T2a manifest 对账副本 daemon 的 PID、启动 UID、argv 指纹和 socket 所有权，匹配后仅停止该进程并在相同副本 socket 启动两版 daemon。T3 以实际 Orchestrator Compose 网络和挂载启动只读探针，确认新 `commandHost` 通过 SDK 读取新 scope，控制 socket 响应只读探测，原 A13 客户端身份及无证书均被新端点拒绝。旧身份负例以原受控路径静默输入，不复制或写入该容器长期配置。
 
 验证：
 
@@ -106,9 +135,9 @@ bash release/web05/host-adapter.sh install
 bash release/web05/host-adapter.sh probe
 ```
 
-PASS：复用专用 OpenShell，验证两版、未知版本、损坏配置、绑定记录损坏、镜像与策略错配、原版本重放。用同一新版镜像分别加载旧、新策略，经 `sandbox exec` 验证合成路径分别拒绝与允许；OpenShell 策略回读与发行材料对账通过。脚本只输出布尔、计数及非秘密摘要。
+PASS：Orchestrator 实际网络、SAN、SDK 新 scope 和 control socket 核对通过，旧身份及无证书均拒绝。复用专用 OpenShell，验证两版、未知版本、损坏配置、绑定记录损坏、镜像与策略错配、原版本重放。用同一新版镜像分别加载旧、新策略，经 `sandbox exec` 验证合成路径分别拒绝与允许；OpenShell 策略回读与发行材料对账通过。脚本只输出布尔、计数及非秘密摘要。
 
-STOP：观察读不到、错配仍返回 ready，或清理所有权不明。用 `bash release/web05/host-adapter.sh undo` 停副本 adapter、解除本轮挂载并只清理本步标记的独占探针；状态不明时保留并复核。
+STOP：观察读不到、错配仍返回 ready，或清理所有权不明。用 `bash release/web05/host-adapter.sh undo` 按副本 PID、启动 UID、argv 和 socket 所有权核对后停止两版 adapter，解除本轮挂载，将同一副本恢复到 T2a daemon。探针容器只按记录的容器 ID 及副本标签清理并留证。状态不明时保留并复核。
 
 ## T4：固定 B 私有排队、故障和生命周期控制
 
