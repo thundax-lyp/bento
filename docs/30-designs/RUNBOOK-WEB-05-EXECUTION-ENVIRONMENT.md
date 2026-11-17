@@ -114,13 +114,30 @@ B 受信入口已锁定。`attest <task-id> <run-id|->`、`scan` 以及 `observe
 
 公开浏览器场景 `apps/workspace/web/acceptance/web-05-environment.spec.ts` 已登记。A13 配置 list-only 精确枚举 1 项 Chromium，Web typecheck 通过。实机功能顺序由该场景和本 RUNBOOK T6 共同固定，证据待实际运行。
 
+## T5c-0：锁定包含 WEB-05 改动的 B Web 候选
+
+前置状态：T5 的 Chromium 枚举与类型检查已通过。旧 A13 镜像的 OCI revision 与历史源码包一致，旧源码缺少 WEB-05 确认另建入口，不能供最终验收。A 的 PR #49 已合入 `e2a45a4661fdbe1cf8a17060164392eab3e4a592`，B 合并后基线为 `948dcfe4e2a35f72abb49d3b765cf6d826975900`。共享上传单测 10/10、快照 Task routes Chromium 1/1、OIDC 前端构建通过。WEB-02/03 已实现，WEB-05 仍为部分实现。主线未改 Compose 构建入口、Space 冻结实现或 execution-service。MASTER 审核后才构建。
+
+允许修改与专门核对（8 个文件）：新增 B 私有 `web05/web-build/build-web.sh`、`source.tar`、`candidate.json`；只读核对原 `web-a13/web-build/build-web.sh`、当前 checkout `deploy/compose.yaml`、`deploy/workspace/nginx.conf` 和 `apps/workspace/web/acceptance/web-05-environment.spec.ts`；更新本 RUNBOOK。构建目录、清单、日志和镜像由脚本生成。禁止改原 A13 镜像、tag、构建目录、共享 daemon 配置和 A 的资源。
+
+执行：从同步后的 B 候选提交以 `git archive` 导出跟踪文件，记录完整 Git SHA 和 tar SHA-256。上传到 B 私有目录，解包保留 `git archive` 所记录的权限，避免受限目录的 umask 改写文件 mode。非敏感的 `deploy/workspace/nginx.conf` 必须为 0644，不放宽其它文件权限。复用原构建脚本的 tar/源码 SHA 校验、Linux AMD64、本地固定 Go/Node 基础镜像、`--pull=false` 和构建日志方式，仅把输入目录和输出 tag 改为本轮副本。Dockerfile 从候选提交的 `deploy/compose.yaml` 提取 `bento-web.build.dockerfile_inline`，处理 Compose 的美元转义。构建前核对候选包含确认另建入口和 WEB-05 Chromium 场景；构建后采集实际 Docker Image ID、OCI revision、归档 SHA-256 和归档内 Chromium spec 的 SHA-256 写入 `candidate.json`。安装前在候选镜像默认 USER 下用 `docker run --rm --network none --entrypoint /bin/sh "$candidate_image" -c 'test -r /etc/nginx/bento.conf'`，禁止用 `--user` 覆盖。T5c/T6 用该 Image ID，Chromium runner 的 checkout 指向同一已校验的解包源码。若 A 改到空间 API 或发布入口，同步后按实际候选完整构建，禁止只叠加旧静态文件。
+
+验证（B 租约根目录）：
+
+```bash
+bash web05/web-build/build-web.sh build
+bash web05/web-build/build-web.sh verify
+```
+
+PASS：输入摘要、两基础镜像、候选 revision、实际 Web Image ID、镜像默认 USER 的 nginx 配置可读性和 Chromium 归档/spec 指纹均通过，以脱敏指纹记录。保留独占候选并删除本步骤，仓库只提交 RUNBOOK 证据。STOP：共享基线未合、镜像/源码不一致、构建依赖不可用或产物验收失败。只按本轮 tag 和已登记 Image ID 回收候选，不触碰原 A13 镜像。
+
 ## T5c：启动独占栈并核验真实 Worker 入口
 
-前置状态：B Worker 和受信验收接口、浏览器枚举、独占存储与认证材料均已通过。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
+前置状态：B Worker 和受信验收接口、浏览器枚举、独占存储与认证材料均已通过，T5c-0 候选镜像及源码已对账。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
 
 允许修改与专门核对（10 个文件）：新增 `web05/stack-stage.sh`、`web05/compose.stack.yaml`，更新 `web05/stack.env`；只读核对 `bento/deploy/compose.yaml`、`web-a13/compose.override.yaml`、`web-a13/orchestrator-entry.sh`、`web-a13/full-stack/independent-candidates/compose/stage-env.py`、`web-a13/full-stack/independent-candidates/compose/start-seven.sh`、`web-a13/full-stack/independent-candidates/a13/run-live-a13.r2.sh`；更新本 RUNBOOK。存储与认证输出作为只读、已锁定的运行时输入。
 
-执行：`stack-stage.sh stage` 从上述模板复用七服务启动与 HTTPS/Chromium CA 方式。全部项目名、状态目录、issuer、Temporal 队列与 S3 scope 指向副本。Keycloak、MySQL、Postgres、Temporal、Mailpit 使用新命名卷，Workspace 及 Orchestrator SQLite 从副本空目录起步。保留 `stack-stage.sh start`、`invite probe|acceptance`、`stop` 签名，invite 只转交 `auth-stage.sh` 的同名副本入口。
+执行：`stack-stage.sh stage` 从上述模板复用七服务启动与 HTTPS/Chromium CA 方式，Web 使用 T5c-0 候选 Image ID。全部项目名、状态目录、issuer、Temporal 队列与 S3 scope 指向副本。Keycloak、MySQL、Postgres、Temporal、Mailpit 使用新命名卷，Workspace 及 Orchestrator SQLite 从副本空目录起步。保留 `stack-stage.sh start`、`invite probe|acceptance`、`stop` 签名，invite 只转交 `auth-stage.sh` 的同名副本入口。每次 `start` 均以副本 Compose 项目定位唯一运行 Web 容器，从实际容器回读 `.Image`，再读取该镜像的 OCI revision 并与锁定的 `candidate.json` 核对，启动时任一不符即失败。
 
 `stack-stage.sh probe` 先 `storage-stage.sh issue`，再启动副本，核对健康、TLS、OIDC discovery 与新 realm/client 所有权。以 `invite probe` 创建仅本轮探针账号，走正常登记路径并启动一条真实 Worker Run，验证可实际领取、进入活跃探针、解除后读取真实沙盒命令或文件结果。完成后停止副本应用服务并调用 `storage-stage.sh revoke`。Gateway 和 transport 在无活动 Run 且所有权匹配时留给 T6。探针账号与状态不作为 T6 的受邀账号或登录输入。
 
@@ -145,7 +162,7 @@ STOP：原数据挂载、凭据或 realm 错配，或存在 Worker/沙盒实际�
 
 执行：
 
-1. 核对最终锁定 runner 及 存储与 T5c 启动脚本指纹，运行 `run.sh verify`。runner 依次调用 `storage-stage.sh issue`、`stack-stage.sh start`、`stack-stage.sh invite acceptance`。新邀请只作用于 B 副本 realm/client 和本轮临时邮箱，不使用 T5c 的探针账号。以该受邀账号生成受控 storage state，运行唯一真实场景，记录启动指纹及各断言结果。runner 内固定使用 `pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --workers=1 acceptance/web-05-environment.spec.ts`。真实模式禁用重试、截图、视频、trace 和不必要的日志。
+1. 核对最终锁定 runner、存储与 T5c 启动脚本指纹，运行 `run.sh verify`。runner 依次调用 `storage-stage.sh issue`、`stack-stage.sh start`、`stack-stage.sh invite acceptance`。在 T6 preflight 中，`start` 完成实际运行 Web 容器 `.Image` 和该镜像 OCI revision 与 `candidate.json` 的核对后方可邀请。运行 Chromium 前，核对 runner 使用的源码归档 SHA-256 和解包 spec SHA-256 均等于同一 `candidate.json` 锁定值。新邀请只作用于 B 副本 realm/client 和本轮临时邮箱，不使用 T5c 的探针账号。以该受邀账号生成受控 storage state，运行唯一真实场景，记录启动指纹及各断言结果。runner 内固定使用 `pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --workers=1 acceptance/web-05-environment.spec.ts`。真实模式禁用重试、截图、视频、trace 和不必要的日志。
 2. 在浏览器场景指定的轮换点首次实机执行 `run.sh rotate <task-id> <run-id>`。核对目标处于 hold、原 Run 为 `queued` 且无 `run_dispatches` 记录。停止并等待唯一旧 Orchestrator 退出。在停机窗口原子更换 `web05/host.json` 的 `imageDigest/policyDigest` 和 `web05/stack.env` 的 `BENTO_EXECUTION_ENVIRONMENT_VERSION`，启动前重算并对账。复用原 B 隔离副本的同一 Compose 项目与参数，执行 `up -d --no-deps --force-recreate orchestrator` 只重建 Orchestrator，使单文件 bind mount 指向新 inode。确认只有一个运行中的实例，从容器内读回已挂载 JSON 的两个摘要及容器环境版本，与新版记录核对，只输出匹配结果。保持同一业务库、authority 库、Temporal namespace/task queue、Gateway、对象、控制文件与绑定。确认同一 Run 仍排队且无 reservation，再 release，核对领取的是同一 Run。
 3. 实机结束或失败时执行 `bash web05/acceptance/run.sh cleanup`，依次调用 `stack-stage.sh stop` 与 `storage-stage.sh revoke`，核对副本应用服务退出、短授权已撤销。若本轮通过且所有 Run 终态、无活动 Worker 与待清沙盒，按 B transport 与 Gateway 的所有权记录撤场专用 transport、relay 与 Gateway，保留发布材料及证据。失败或状态不明时保留所需副本 Gateway、transport 与 Run 证据，避免更换任务或重发写入遮盖失败。所有路径按原已签核脚本执行，前后 SHA 必须与锁定记录一致。
 4. 所有真实断言通过后将 WEB-05 改为「已实现」，记录日期、候选版本、真实验证范围、结果与未覆盖项。长期配置行为仍引用现有 Task 接口及部署说明。删除本 RUNBOOK 及仅指向它的引用，再运行最终验证。全部通过后按 WORKER/PR 规则交付。若最终验证失败，保留失败证据、恢复本步骤的 RUNBOOK 和此前的 Readiness 状态，交 MASTER 处理。
