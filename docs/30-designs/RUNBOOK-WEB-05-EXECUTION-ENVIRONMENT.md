@@ -122,6 +122,18 @@ B Web 候选的 `build-offline` 与 `verify` 均通过。候选 revision `b2886f
 
 B 私有邀请解析的 `bash web05/auth-stage.sh check` 已通过。实际邮件采用副本同源的 `registrations` 路径，解析仅接受匹配 realm/client 的唯一本轮邮件和唯一有效链接。离线正负控及 Chromium 入口语法通过。私有 `auth-provision.py` 和 `auth-login.cjs` 的 SHA-256 分别为 `727b51d59fc1566b7db4eb7df6c2d0c178c20cb7bb3b74e0b13c293d093afdbb` 与 `77d91e1764695e5f97dc7a4f4628a9655031ccfae9deda816f665348c384ec4c`。
 
+## T5c-registration：分开组织邀请登记与 Workspace 登录
+
+前置状态：B 实栈的实际邀请送达并通过严格链接校验。Chromium 打开链接后未出现登记表单，HTTP 401。独占 Keycloak 日志确认 `Missing parameter: code_challenge`。邮件只携带 `client_id`、`response_type`、`token`，其目标 Workspace client 已要求 S256。诊断结束后已停止 B 副本应用服务并执行 STS 撤销。MASTER 审核本步后执行。
+
+允许修改：B 私有 `web05/auth-provision.py`、`web05/auth-login.cjs`、本 RUNBOOK。候选、锁定 runner、realm 配置和 Workspace 的 PKCE 保持锁定。使用 Keycloak 26.8.2 [组织邀请 API](https://www.keycloak.org/docs-api/26.8.2/rest-api/index.html#_organizations) 的默认 account client，省略组织邀请请求的 `client_id`。
+
+执行：邀请只投递到本轮临时邮箱。解析和 Chromium 校验固定为副本 HTTPS origin、同一 realm、原 registrations 路径、原三个唯一查询参数，且 `client_id=account`。保留精确收件人、发出时间、唯一邮件及唯一链接约束，新增错误 Workspace client 负例。空浏览器上下文完成该邮件触发的登记并校验实际组织成员和邮件已验证。随后访问同源 `/api/oidc/start` 生成 Workspace 登录事务，由 Workspace 原 S256 客户端完成 OIDC 回调，验证正常凭据会话和 opaque owner。凭据、邀请和回调查询参数均不输出。
+
+验证：先运行 `bash web05/auth-stage.sh check`。通过后签发 B 探针 STS，启动并核对原候选，执行 `bash web05/stack-stage.sh invite probe`。记录脱敏登记、组织成员、邮件已验证与 Workspace 会话断言及脚本指纹。执行 `stack-stage.sh stop` 和 `storage-stage.sh revoke` 收口本轮。
+
+PASS：离线正负控、实际邀请登记、邮件验证、组织成员及 Workspace OIDC 全部通过，删除本步并同次提交证据，恢复 T5c Worker 探针。STOP：默认 account 邀请未通过，或须改变共享状态、正式 realm 设置或 Workspace PKCE。停止副本应用并撤销本轮 STS，记录脱敏 HTTP 路径类别、状态或 Keycloak 事件。
+
 ## T5c：启动独占栈并核验真实 Worker 入口
 
 前置状态：B Worker 和受信验收接口、浏览器枚举、独占存储与认证材料均已通过，离线候选镜像及源码已对账，副本配置预检通过，实际邀请链接已通过离线预检。实栈探针中，七服务启动和候选指纹核对通过，受邀浏览器打开登记链接时返回 HTTP 401，真实登记与 OIDC 仍待验收。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
