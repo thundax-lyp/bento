@@ -120,9 +120,25 @@ B Web 候选的 `build-offline` 与 `verify` 均通过。候选 revision `b2886f
 
 已修正 B 副本两份 Compose 环境插值与 Temporal 地址。 `bash web05/stack-stage.sh preflight` 核对实际渲染的归属、确切旧版版本、`temporal:7233` 及原队列通过。当前 `compose.adapter.yaml`、`compose.stack.yaml`、`stack-stage.sh` 的私有 SHA-256 依次为 `7ee8529e1071fce313107b76bbd0b10eb7dce22cb05483d1602244081facd084`、`65b8677eb75c10e2d849be28c9be249016716f3aa3faaaddfd8fdb8b03fe311e` 与 `d0f39c13c8bac09f529dcbb207d38ca6191e48d238689f5d0b4ccacad258861f`。
 
+## T5c-invite：对齐副本实际邮件邀请链接
+
+前置状态：副本配置修复已通过并提交 `8d11e93af52cc056caaa402e7935d0c2ebe17d72`。T5c 已启动七服务，实际 Web 镜像与 revision 匹配。Keycloak 组织邀请和 Mailpit 投递成功，实际邮件链接为副本 HTTPS origin 的 `/identity/realms/<realm>/protocol/openid-connect/registrations`，query 恰有 `client_id`、`response_type`、`token`，client 匹配副本且 response_type 为 code。现有私有脚本仅接受旧假设的 action-token/key，在浏览器打开前退出。副本应用服务已停止，探针 STS 已撤销。MASTER 审核本步后执行。
+
+允许修改：B 私有 `web05/auth-provision.py`、`web05/auth-login.cjs`、本 RUNBOOK。只读核对 `web05/realm.json`，共 4 个文件。禁止改变公开代码、公开测试、候选清单、锁定验收 runner、realm 配置或身份验证方式。
+
+执行：把 `parse_invite` 和浏览器 `invite` 校验都改为上述实际 registrations 路径，精确匹配本轮 HTTPS origin、realm 和上述完整路径。query 必须恰有 `client_id`、`response_type`、`token`，每项只出现一次且非空，拒绝任何未知参数；client_id 必须等于副本 client，response_type 必须为 code。把已核对的 realm/client 随同一份受信浏览器输入传递。发送请求前记录本次可信发出时间。用 Mailpit 消息元数据按精确收件人及晚于该时间筛选，在原有等待期限内只接受唯一匹配邮件；到期无邮件或发现多封立即失败。从该消息中对目标 href 去重，必须恰有一个不同目标且通过上述校验，无或多均失败。浏览器使用空上下文。token 值、原邮件和 URL 不输出。保持注册、回调、组织成员、邮件验证及 opaque owner 原验收。负控拒绝过早或异收件人邮件、多封本轮邮件、多个不同目标，以及异域、异 realm、异 client、错误 response_type、任一参数重复或缺失及未知参数；不保留旧路径回退。
+
+验证（B 租约根目录）：
+
+```bash
+bash web05/auth-stage.sh check
+```
+
+PASS：新形状唯一通过，负控和 Chromium 入口语法通过，记录两脚本新 SHA。删除本步并单独提交 RUNBOOK 证据，再恢复 T5c 实栈。STOP：需接受不匹配的邀请或改变现有正式注册流程。撤回本步私有修改，保留脱敏形状证据。
+
 ## T5c：启动独占栈并核验真实 Worker 入口
 
-前置状态：B Worker 和受信验收接口、浏览器枚举、独占存储与认证材料均已通过，离线候选镜像及源码已对账，副本配置预检通过。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
+前置状态：B Worker 和受信验收接口、浏览器枚举、独占存储与认证材料均已通过，离线候选镜像及源码已对账，副本配置预检通过，T5c-invite 已按实际邀请链接通过离线预检。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
 
 允许修改与专门核对（10 个文件）：新增 `web05/stack-stage.sh`、`web05/compose.stack.yaml`，更新 `web05/stack.env`；只读核对 `bento/deploy/compose.yaml`、`web-a13/compose.override.yaml`、`web-a13/orchestrator-entry.sh`、`web-a13/full-stack/independent-candidates/compose/stage-env.py`、`web-a13/full-stack/independent-candidates/compose/start-seven.sh`、`web-a13/full-stack/independent-candidates/a13/run-live-a13.r2.sh`；更新本 RUNBOOK。存储与认证输出作为只读、已锁定的运行时输入。
 
