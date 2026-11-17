@@ -2,7 +2,7 @@
 
 ## 状态与授权
 
-2026-11-17，交审草稿，审计结论 **Not Executable**。B checkout 的 main、origin/main 与远端 main 在本次核对时均为 `646d11a95b12ae89f9952f9c1f13b4ffa3fcdada`，目标 main 无开放 PR。T0 由作者与 MASTER 关闭。T0 完成、MASTER 审核对应文档指纹并派发后，方可建立实施分支。T1 至 T6 为待审核计划，实施前需复验 T0 的运行时租约及独立审计指纹。
+2026-11-17，已独立审核通过，正在执行。B checkout 的 main、origin/main 与远端 main 在本次核对时均为 `646d11a95b12ae89f9952f9c1f13b4ffa3fcdada`，目标 main 无开放 PR。T0 由作者与 MASTER 关闭。T0 完成、MASTER 审核对应文档指纹并派发后，方可建立实施分支。T0 和 T1 已完成。获审草稿提交为 `35f31fcbde1b43ec806a7685be43c5f61b0d16b0`。T1 的 Task routes Chromium 1/1 及 Web typecheck 通过。
 
 执行者按顺序执行单个步骤，每步最多涉及 10 个文件（含本 RUNBOOK 和专门核对的文件）。PASS 后删本步、修正后续前置状态并提交。STOP 时保留现场，回报最后通过步骤及提交、失败符号、最小复现、脱敏结果和缺少的决定。保留 A 的真实上传优先窗口。A 先合涉及 Readiness、集成入口及共享文件的改动，B 同步并复验受影响入口。涉及共享机器重启、同租约、账号、桶对象或全局 OpenShell 配置时交 MASTER 排期。
 
@@ -83,34 +83,9 @@ STOP：任何归属、授权、指纹或入口无法复核。当前唯一未能�
 
 私有命令的工作目录统一为 B 租约根目录。仓库命令从绑定 checkout 执行。所有 T0 复制来源只读。发布包保留 T2/T3 的材料与校验命令；T4 文件仅保留在私有验收副本。原 WEB-A13 文件、配置、沙盒和库保持原状。新文件计入所属步骤，因当前尚无代码，新增 LOC 在该步提交前据实回读。已有 12 个公开代码文件、1028 LOC 满足基线门槛。私有和附加基线核对范围：T3 原 `host-daemon.mjs::boundContainer/volumeAction` 汇集原文件第 241–260、302–375 行，共 94 个物理行；T4 `service.ts::work` 第 1472–1509 行、`store.ts::dispatchSnapshot/dispatchReserved/schedulableRuns` 第 2184–2249 行，共 96 个非空非注释行；准备故障直接复核第 1233–1280 行的 46 LOC，已计入基线，不重复计。这些附加行未计入 1028 LOC；待实现私有源码的非空、非纯注释行逐个路径记录。
 
-## T1：在原失败详情确认另建
-
-前置状态：T0 PASS，当前基线复验成功，共享顺序由 MASTER 确认。
-
-允许修改：`apps/workspace/web/src/pages.tsx`、`apps/workspace/web/e2e/task.spec.ts`、本 RUNBOOK。
-
-禁止修改：Workspace API、Task 路由契约、提交键与模式、任务列表及详情历史行为。
-
-执行：
-
-1. 复查 A 的合并状态。若 A 已先合，先同步 B 的 main 并复验受影响的现有入口，按新基线回读文件及行数。若验收入口、共享文件或 T0 私有配置变动，先将新基线和草稿 SHA-256 交 MASTER 复审。获派发后从批准的基线建立实施分支。只暂存已审核的 RUNBOOK 并单独提交。用 `git show --format= --name-only HEAD` 核对该提交仅包含本文件，用 `git show HEAD:docs/30-designs/RUNBOOK-WEB-05-EXECUTION-ENVIRONMENT.md | shasum -a 256` 核对提交内容与审计指纹一致；任何不符即 STOP。若 A 在分支建立后先合，则在触及共享文件前同步 A 的合并提交并复审受影响边界。
-2. 在 `TaskDetailsContent` 新增 `const [confirmNewTask, setConfirmNewTask] = useState(false)`。在现有失败准备 section 的重准备按钮下新增 type=button「更换输入或环境，另建任务」，以现有 `!mutable || pending` 为禁用条件，点击显示「另建任务将使用重新选择的输入和当前运行环境，原任务及失败记录会保留。」以及「确认另建」「返回」。返回关闭确认并留原址。确认是 Link，空白前往 `/`，快照前往现有 `/space/` 加编码后的 sourceSpaceId。只有已有目的地表单的提交操作发 POST。确认区域只在失败且 `mutable && !pending` 时可用。保留既有重准备动作。
-3. 在 `task.spec.ts` 的 Task routes 用例的原 snapshot 重准备之前，断言另建入口先显示确认；点击返回后仍原 URL、Task 数不变、原有失败提示仍在。再打开并确认快照入口的 href 等于原来源项目路径，原址的重准备仍返回同 Task。真实流程走确认链接和正式表单，由 T6 核对原失败记录。
-
-验证：
-
-```bash
-pnpm --filter @bento/web exec playwright test task.spec.ts -g 'Task routes retain idempotency'
-pnpm --filter @bento/web typecheck
-```
-
-PASS：focused Chromium 1 项通过，类型检查退出 0，确认和返回均没有提前创建，原址重准备仍通过。
-
-STOP：任一断言不符或来源路由需要契约变化，保留 diff 并交作者复核。
-
 ## T2：构建两版可重复发行构件
 
-前置状态：T0 和 T1 PASS，MASTER 独立审计并派发，已单独提交并回读批准稿。A 的共享顺序已确认。
+前置状态：批准稿已单独提交并回读。失败详情确认另建及原址重准备的 focused Chromium 和 Web typecheck 已通过。A 的共享顺序已确认。
 
 允许修改（8 个文件）：`release/web05/Dockerfile`、`release/web05/policy-old.yaml`、`release/web05/policy-new.yaml`、`release/web05/build.sh`、`release/web05/versions.json`、原 `plugin/deploy/openshell/policy.yaml`（只读）、原 `web08-manifest.json`（只读）、本 RUNBOOK。
 
