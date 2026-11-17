@@ -136,17 +136,7 @@ B 服务器独立构建并验证 `0d5bd5d` 的 Web 镜像、OCI revision、源�
 
 B 专属镜像实机收到 Task 首写 202、重放 200，Run 首写 202、重放 200，均为各一次。Playwright 在回执计数处退出，副本清理和 STS 撤销通过。路由注销需要与注册共用同一个 matcher 对象，原测试使用不同函数而重复记录浏览器重放的回执。已用本地 Chromium 复现函数对象差异并验证修复，Web check（13 项测试）与唯一场景枚举通过。真实同 ID、reservation、marker 和后续场景仍由 T6 验证。
 
-## T6-rotate-ready：等待轮换后的 Orchestrator 就绪
-
-前置状态：独立 B Web 候选 `484dcc7` 与其 Chromium spec 通过锁定验证。浏览器传入 B Web 与存储 CA 后，两次真实上传均通过。原 Run 的 202→200 重放、暂停放行、关页找回、单 Run、marker 1，以及准备失败后的原址修复均通过。轮换脚本确认新版实际挂载、同 Run 仍排队且无 reservation，放行后首次 Run GET 返回 502。轮换脚本用 `up -d` 返回时未等待健康，实际新 Orchestrator 只产生一条失败健康检查。清理后按同一 B 新版配置正常启动，原 Run 完成且权威库仍只有一次 dispatch。原输入匹配、后加文件 absent、marker 1、未见凭据。无需重发该 Run。旧现场与 STS 撤销收据保留。MASTER 审核本步后执行。
-
-允许修改：B 私有 `web05/acceptance/probe.mjs`、同目录 `SHA256SUMS`、B 的 `web05/host.json`、`web05/stack.env` 和本 RUNBOOK。只读核对锁定 `web05/acceptance/run.sh`、`web05/stack-stage.sh`、`web05/runtime-images.json`、`release/web05/versions.json`。禁止改变应用、浏览器 spec、Docker 镜像及旧 Run 权威状态。
-
-执行：仅将 rotate 的 Orchestrator 重建调用增加 `--wait --wait-timeout 60 --no-build --pull never`。在同一 Compose 定位唯一运行的 Orchestrator，从 Docker inspect 验证实际运行健康、所属 B 项目、镜像 ID 等于 B 锁定值，再按原有方式回读配置摘要并核对同一原 Run 仍 queued、reservation 仍为 0。失败保留 hold，禁止放行。保持原 runner 文件指纹和同目录其余八项摘要。只更新 `probe.mjs` 的一条摘要。
-
-验证：运行 `node --check web05/acceptance/probe.mjs`、`bash web05/acceptance/run.sh probe`、全量九项摘要校验，核对 `run.sh` 指纹不变。随后从已停止并已撤销 STS 的状态归档当前账号证据、上传记录和测试控制文件，旧 Orchestrator 的同一轮换 Run 已成功，旧失败 Run 的事实保持。仅清除已归档的测试准备故障输入，原子复位 B 部署本轮默认版本对；逐项比对旧版发布记录。`stack-stage.sh preflight` 必须通过。下一轮 T6 使用新独占 B 临时受邀账号，按锁定场景实测，必须实际证明轮换前和健康后为同一 queued Run 且无 reservation，正常放行后才见一次 dispatch、结果和 marker。
-
-PASS：离线正负控、锁定清单和旧版默认复位通过，删除本步并同次提交指纹和验收记录。健康门禁及完整实测结果留待 T6 记录。STOP：无法验证独占项目、镜像、健康或旧状态，保持现场和原 Run，清理副本作用域内资源。
+上一轮 B 真实场景已通过同键 Run 重放、关页找回、原址准备修复和两次上传。轮换首次读取收到 502。按同一新版启动后，原 Run 成功、一次 dispatch、marker 1，冻结输入匹配且不含新文件，未见凭据。现轮换脚本等待健康并核对 B 容器镜像、所属项目、挂载及同一 Run 的 hold、queued、无 reservation 后才返回。离线探针和九项校验通过，锁定 runner 未改。私有 probe 和清单 SHA-256 分别为 `b86b6e406010c121d96d1483180362975b1efcbb5ddfcc504315d20ac35e833d`、`6ad890fdaae20303c617c285c90ffa6aee62eec770ca8206074240c42746adec`。已归档旧账号和测试控制，保留旧 Run 和入库证据，复位 B 默认版本并通过 preflight。真实健康门禁与完整场景仍由 T6 验证。
 
 ## T6：真实验收、全量校验与 Readiness 收口
 
