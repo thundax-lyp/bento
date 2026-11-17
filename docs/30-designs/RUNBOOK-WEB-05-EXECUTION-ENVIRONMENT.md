@@ -112,37 +112,11 @@ B fixture 的四种固定输入和错误提示拒绝已验证。独占 lease 上
 
 B 受信入口已锁定。`attest <task-id> <run-id|->`、`scan` 以及 `observe` 的同 Run entered 判定已接入 runner，只返回脱敏结果。离线绑定正负控、有效策略正规化和披露匹配计数通过，实际容器观察留到 T5c/T6。九项最终清单 SHA-256 为 `728d258f5740179544f0afcd16264f05b85baa044151e0de97a2ed053381b7f0`，`attest.mjs`（158 LOC）为 `d86101cc8d6cb2f6eaf5ab9c4aa7ecb2c52874d8fc2af9dfebdb73bda383236e`。后续只读回核清单。
 
-## T5：固定真实验收脚本与控制面探针
-
-前置状态：已通过私有 runner 离线预检，B Worker 和受信观测签名已核对，固定入口和指纹已回读。
-
-允许修改：新增 `apps/workspace/web/acceptance/web-05-environment.spec.ts`，在 `public-files.json` 中紧接 WEB-A13 spec 登记新文件，再更新本 RUNBOOK。复用现有 A13 的隔离 HTTPS 配置与结果读取路径。通过上述固定签名访问受信观测。
-
-T5 当前专门核对 6 个公开文件（待增 spec、`public-files.json`、本 RUNBOOK、`apps/workspace/web/playwright.web-a13.config.ts`、`apps/workspace/web/acceptance/web-a13.spec.ts`、`apps/workspace/web/src/pages.tsx`）。前三个为产物，后三个只读核对入口。T5 实际只读的私有文件为 `web05/acceptance/run.sh`、`web05/acceptance/SHA256SUMS`，加上上述公开文件共 8 个。Chromium spec 通过 runner 调用上述控制命令，读取浏览器正常接口、页面和下载结果，以及 runner 脱敏观测。控制文件、原始凭据和 SQLite 由受信侧读取。
-
-禁止修改：A13 断言、公共部署默认、文件快照实现、Service Store 或公共 DTO。
-
-执行：
-
-1. 场景名固定为 `WEB-05 real execution environment`。从邀请登记的新账号 storage state 起步，先断言任务和项目列表为空。用主页空白表单提交。以浏览器拦截单次成功响应为准，只丢向浏览器的回执，后端实际受理。在原页同正文重按提交，记录 UUID 键相同、首个 202、重放 200、原 Task ID 和版本相同。对首 Run 同样丢一次回执并同键重试，查询原 Task 的 Run 列表确认为一条，执行探针标记只写一次。确认原 Run 的公开状态是 `running`，在首条 Run 提交前启用 active-pause，收到首个 202 并读到 Run ID 后即非阻塞启动 `watch-active`，保留进程句柄，然后在同页重放。通过 runner 轮询原 Task ID 与 Run ID 的精确 `entered:true` 见证，核对同一 Run 仍为 `running`。先关闭页面，再执行 `active-release`，随后等待 watcher 正常退出。禁止在关闭页面或放行前等待 watcher 结束。在浏览器关闭期间通过受信侧等待原 Run ID 进入成功终态。随后用同一账号的新上下文从 `/runs` 找回原地址，读取同一 Run 的结果和补丁；确认仅一条 Run，标记仅写一次。
-2. 另建受控失败 Task，故障只作用于 B 的目标准备请求。确认显示脱敏失败，恢复后在原 URL 并发调用两次 prepare（空正文无键），核对只有一次实际重准备、原 ID/inputDigest/version 不变，随后可执行。随后按 A13 的正常入口新建项目并上传首个路径。在旧默认下以该路径创建快照并制造失败 Task。保存原 URL、Task ID、输入摘要、版本和公开失败码。保留该 Task，在步骤 3 的唯一一次轮换后继续确认另建及回读。Web 新建请求无可覆盖版本字段。
-3. 使用步骤 2 的同一个项目及旧默认，复用 A13 的正常项目文件选择流程创建另一 Task，记录第一个路径、内容摘要和实际环境。调用 T4 的 `hold` 保持领取前状态，提交 Run，核对原 Run ID 已持久排队。排队后在该项目页用「文件」选择内容和路径均不同的第二个文件，点击「确认上传」，观察完成后重新打开项目核对新增路径。通过固定发布入口切至新版，保留同部署数据库、项目对象和已有绑定，回读原 Run 仍排队、ID 未变。释放同一 Run，核对其实际沙盒内读取到冻结字节、第二个路径缺失、命令和文件操作均发生在分配的沙盒。由受信观察核对镜像 digest 与实际生效策略 digest 为旧版，并据此计算实际环境版本，与 Task 冻结值一致。API 或控制命令中的版本回显只用于对账。随后在旧 Task 上续写，核对原 Session、sandbox、volume。在原失败详情确认另建，进入正式项目选文件表单，选择两个路径并提交。核对新 Task ID、新输入摘要和新版本，从受信侧核对该 Task 的实际镜像和策略为新版，且看不到旧 Task 未交付写入、绑定独立。回读原失败 URL，确认旧 Task 仍为准备失败且原 ID、输入摘要、环境版本及公开失败码一致。完成回读后恢复单 Task 准备故障，从原地址重准备，核对原输入与版本及实际镜像和策略均为旧版。完成两组断言只切换一次默认版本。
-4. 将受控合成标记用于披露扫描的正控制，证明扫描器能发现注入的明文样本。真实密钥值仅由私有扫描程序从受信材料读取，把浏览器 DOM、公开 API/事件与下载结果通过 stdin 交给 `run.sh scan`，受信侧合并运行记录，并确认匹配总数为 0。沙盒进程中探测凭据变量时只返回是否存在。失败输出避免原值和原始日志。
-
-验证：
-
-```bash
-BENTO_WEB_A13_LIST_ONLY=1 pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --list acceptance/web-05-environment.spec.ts
-pnpm --filter @bento/web typecheck
-```
-
-PASS：精确列出新增 Chromium 场景 1 项，类型通过，私有 runner 的版本/失败切换和泄露正控制通过 T4 的预检。
-
-STOP：必须增加公共协议、改 A13 语义或授权不明确。保留原 fixture 和现场，回交作者。
+公开浏览器场景 `apps/workspace/web/acceptance/web-05-environment.spec.ts` 已登记。A13 配置 list-only 精确枚举 1 项 Chromium，Web typecheck 通过。实机功能顺序由该场景和本 RUNBOOK T6 共同固定，证据待实际运行。
 
 ## T5c：启动独占栈并核验真实 Worker 入口
 
-前置状态：B Worker 和受信验收接口、T5 浏览器枚举、独占存储与认证材料均已通过。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
+前置状态：B Worker 和受信验收接口、浏览器枚举、独占存储与认证材料均已通过。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
 
 允许修改与专门核对（10 个文件）：新增 `web05/stack-stage.sh`、`web05/compose.stack.yaml`，更新 `web05/stack.env`；只读核对 `bento/deploy/compose.yaml`、`web-a13/compose.override.yaml`、`web-a13/orchestrator-entry.sh`、`web-a13/full-stack/independent-candidates/compose/stage-env.py`、`web-a13/full-stack/independent-candidates/compose/start-seven.sh`、`web-a13/full-stack/independent-candidates/a13/run-live-a13.r2.sh`；更新本 RUNBOOK。存储与认证输出作为只读、已锁定的运行时输入。
 
@@ -172,7 +146,7 @@ STOP：原数据挂载、凭据或 realm 错配，或存在 Worker/沙盒实际�
 执行：
 
 1. 核对最终锁定 runner 及 存储与 T5c 启动脚本指纹，运行 `run.sh verify`。runner 依次调用 `storage-stage.sh issue`、`stack-stage.sh start`、`stack-stage.sh invite acceptance`。新邀请只作用于 B 副本 realm/client 和本轮临时邮箱，不使用 T5c 的探针账号。以该受邀账号生成受控 storage state，运行唯一真实场景，记录启动指纹及各断言结果。runner 内固定使用 `pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --workers=1 acceptance/web-05-environment.spec.ts`。真实模式禁用重试、截图、视频、trace 和不必要的日志。
-2. 在 T5 场景指定的轮换点首次实机执行 `run.sh rotate <task-id> <run-id>`。核对目标处于 hold、原 Run 为 `queued` 且无 `run_dispatches` 记录。停止并等待唯一旧 Orchestrator 退出。在停机窗口原子更换 `web05/host.json` 的 `imageDigest/policyDigest` 和 `web05/stack.env` 的 `BENTO_EXECUTION_ENVIRONMENT_VERSION`，启动前重算并对账。复用原 B 隔离副本的同一 Compose 项目与参数，执行 `up -d --no-deps --force-recreate orchestrator` 只重建 Orchestrator，使单文件 bind mount 指向新 inode。确认只有一个运行中的实例，从容器内读回已挂载 JSON 的两个摘要及容器环境版本，与新版记录核对，只输出匹配结果。保持同一业务库、authority 库、Temporal namespace/task queue、Gateway、对象、控制文件与绑定。确认同一 Run 仍排队且无 reservation，再 release，核对领取的是同一 Run。
+2. 在浏览器场景指定的轮换点首次实机执行 `run.sh rotate <task-id> <run-id>`。核对目标处于 hold、原 Run 为 `queued` 且无 `run_dispatches` 记录。停止并等待唯一旧 Orchestrator 退出。在停机窗口原子更换 `web05/host.json` 的 `imageDigest/policyDigest` 和 `web05/stack.env` 的 `BENTO_EXECUTION_ENVIRONMENT_VERSION`，启动前重算并对账。复用原 B 隔离副本的同一 Compose 项目与参数，执行 `up -d --no-deps --force-recreate orchestrator` 只重建 Orchestrator，使单文件 bind mount 指向新 inode。确认只有一个运行中的实例，从容器内读回已挂载 JSON 的两个摘要及容器环境版本，与新版记录核对，只输出匹配结果。保持同一业务库、authority 库、Temporal namespace/task queue、Gateway、对象、控制文件与绑定。确认同一 Run 仍排队且无 reservation，再 release，核对领取的是同一 Run。
 3. 实机结束或失败时执行 `bash web05/acceptance/run.sh cleanup`，依次调用 `stack-stage.sh stop` 与 `storage-stage.sh revoke`，核对副本应用服务退出、短授权已撤销。若本轮通过且所有 Run 终态、无活动 Worker 与待清沙盒，按 B transport 与 Gateway 的所有权记录撤场专用 transport、relay 与 Gateway，保留发布材料及证据。失败或状态不明时保留所需副本 Gateway、transport 与 Run 证据，避免更换任务或重发写入遮盖失败。所有路径按原已签核脚本执行，前后 SHA 必须与锁定记录一致。
 4. 所有真实断言通过后将 WEB-05 改为「已实现」，记录日期、候选版本、真实验证范围、结果与未覆盖项。长期配置行为仍引用现有 Task 接口及部署说明。删除本 RUNBOOK 及仅指向它的引用，再运行最终验证。全部通过后按 WORKER/PR 规则交付。若最终验证失败，保留失败证据、恢复本步骤的 RUNBOOK 和此前的 Readiness 状态，交 MASTER 处理。
 5. 完成真实验收、清理及 Readiness 迁移后，同一候选版本运行一次下列完整本地验证，保留本机和实机证据边界。当前默认 e2e 共 20 项，随 A 同步后记录实际数量；所有必要场景必须执行。仓库既有可选 Temporal 场景的 skip 单列说明。
@@ -212,6 +186,6 @@ for link in links:
 PYLINK
 ```
 
-PASS：迁移后的完整本地检查和 WEB-05 链接校验通过，实际 WEB-05 Chromium 1/1 无跳过，首次实机轮换的跨重启排队与容器内摘要断言、T5 各项功能断言、正控制与秘密零匹配通过，本地检查及 Chromium 通过，A13 和 A 资源归属未改变。
+PASS：迁移后的完整本地检查和 WEB-05 链接校验通过，实际 WEB-05 Chromium 1/1 无跳过，首次实机轮换的跨重启排队与容器内摘要断言、浏览器场景各项功能断言、正控制与秘密零匹配通过，本地检查及 Chromium 通过，A13 和 A 资源归属未改变。
 
 STOP：实机证据或范围核对缺失、命令失败、版本漂移、真实 Worker 或 OpenShell 不可用。记录受影响断言，维持 Readiness「部分实现」。
