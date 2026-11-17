@@ -4,7 +4,7 @@
 
 ## 执行者契约
 
-T0 由作者与审核者完成。剩余验证和收口按 T3，依现有 WORKER 规则 PASS 后逐步提交。STOP 时保留现场，报告最后 PASS、触发断言、路径和脱敏输出。已完成的本地验收只用临时本地 DB 和本地宿主 fixture，不依赖 A 独占 OpenShell 租约。B 先合共享 Readiness，T3 等 B 合入并同步复验后再改该文件。上游独立改动若改变本 RUNBOOK 固定的入口或契约，停止交还作者。
+T0 由作者与审核者完成。剩余验证和收口按 T3，依现有 WORKER 规则 PASS 后逐步提交。STOP 时保留现场，报告最后 PASS、触发断言、路径和脱敏输出。已完成的本地验收只用临时本地 DB 和本地宿主 fixture，不依赖 A 独占 OpenShell 租约。MASTER 已确认 A 的 WEB-07 检查点 PR 先合。B 继续实栈，待安全点后同步主线并复验。上游独立改动若改变本 RUNBOOK 固定的入口或契约，停止交还作者。
 
 ## 目标、依据与范围
 
@@ -54,21 +54,24 @@ pnpm exec prettier --check docs/30-designs/RUNBOOK-WEB-07-HISTORY-CHECKPOINT.md
 
 PASS：版本与审核结论可追溯，运行契约一致。STOP：工作树有归属不明的改动、独立审核未通过或入口与草稿不同。继续前记录具体差异。
 
-### T3：同步 B 后记录覆盖并收口
+### T3：同步主线并收口 WEB-07 本地覆盖
 
-前置状态：新 retry 预检及首次卷恢复门禁已提交，focused HTTP 用例和 Orchestrator 完整检查通过。MASTER 确认 B 的 Readiness 已先合入，当前分支已同步其合入点。允许修改：`docs/40-readiness/CURRENT-READINESS.md` 和删除本 RUNBOOK。禁止修改：原实栈草稿、WEB-05 行、WEB-07 状态和外部配置。
+前置状态：T2 提交 `025c87995d32fac8f2a58a1563c8971f941daccf` 已通过 focused HTTP 和完整 Orchestrator 检查，修订稿已独立复核，A 当前交付顺序已由 MASTER 确认。允许修改：`docs/40-readiness/CURRENT-READINESS.md` 的 WEB-07 行和删除本 RUNBOOK。禁止修改：原实栈草稿、其他 Readiness 行、WEB-07 状态和外部配置。
 
 执行：
 
-1. 在 WEB-07 行只追加实际验证 SHA 和本地覆盖：缺失/损坏的 DSH checkpoint 在 retry 受理前拒绝，受理后到卷恢复前失效会阻断且不写卷。保留「部分实现」及真实 OpenShell 安全重试缺口。
-2. 完成验证后删除本 RUNBOOK，检查差异和残留引用，按原 WORKER 流程交付。
+1. 运行 `git fetch origin main` 和 `git merge --no-edit origin/main` 同步最新主线，要求 `git merge-base --is-ancestor origin/main HEAD` 成功。当前核对的主线 `e2a45a4661fdbe1cf8a17060164392eab3e4a592` 已是祖先。若发生冲突或上游改变本任务契约，STOP 并记录实际差异。
+2. 在 WEB-07 行追加 T2 提交短 SHA `025c879` 和本地证据。记录缺失或损坏的 DSH 检查点在新 retry 受理前返回 409 且无 attempt/卷恢复，已受理后到首次恢复前失效会阻断且不改卷，同键重放保留原回执。保留「部分实现」、原本地证据及真实 OpenShell 安全重试缺口。
+3. 删除本 RUNBOOK，检查无残留引用。按下列命令验证最终工作树。PASS 后只提交 WEB-07 行和本文件删除。推送本任务分支并创建或恢复同一个 PR，按 WORKER 流程进入 Ready、核对当前 HEAD 的必需 CI 和 Codex 审查结论、处理反馈并按授权合并。合入后同步 A 并清理已合并的任务分支，保留未跟踪的 OpenShell 后续稿。
 
 验证：
 
 ```bash
+git merge-base --is-ancestor origin/main HEAD
 pnpm check
 pnpm --filter @bento/web test:e2e e2e/task.spec.ts --grep 'Task routes retain idempotency|任务详情回读取消状态'
 git diff --check
+git diff --name-status
 ```
 
-PASS：pnpm 检查通过，两个 Chromium focused 回归实际运行，Readiness 如实记录本地覆盖。真实 OpenShell 验收留在独立后续项。STOP：B 未合入时保留 T2 的独立成果，T3 等待。任何回归失败时不写完成证据。
+PASS：`pnpm check` 通过，两个 Chromium focused 用例实际运行。相对 T2 的未提交差异仅为 WEB-07 证据行和本 RUNBOOK 删除。T3 的工作树验证通过后才提交，PR 合并仍须满足实时门禁。STOP：主线冲突、契约漂移、回归失败或超出允许差异时保留现场并报告。真实 OpenShell 验收留在独立后续项。
