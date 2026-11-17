@@ -104,24 +104,7 @@ T4 已通过离线 `bash web05/acceptance/run.sh probe`，覆盖目标及对照 
 
 B 独占 MinIO 已通过 `bash web05/storage-stage.sh prepare` 和 `probe`。核对了新项目与卷、桶、TLS、限定前缀的 STS 及越界拒绝。探针短授权已撤销，session 与 env 已移除。原 A13 S3 保持运行。后续复用此副本的 `storage-stage.sh issue`、`revoke`。发布材料中 `storage-stage.sh` 191 LOC，`main.go` 356 LOC，`operations.go` 360 LOC。脚本 SHA-256 为 `003e0fbebeaab96239fb9087a11d5d1346f3a67b410cd222bfff594260f13a93`，scope 为 `058860b381e75f75b27bf670b2d4be86cd15b2a69e54193f0222f845af7d30ae`，Linux STS 二进制为 `437773f345e921a54b085218b4986c3a2e1f68bf5c16626e4f6850b932a66281`。
 
-## T5b：生成 B 副本的邀请与登录材料
-
-前置状态：独占存储预检已通过，副本 scope 与 HTTPS 回环 origin 已固定。只生成独立 realm 与邀请材料，实际登录在 T5c。
-
-允许修改与专门核对（8 个文件）：新增 `web05/auth-stage.sh`、`web05/realm.json`、`web05/auth-provision.py`、`web05/auth-login.cjs`；只读核对 `web-a13/full-stack/realm-candidate.json`、`web-a13/full-stack/a13-auth/provision.py`、`web-a13/full-stack/a13-auth/login.cjs`；更新本 RUNBOOK。
-
-执行：用三份只读模板生成副本新 realm、OIDC client 及邀请和 Chromium 登录入口。新 origin 来自 B 副本配置，与新回环端口和 SAN 匹配。凭据在运行时从受控入口生成，输出状态只进入副本目录。邀请签名固定为 `auth-stage.sh invite probe|acceptance`，范围只限副本 realm、client 和 B 本轮临时邮箱。两种用途各建独立受邀账号，真实验收只使用 `acceptance`，正常登记和登录均走已有入口，不加载原 storage state。
-
-验证（B 租约根目录）：
-
-```bash
-bash web05/auth-stage.sh stage
-bash web05/auth-stage.sh check
-```
-
-PASS：离线比对副本 realm/client/origin，确认邀请、登记和登录脚本均只读取副本路径，记录四个产物指纹。实际 OIDC 与登录由 T5c 验证。
-
-STOP：配置仍指向原 realm、client、邮箱或状态路径。用 `bash web05/auth-stage.sh undo` 只回收本步新生成材料，保留脱敏证据。PASS 后只提交剩余 RUNBOOK 的证据及步骤移除。
+B 副本认证材料的 `bash web05/auth-stage.sh stage` 与 `check` 已通过。副本 realm/client、Mailpit、回环 origin 和邀请链接的异源、异 realm 负例已验证；组织邀请、邮件登记与 Chromium 实际登录留待 T5c。后续调用 `auth-stage.sh invite probe|acceptance`。 `auth-stage.sh`（73 LOC）SHA-256 为 `8c908fe27b236d45e3e0e24193486268c70bc14561ee893166ac38a4862eb8db`，`auth-provision.py`（139 LOC）为 `25c4c6ed7e9a922a130fbaf8c27b65167fbbb36bd36f08c5eda2cd073a058a42`，`auth-login.cjs`（58 LOC）为 `e06b5a308bae897c0942e984b97384a353f05a4fa2efe5690fc9c63ee2252a0d`，`realm.json` 为 `c0735cc8e057d46f0bf16da9d36dec8bd661cc8908d0123023ee15ca69d3e3fe`。
 
 ## T4a：在 B 私有 Worker fixture 接入真实 SDK 与暂停见证
 
@@ -197,11 +180,11 @@ STOP：必须增加公共协议、改 A13 语义或授权不明确。保留原 f
 
 ## T5c：启动独占栈并核验真实 Worker 入口
 
-前置状态：T4a/T4b 验收接口、T5 浏览器枚举、独占存储与 T5b 认证材料均已通过。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
+前置状态：T4a/T4b 验收接口、T5 浏览器枚举、独占存储与认证材料均已通过。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
 
-允许修改与专门核对（10 个文件）：新增 `web05/stack-stage.sh`、`web05/compose.stack.yaml`，更新 `web05/stack.env`；只读核对 `bento/deploy/compose.yaml`、`web-a13/compose.override.yaml`、`web-a13/orchestrator-entry.sh`、`web-a13/full-stack/independent-candidates/compose/stage-env.py`、`web-a13/full-stack/independent-candidates/compose/start-seven.sh`、`web-a13/full-stack/independent-candidates/a13/run-live-a13.r2.sh`；更新本 RUNBOOK。存储与 T5b 输出作为只读、已锁定的运行时输入。
+允许修改与专门核对（10 个文件）：新增 `web05/stack-stage.sh`、`web05/compose.stack.yaml`，更新 `web05/stack.env`；只读核对 `bento/deploy/compose.yaml`、`web-a13/compose.override.yaml`、`web-a13/orchestrator-entry.sh`、`web-a13/full-stack/independent-candidates/compose/stage-env.py`、`web-a13/full-stack/independent-candidates/compose/start-seven.sh`、`web-a13/full-stack/independent-candidates/a13/run-live-a13.r2.sh`；更新本 RUNBOOK。存储与认证输出作为只读、已锁定的运行时输入。
 
-执行：`stack-stage.sh stage` 从上述模板复用七服务启动与 HTTPS/Chromium CA 方式。全部项目名、状态目录、issuer、Temporal 队列与 S3 scope 指向副本。Keycloak、MySQL、Postgres、Temporal、Mailpit 使用新命名卷，Workspace 及 Orchestrator SQLite 从副本空目录起步。保留 `stack-stage.sh start`、`invite probe|acceptance`、`stop` 签名，invite 只转交 T5b 的同名副本入口。
+执行：`stack-stage.sh stage` 从上述模板复用七服务启动与 HTTPS/Chromium CA 方式。全部项目名、状态目录、issuer、Temporal 队列与 S3 scope 指向副本。Keycloak、MySQL、Postgres、Temporal、Mailpit 使用新命名卷，Workspace 及 Orchestrator SQLite 从副本空目录起步。保留 `stack-stage.sh start`、`invite probe|acceptance`、`stop` 签名，invite 只转交 `auth-stage.sh` 的同名副本入口。
 
 `stack-stage.sh probe` 先 `storage-stage.sh issue`，再启动副本，核对健康、TLS、OIDC discovery 与新 realm/client 所有权。以 `invite probe` 创建仅本轮探针账号，走正常登记路径并启动一条真实 Worker Run，验证可实际领取、进入活跃探针、解除后读取真实沙盒命令或文件结果。完成后停止副本应用服务并调用 `storage-stage.sh revoke`。Gateway 和 transport 在无活动 Run 且所有权匹配时留给 T6。探针账号与状态不作为 T6 的受邀账号或登录输入。
 
@@ -218,7 +201,7 @@ STOP：原数据挂载、凭据或 realm 错配，或存在 Worker/沙盒实际�
 
 ## T6：真实验收、全量校验与 Readiness 收口
 
-前置状态：控制、浏览器、独占存储、T5b 认证和 T5c 实栈启动探针均已通过。B 独占窗口与脚本指纹复核成功。
+前置状态：控制、浏览器、独占存储、认证和 T5c 实栈启动探针均已通过。B 独占窗口与脚本指纹复核成功。
 
 允许修改：[Readiness](../40-readiness/CURRENT-READINESS.md) 的 WEB-05 一行、本 RUNBOOK、隔离副本的 `web05/host.json` 和 `web05/stack.env`。另只读核对 `web05/acceptance/run.sh`、`web05/acceptance/SHA256SUMS`、`web05/stack-stage.sh`、`web05/storage-stage.sh`、`release/web05/versions.json`、`apps/workspace/web/acceptance/web-05-environment.spec.ts`，共 10 个文件。runner 的探针和 Compose 覆盖通过锁定清单复核，运行时依赖沿用已装配副本。实机仅使用 T0 审核后的副本资源。
 
