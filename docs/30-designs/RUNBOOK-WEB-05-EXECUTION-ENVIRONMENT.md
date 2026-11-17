@@ -102,37 +102,9 @@ T4 已通过离线 `bash web05/acceptance/run.sh probe`，覆盖目标及对照 
 5. `run.sh observe <task-id> <run-id>` 只输出匹配状态、计数和非秘密摘要。此步用合成 SQLite、控制 JSON 和 Worker 探针输入，离线验证调度候选过滤、故障匹配、活跃状态判定、放行及泄露扫描正控制。不启动或连接真实栈，不执行真实领取、Worker 或沙盒观察。
 6. 锁定 `run.sh verify` 和 `cleanup` 的 T6 调用。前者从租约根使用 `bash web05/storage-stage.sh issue`、`bash web05/stack-stage.sh start`、`bash web05/stack-stage.sh invite acceptance`，然后运行 Playwright。后者调用 `bash web05/stack-stage.sh stop` 与 `bash web05/storage-stage.sh revoke`。T5a/T5c 实现这些固定签名，T6 不改已有 runner。
 
-## T5：固定真实验收脚本与控制面探针
-
-前置状态：已通过私有 runner 离线预检，固定入口和指纹已回读。
-
-允许修改：新增 `apps/workspace/web/acceptance/web-05-environment.spec.ts`，在 `public-files.json` 中紧接 WEB-A13 spec 登记新文件，再更新本 RUNBOOK。复用现有 A13 的隔离 HTTPS 配置与结果读取路径。T0 须固定必要私有接线的文件和命令。
-
-T5 当前专门核对 6 个公开文件（待增 spec、`public-files.json`、本 RUNBOOK、`apps/workspace/web/playwright.web-a13.config.ts`、`apps/workspace/web/acceptance/web-a13.spec.ts`、`apps/workspace/web/src/pages.tsx`）。前三个为产物，后三个只读核对入口。T5 实际只读的私有文件为 `web05/acceptance/run.sh`、`web05/acceptance/SHA256SUMS`，加上上述公开文件共 8 个。Chromium spec 通过 runner 调用上述控制命令，读取浏览器正常接口、页面和下载结果，以及 runner 脱敏观测。控制文件、原始凭据和 SQLite 由受信侧读取。
-
-禁止修改：A13 断言、公共部署默认、文件快照实现、Service Store 或公共 DTO。
-
-执行：
-
-1. 场景名固定为 `WEB-05 real execution environment`。从邀请登记的新账号 storage state 起步，先断言任务和项目列表为空。用主页空白表单提交。以浏览器拦截单次成功响应为准，只丢向浏览器的回执，后端实际受理。在原页同正文重按提交，记录 UUID 键相同、首个 202、重放 200、原 Task ID 和版本相同。对首 Run 同样丢一次回执并同键重试，查询原 Task 的 Run 列表确认为一条，执行探针标记只写一次。确认原 Run 的公开状态是 `running`，先由可信探针保持该 Run 活跃，再关闭页面。关闭后释放探针，在浏览器关闭期间通过受信侧等待原 Run ID 进入成功终态。随后用同一账号的新上下文从 `/runs` 找回原地址，读取同一 Run 的结果和补丁；确认仅一条 Run，标记仅写一次。
-2. 另建受控失败 Task，故障只作用于 B 的目标准备请求。确认显示脱敏失败，恢复后在原 URL 并发调用两次 prepare（空正文无键），核对只有一次实际重准备、原 ID/inputDigest/version 不变，随后可执行。随后按 A13 的正常入口新建项目并上传首个路径。在旧默认下以该路径创建快照并制造失败 Task。保存原 URL、Task ID、输入摘要、版本和公开失败码。保留该 Task，在步骤 3 的唯一一次轮换后继续确认另建及回读。Web 新建请求无可覆盖版本字段。
-3. 使用步骤 2 的同一个项目及旧默认，复用 A13 的正常项目文件选择流程创建另一 Task，记录第一个路径、内容摘要和实际环境。调用 T4 的 `hold` 保持领取前状态，提交 Run，核对原 Run ID 已持久排队。排队后在该项目页用「文件」选择内容和路径均不同的第二个文件，点击「确认上传」，观察完成后重新打开项目核对新增路径。通过固定发布入口切至新版，保留同部署数据库、项目对象和已有绑定，回读原 Run 仍排队、ID 未变。释放同一 Run，核对其实际沙盒内读取到冻结字节、第二个路径缺失、命令和文件操作均发生在分配的沙盒。由受信观察核对镜像 digest 与实际生效策略 digest 为旧版，并据此计算实际环境版本，与 Task 冻结值一致。API 或控制命令中的版本回显只用于对账。随后在旧 Task 上续写，核对原 Session、sandbox、volume。在原失败详情确认另建，进入正式项目选文件表单，选择两个路径并提交。核对新 Task ID、新输入摘要和新版本，从受信侧核对该 Task 的实际镜像和策略为新版，且看不到旧 Task 未交付写入、绑定独立。回读原失败 URL，确认旧 Task 仍为准备失败且原 ID、输入摘要、环境版本及公开失败码一致。完成回读后恢复单 Task 准备故障，从原地址重准备，核对原输入与版本及实际镜像和策略均为旧版。完成两组断言只切换一次默认版本。
-4. 将受控合成标记用于披露扫描的正控制，证明扫描器能发现注入的明文样本。真实密钥值仅由私有扫描程序从受信材料读取，浏览器 DOM/接口、公开消息和事件、摘要、检查、补丁及受控范围运行记录匹配数均为 0。沙盒进程中探测凭据变量时只返回是否存在。失败输出避免原值和原始日志。
-
-验证：
-
-```bash
-BENTO_WEB_A13_LIST_ONLY=1 pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --list acceptance/web-05-environment.spec.ts
-pnpm --filter @bento/web typecheck
-```
-
-PASS：精确列出新增 Chromium 场景 1 项，类型通过，私有 runner 的版本/失败切换和泄露正控制通过 T4 的预检。
-
-STOP：必须增加公共协议、改 A13 语义或授权不明确。保留原 fixture 和现场，回交作者。
-
 ## T5a：装配 B 副本的独占存储与短期授权
 
-前置状态：WEB-05 runner 控制与浏览器场景已验证；启用 B 独占窗口。原 A13 的 S3 容器、桶及长期身份保留。八个原 Compose 服务镜像均在 B 本地。
+前置状态：已通过私有 runner 离线控制预检；启用 B 独占窗口。此步独立于浏览器场景和 Worker 探针。原 A13 的 S3 容器、桶及长期身份保留。八个原 Compose 服务镜像均在 B 本地。
 
 允许修改与专门核对（10 个文件）：新增 `web05/storage-stage.sh`、`web05/storage/compose.s3.yaml`、`web05/storage/scope.json`、`web05/storage/sts/main.go`、`web05/storage/sts/operations.go`；原 `web-a13/s3.candidate.override.yaml`、`web-a13/s3.cors-single-origin.override.yaml`、本地锁定 STS 源码 `debug-workspace/web08-sts-r2/main.go` 与 `debug-workspace/web08-sts-r2/operations.go`（四者只读）；更新本 RUNBOOK。Go 锁定依赖及证书和授权运行产物由固定复制及签发步骤生成，凭据不提交。
 
@@ -151,7 +123,7 @@ STOP：权限、证书、镜像或桶归属不明，或正负控制失败。用 
 
 ## T5b：生成 B 副本的邀请与登录材料
 
-前置状态：T5a 独占存储预检及 T5 浏览器枚举已通过。
+前置状态：T5a 独占存储预检已通过。只生成独立 realm 与邀请材料，实际登录在 T5c。
 
 允许修改与专门核对（8 个文件）：新增 `web05/auth-stage.sh`、`web05/realm.json`、`web05/auth-provision.py`、`web05/auth-login.cjs`；只读核对 `web-a13/full-stack/realm-candidate.json`、`web-a13/full-stack/a13-auth/provision.py`、`web-a13/full-stack/a13-auth/login.cjs`；更新本 RUNBOOK。
 
@@ -168,9 +140,81 @@ PASS：离线比对副本 realm/client/origin，确认邀请、登记和登录�
 
 STOP：配置仍指向原 realm、client、邮箱或状态路径。用 `bash web05/auth-stage.sh undo` 只回收本步新生成材料，保留脱敏证据。PASS 后只提交剩余 RUNBOOK 的证据及步骤移除。
 
+## T4a：在 B 私有 Worker fixture 接入真实 SDK 与暂停见证
+
+前置状态：T4 离线预检和 B transport 已通过。MASTER 审核本步骤后执行。
+
+允许修改及专门核对（10 个文件）：修改 `web05/bootstrap/base.ts`、`web05/acceptance/worker-probe.ts`、`web05/acceptance/run.sh`、`web05/acceptance/SHA256SUMS`；新增 `web05/acceptance/watch-active.mjs`；只读核对原 `bootstrap/base.ts`、`worker-loopback.mjs`、`debug-workspace/execution/web08-worker.mjs` 与两版 `host-daemon.mjs`；更新本 RUNBOOK。现有 companion 文件从锁定 bootstrap 目录复用，禁止修改原 A13、公开代码、发布适配器、Worker 镜像或模型 provider。
+
+执行：
+
+1. 副本 `base.ts` 复用已经装配的 fixture、固定输入模式与本 Run grant，只接受四个固定测试提示 `WEB05 blank`、`WEB05 frozen`、`WEB05 continue`、`WEB05 isolated`。通过原 SDK/Worker 权限在绑定沙盒内实测文件及命令。blank 只写一次 `web05-marker.txt`；frozen 读 `web05-first.txt` 的 `base\n`，确认 `web05-second.txt` 缺失并写入 marker；continue 核对 marker 已存在并追加一次；isolated 核对两份文件均存在、marker 缺失，保留只读结果。第二份文件为 `new\n`。所有输入输出为合成文本，结果仍经既有 Run 持久化、发布及补丁。固定 fixture 不需要启用官方模型启动参数。运行时从 `/app` 使用私有 fixture 源，Worker 不读取浏览器 storage state、业务 SQLite 或原始凭据。
+2. `run.sh watch-active <task-id> <run-id>` 在可信宿主读取 `control.json.activePause.taskId` 和业务 SQLite 的匹配 Run，最多等 30 秒直至同一 Run 为 `running` 且找到对应的唯一 B Run lease，再在该目录放置 `web05-active.sock`，归同 UID，0600。仅已 armed 的 Worker grant 在既有 `/run/web08/run` 挂载中连接同一 lease socket。对 `ENOENT` 或 `ECONNREFUSED` 最多重试 30 秒，连接后提交自己 grant 的 Run ID。未 armed 不等待；其他错误立即失败。不新增容器挂载和服务端口。宿主只在匹配原 Run、原 lease 的连接完成握手后原子写 `web05/acceptance/active/<run-id>.json`，字段固定为 `{taskId,runId,entered:true}`。现有 `active-release` 仍核对该见证和 running 状态，仅清空原 `activePause`；watch 发现已清空后向原连接返回放行并回收 socket。超时、错误绑定、第二连接或失去 lease 即退出且不放行。T5c/T6 保留实际 SDK 和暂停断言。
+3. 在合成 fixture 中验证固定提示识别、握手、见证、原 Run 放行及清理。错误 Run、错误 Task、第二连接或错误提示均失败，无见证且无放行。只在现有锁定材料上增加 `watch-active.mjs` 与副本 `base.ts` 指纹，运行后记录替代 T4 清单的新 SHA。
+
+验证（B 租约根目录）：
+
+```bash
+node --check web05/bootstrap/base.ts
+node --check web05/acceptance/worker-probe.ts
+node web05/acceptance/watch-active.mjs --fixture
+sha256sum -c web05/acceptance/SHA256SUMS
+```
+
+PASS：离线 fixture 正负控制通过，完整实机观察留到 T5c/T6。STOP：需要更改公开协议、发布适配器或 Worker 挂载，或无法按原 Run 所有权绑定。撤回本步私有改动与自有合成 socket，保留 T4 证据。
+
+## T4b：固定浏览器使用的脱敏观测命令
+
+前置状态：T4a 已通过固定输入验证，T3 两版适配器证据保持有效。
+
+允许修改及专门核对（9 个文件）：修改 `web05/acceptance/run.sh`、`web05/acceptance/probe.mjs`、`web05/acceptance/SHA256SUMS`；新增 `web05/acceptance/attest.mjs`；只读核对 T3 `release/web05/host-probe.mjs`、`release/web05/versions.json`、`web05/web08-manifest.json` 和仓库 `store.ts`；更新本 RUNBOOK。
+
+执行：
+
+1. `run.sh attest <task-id> <run-id|->` 从只读业务库和 B 绑定记录校验 Task/Run 归属，再复用 T3 的 Docker Image ID 与有效策略检查。结果只返回 `{matched,versionMatches,bindingDigest,markerCount,firstMatches,secondPresent,credentialsPresent}`。其中 matched、versionMatches、firstMatches、secondPresent、credentialsPresent 为布尔，markerCount 为非负整数，bindingDigest 为该 Session、sandbox 和 volume 三元组的摘要。没有匹配有效绑定直接失败。结果值取受信的实际镜像和生效策略、授权沙盒观察及 Run 对账。
+2. `run.sh scan` 以 stdin 接收浏览器采集的 DOM、公开 API、事件与下载内容，由受信侧读同一 B 验收范围内的脱敏运行记录和受控凭据。输出固定 `{positiveCount,matchCount}`，合成正例恰好 1 次，真实范围 0 次；遇到不可读证据直接失败。禁止输出原样本、凭据、日志或原始绑定。
+3. `node web05/acceptance/attest.mjs --fixture` 验证匹配和错配、来源缺失及秘密扫描正反控制，实际约束留到 T5c/T6。更新清单并记录唯一最终 SHA。此后 T5/T6 只读验证清单，runner 不再修改。
+
+验证（B 租约根目录）：
+
+```bash
+node web05/acceptance/attest.mjs --fixture
+sha256sum -c web05/acceptance/SHA256SUMS
+```
+
+PASS：固定输出、负控和承接原 T3 实测方法核对通过。STOP：缺少受信来源、绑定、合成负控或需扩展公开接口。撤回本步私有 runner 差异，保留 T4a 指纹和脱敏证据。
+
+## T5：固定真实验收脚本与控制面探针
+
+前置状态：已通过私有 runner 离线预检，T4a/T4b 的 Worker 与受信观测签名已核对，固定入口和指纹已回读。
+
+允许修改：新增 `apps/workspace/web/acceptance/web-05-environment.spec.ts`，在 `public-files.json` 中紧接 WEB-A13 spec 登记新文件，再更新本 RUNBOOK。复用现有 A13 的隔离 HTTPS 配置与结果读取路径。通过 T4a/T4b 的固定签名访问受信观测。
+
+T5 当前专门核对 6 个公开文件（待增 spec、`public-files.json`、本 RUNBOOK、`apps/workspace/web/playwright.web-a13.config.ts`、`apps/workspace/web/acceptance/web-a13.spec.ts`、`apps/workspace/web/src/pages.tsx`）。前三个为产物，后三个只读核对入口。T5 实际只读的私有文件为 `web05/acceptance/run.sh`、`web05/acceptance/SHA256SUMS`，加上上述公开文件共 8 个。Chromium spec 通过 runner 调用上述控制命令，读取浏览器正常接口、页面和下载结果，以及 runner 脱敏观测。控制文件、原始凭据和 SQLite 由受信侧读取。
+
+禁止修改：A13 断言、公共部署默认、文件快照实现、Service Store 或公共 DTO。
+
+执行：
+
+1. 场景名固定为 `WEB-05 real execution environment`。从邀请登记的新账号 storage state 起步，先断言任务和项目列表为空。用主页空白表单提交。以浏览器拦截单次成功响应为准，只丢向浏览器的回执，后端实际受理。在原页同正文重按提交，记录 UUID 键相同、首个 202、重放 200、原 Task ID 和版本相同。对首 Run 同样丢一次回执并同键重试，查询原 Task 的 Run 列表确认为一条，执行探针标记只写一次。确认原 Run 的公开状态是 `running`，在首条 Run 提交前启用 active-pause，收到首个 202 并读到 Run ID 后即非阻塞启动 `watch-active`，保留进程句柄，然后在同页重放。通过 runner 轮询原 Task ID 与 Run ID 的精确 `entered:true` 见证，核对同一 Run 仍为 `running`。先关闭页面，再执行 `active-release`，随后等待 watcher 正常退出。禁止在关闭页面或放行前等待 watcher 结束。在浏览器关闭期间通过受信侧等待原 Run ID 进入成功终态。随后用同一账号的新上下文从 `/runs` 找回原地址，读取同一 Run 的结果和补丁；确认仅一条 Run，标记仅写一次。
+2. 另建受控失败 Task，故障只作用于 B 的目标准备请求。确认显示脱敏失败，恢复后在原 URL 并发调用两次 prepare（空正文无键），核对只有一次实际重准备、原 ID/inputDigest/version 不变，随后可执行。随后按 A13 的正常入口新建项目并上传首个路径。在旧默认下以该路径创建快照并制造失败 Task。保存原 URL、Task ID、输入摘要、版本和公开失败码。保留该 Task，在步骤 3 的唯一一次轮换后继续确认另建及回读。Web 新建请求无可覆盖版本字段。
+3. 使用步骤 2 的同一个项目及旧默认，复用 A13 的正常项目文件选择流程创建另一 Task，记录第一个路径、内容摘要和实际环境。调用 T4 的 `hold` 保持领取前状态，提交 Run，核对原 Run ID 已持久排队。排队后在该项目页用「文件」选择内容和路径均不同的第二个文件，点击「确认上传」，观察完成后重新打开项目核对新增路径。通过固定发布入口切至新版，保留同部署数据库、项目对象和已有绑定，回读原 Run 仍排队、ID 未变。释放同一 Run，核对其实际沙盒内读取到冻结字节、第二个路径缺失、命令和文件操作均发生在分配的沙盒。由受信观察核对镜像 digest 与实际生效策略 digest 为旧版，并据此计算实际环境版本，与 Task 冻结值一致。API 或控制命令中的版本回显只用于对账。随后在旧 Task 上续写，核对原 Session、sandbox、volume。在原失败详情确认另建，进入正式项目选文件表单，选择两个路径并提交。核对新 Task ID、新输入摘要和新版本，从受信侧核对该 Task 的实际镜像和策略为新版，且看不到旧 Task 未交付写入、绑定独立。回读原失败 URL，确认旧 Task 仍为准备失败且原 ID、输入摘要、环境版本及公开失败码一致。完成回读后恢复单 Task 准备故障，从原地址重准备，核对原输入与版本及实际镜像和策略均为旧版。完成两组断言只切换一次默认版本。
+4. 将受控合成标记用于披露扫描的正控制，证明扫描器能发现注入的明文样本。真实密钥值仅由私有扫描程序从受信材料读取，把浏览器 DOM、公开 API/事件与下载结果通过 stdin 交给 `run.sh scan`，受信侧合并运行记录，并确认匹配总数为 0。沙盒进程中探测凭据变量时只返回是否存在。失败输出避免原值和原始日志。
+
+验证：
+
+```bash
+BENTO_WEB_A13_LIST_ONLY=1 pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --list acceptance/web-05-environment.spec.ts
+pnpm --filter @bento/web typecheck
+```
+
+PASS：精确列出新增 Chromium 场景 1 项，类型通过，私有 runner 的版本/失败切换和泄露正控制通过 T4 的预检。
+
+STOP：必须增加公共协议、改 A13 语义或授权不明确。保留原 fixture 和现场，回交作者。
+
 ## T5c：启动独占栈并核验真实 Worker 入口
 
-前置状态：已通过私有 runner 离线预检、T5a 存储与 T5b 认证材料均已通过。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
+前置状态：T4a/T4b 验收接口、T5 浏览器枚举、T5a 存储与 T5b 认证材料均已通过。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
 
 允许修改与专门核对（10 个文件）：新增 `web05/stack-stage.sh`、`web05/compose.stack.yaml`，更新 `web05/stack.env`；只读核对 `bento/deploy/compose.yaml`、`web-a13/compose.override.yaml`、`web-a13/orchestrator-entry.sh`、`web-a13/full-stack/independent-candidates/compose/stage-env.py`、`web-a13/full-stack/independent-candidates/compose/start-seven.sh`、`web-a13/full-stack/independent-candidates/a13/run-live-a13.r2.sh`；更新本 RUNBOOK。T5a/T5b 输出作为只读、已锁定的运行时输入。
 
@@ -199,7 +243,7 @@ STOP：原数据挂载、凭据或 realm 错配，或存在 Worker/沙盒实际�
 
 执行：
 
-1. 核对 T4 锁定 runner 及 T5a/T5c 启动脚本指纹，运行 `run.sh verify`。runner 依次调用 `storage-stage.sh issue`、`stack-stage.sh start`、`stack-stage.sh invite acceptance`。新邀请只作用于 B 副本 realm/client 和本轮临时邮箱，不使用 T5c 的探针账号。以该受邀账号生成受控 storage state，运行唯一真实场景，记录启动指纹及各断言结果。runner 内固定使用 `pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --workers=1 acceptance/web-05-environment.spec.ts`。真实模式禁用重试、截图、视频、trace 和不必要的日志。
+1. 核对 T4b 最终锁定 runner 及 T5a/T5c 启动脚本指纹，运行 `run.sh verify`。runner 依次调用 `storage-stage.sh issue`、`stack-stage.sh start`、`stack-stage.sh invite acceptance`。新邀请只作用于 B 副本 realm/client 和本轮临时邮箱，不使用 T5c 的探针账号。以该受邀账号生成受控 storage state，运行唯一真实场景，记录启动指纹及各断言结果。runner 内固定使用 `pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --workers=1 acceptance/web-05-environment.spec.ts`。真实模式禁用重试、截图、视频、trace 和不必要的日志。
 2. 在 T5 场景指定的轮换点首次实机执行 `run.sh rotate <task-id> <run-id>`。核对目标处于 hold、原 Run 为 `queued` 且无 `run_dispatches` 记录。停止并等待唯一旧 Orchestrator 退出。在停机窗口原子更换 `web05/host.json` 的 `imageDigest/policyDigest` 和 `web05/stack.env` 的 `BENTO_EXECUTION_ENVIRONMENT_VERSION`，启动前重算并对账。复用原 B 隔离副本的同一 Compose 项目与参数，执行 `up -d --no-deps --force-recreate orchestrator` 只重建 Orchestrator，使单文件 bind mount 指向新 inode。确认只有一个运行中的实例，从容器内读回已挂载 JSON 的两个摘要及容器环境版本，与新版记录核对，只输出匹配结果。保持同一业务库、authority 库、Temporal namespace/task queue、Gateway、对象、控制文件与绑定。确认同一 Run 仍排队且无 reservation，再 release，核对领取的是同一 Run。
 3. 实机结束或失败时执行 `bash web05/acceptance/run.sh cleanup`，依次调用 `stack-stage.sh stop` 与 `storage-stage.sh revoke`，核对副本应用服务退出、短授权已撤销。若本轮通过且所有 Run 终态、无活动 Worker 与待清沙盒，按 B transport 与 Gateway 的所有权记录撤场专用 transport、relay 与 Gateway，保留发布材料及证据。失败或状态不明时保留所需副本 Gateway、transport 与 Run 证据，避免更换任务或重发写入遮盖失败。所有路径按原已签核脚本执行，前后 SHA 必须与锁定记录一致。
 4. 所有真实断言通过后将 WEB-05 改为「已实现」，记录日期、候选版本、真实验证范围、结果与未覆盖项。长期配置行为仍引用现有 Task 接口及部署说明。删除本 RUNBOOK 及仅指向它的引用，再运行最终验证。全部通过后按 WORKER/PR 规则交付。若最终验证失败，保留失败证据、恢复本步骤的 RUNBOOK 和此前的 Readiness 状态，交 MASTER 处理。
