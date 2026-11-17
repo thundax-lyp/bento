@@ -108,32 +108,11 @@ B 副本认证材料的 `bash web05/auth-stage.sh stage` 与 `check` 已通过�
 
 B 私有 Worker 启动包装器已锁定。语法、固定输入中同 Task armed/其它 Task 未 armed、重复或损坏标记拒绝、lease 范围与 0600 检查均通过。包装器 SHA-256 为 `a3f6bc567307f54fda06e3d5a353272d89d11039fe5ff812af633c3b582c2539`，六项材料清单为 `89772c4b70b95d0da8d42549383e0fa23bd368c21670036e977e6e5f2356e772`。
 
-## T4a：在 B 私有 Worker fixture 接入真实 SDK 与暂停见证
-
-前置状态：T4 离线预检、B transport 和 per-lease armed 判定已通过。MASTER 审核本步骤后执行。
-
-允许修改及专门核对（10 个文件）：修改 `web05/bootstrap/base.ts`、`web05/acceptance/worker-probe.ts`、`web05/acceptance/run.sh`、`web05/acceptance/SHA256SUMS`；新增 `web05/acceptance/watch-active.mjs`；只读核对原 `bootstrap/base.ts`、`worker-loopback.mjs`、`debug-workspace/execution/web08-worker.mjs` 与两版 `host-daemon.mjs`；更新本 RUNBOOK。现有 companion 文件从锁定 bootstrap 目录复用，禁止修改原 A13、公开代码、发布适配器、Worker 镜像或模型 provider。
-
-执行：
-
-1. 副本 `base.ts` 复用已经装配的 fixture、固定输入模式与本 Run grant，只接受四个固定测试提示 `WEB05 blank`、`WEB05 frozen`、`WEB05 continue`、`WEB05 isolated`。通过原 SDK/Worker 权限在绑定沙盒内实测文件及命令。blank 只写一次 `web05-marker.txt`；frozen 读 `web05-first.txt` 的 `base\n`，确认 `web05-second.txt` 缺失并写入 marker；continue 核对 marker 已存在并追加一次；isolated 核对两份文件均存在、marker 缺失，保留只读结果。第二份文件为 `new\n`。所有输入输出为合成文本，结果仍经既有 Run 持久化、发布及补丁。固定 fixture 不需要启用官方模型启动参数。运行时从 `/app` 使用私有 fixture 源，Worker 不读取浏览器 storage state、业务 SQLite 或原始凭据。
-2. `run.sh watch-active <task-id> <run-id>` 在可信宿主读取 `control.json.activePause.taskId` 和业务 SQLite 的匹配 Run，最多等 30 秒直至同一 Run 为 `running` 且找到对应的唯一 B Run lease，再在该目录放置 `web05-active.sock`，归同 UID，0600。Worker 先核对该 lease 的 `web05-active-arm.json` 与原 Task/Run，再仅在 `armed=true` 时在既有 `/run/web08/run` 挂载中连接同一 lease socket。对 `ENOENT` 或 `ECONNREFUSED` 最多重试 30 秒，连接后提交自己 grant 的 Run ID。未 armed 不等待；其他错误立即失败。不新增容器挂载和服务端口。宿主只在匹配原 Run、原 lease 的连接完成握手后原子写 `web05/acceptance/active/<run-id>.json`，字段固定为 `{taskId,runId,entered:true}`。现有 `active-release` 仍核对该见证和 running 状态，仅清空原 `activePause`；watch 发现已清空后向原连接返回放行并回收 socket。超时、错误绑定、第二连接或失去 lease 即退出且不放行。T5c/T6 保留实际 SDK 和暂停断言。
-3. 在合成 fixture 中验证固定提示识别、握手、见证、原 Run 放行及清理。错误 Run、错误 Task、第二连接或错误提示均失败，无见证且无放行。只在现有锁定材料上增加 `watch-active.mjs` 与副本 `base.ts` 指纹，运行后记录替代 T4 清单的新 SHA。
-
-验证（B 租约根目录）：
-
-```bash
-node --check web05/bootstrap/base.ts
-node --check web05/acceptance/worker-probe.ts
-node web05/acceptance/watch-active.mjs --fixture
-sha256sum -c web05/acceptance/SHA256SUMS
-```
-
-PASS：离线 fixture 正负控制通过，完整实机观察留到 T5c/T6。STOP：需要更改公开协议、发布适配器或 Worker 挂载，或无法按原 Run 所有权绑定。撤回本步私有改动与自有合成 socket，保留 T4 证据。
+B fixture 的四种固定输入和错误提示拒绝已验证。独占 lease 上的握手、原 Run 放行与 socket 清理通过，错误 Task、Run 或重复连接均无见证、无放行。实际 SDK 操作仍由 T5c/T6 验证。 `watch-active <task-id> <run-id>` 与既有 `active-release` 承接该步骤。八项清单 SHA-256 为 `8d88ff76f1125c5b198e15ea59b239571de18868958ad82e4d616660c7ecc679`，`base.ts`（195 LOC）为 `1e44738a46d2964ea995eb396fccf4e841b4eced9747ab40fabad558238af8c3`，`watch-active.mjs`（166 LOC）为 `8f84954a460908efbd50c96c0598cd76b3bd7c4e432041ec8a8f7e1358e2452d`。
 
 ## T4b：固定浏览器使用的脱敏观测命令
 
-前置状态：T4a 已通过固定输入验证，T3 两版适配器证据保持有效。
+前置状态：B fixture 与暂停握手已通过固定输入验证，T3 两版适配器证据保持有效。
 
 允许修改及专门核对（9 个文件）：修改 `web05/acceptance/run.sh`、`web05/acceptance/probe.mjs`、`web05/acceptance/SHA256SUMS`；新增 `web05/acceptance/attest.mjs`；只读核对 T3 `release/web05/host-probe.mjs`、`release/web05/versions.json`、`web05/web08-manifest.json` 和仓库 `store.ts`；更新本 RUNBOOK。
 
@@ -150,11 +129,11 @@ node web05/acceptance/attest.mjs --fixture
 sha256sum -c web05/acceptance/SHA256SUMS
 ```
 
-PASS：固定输出、负控和承接原 T3 实测方法核对通过。STOP：缺少受信来源、绑定、合成负控或需扩展公开接口。撤回本步私有 runner 差异，保留 T4a 指纹和脱敏证据。
+PASS：固定输出、负控和承接原 T3 实测方法核对通过。STOP：缺少受信来源、绑定、合成负控或需扩展公开接口。撤回本步私有 runner 差异，保留前一步指纹和脱敏证据。
 
 ## T5：固定真实验收脚本与控制面探针
 
-前置状态：已通过私有 runner 离线预检，T4a/T4b 的 Worker 与受信观测签名已核对，固定入口和指纹已回读。
+前置状态：已通过私有 runner 离线预检，B Worker 和 T4b 受信观测签名已核对，固定入口和指纹已回读。
 
 允许修改：新增 `apps/workspace/web/acceptance/web-05-environment.spec.ts`，在 `public-files.json` 中紧接 WEB-A13 spec 登记新文件，再更新本 RUNBOOK。复用现有 A13 的隔离 HTTPS 配置与结果读取路径。通过 T4a/T4b 的固定签名访问受信观测。
 
@@ -182,7 +161,7 @@ STOP：必须增加公共协议、改 A13 语义或授权不明确。保留原 f
 
 ## T5c：启动独占栈并核验真实 Worker 入口
 
-前置状态：T4a/T4b 验收接口、T5 浏览器枚举、独占存储与认证材料均已通过。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
+前置状态：B Worker 和 T4b 验收接口、T5 浏览器枚举、独占存储与认证材料均已通过。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
 
 允许修改与专门核对（10 个文件）：新增 `web05/stack-stage.sh`、`web05/compose.stack.yaml`，更新 `web05/stack.env`；只读核对 `bento/deploy/compose.yaml`、`web-a13/compose.override.yaml`、`web-a13/orchestrator-entry.sh`、`web-a13/full-stack/independent-candidates/compose/stage-env.py`、`web-a13/full-stack/independent-candidates/compose/start-seven.sh`、`web-a13/full-stack/independent-candidates/a13/run-live-a13.r2.sh`；更新本 RUNBOOK。存储与认证输出作为只读、已锁定的运行时输入。
 
