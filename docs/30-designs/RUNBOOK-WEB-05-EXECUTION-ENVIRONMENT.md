@@ -116,34 +116,15 @@ B 受信入口已锁定。`attest <task-id> <run-id|->`、`scan` 以及 `observe
 
 Chromium 的 Task/Run 列表、同源 prepare 和受信 owner 读取已校正，list-only 精确枚举 1 项，Web typecheck 通过。私有认证离线核对与正确 owner、邮箱错配和其它 owner 的负控通过。实际邀请 owner 查询和 Origin 留待实栈。当前私有 `auth-stage.sh`、`auth-login.cjs`、`auth-provision.py` 的 SHA-256 分别为 `7eff13ff6b300b5d84c715ddf0a42792c0af56a7262e3d6b589d68ae5b2e55e0`、`c9cb0816d903f4185ba9495ac6291bbaa23d0716ae58fa9af58f5f5604c71d0b`、`3a09e90f9b72d41697186466e045f24c1dea4f431c894d139cddefceb8bf6a03`。
 
-## T5c-0：锁定包含 WEB-05 改动的 B Web 候选
-
-前置状态：Chromium 枚举、类型检查和 列表、owner 和同源准备修正已通过。旧 A13 镜像的 OCI revision 与历史源码包一致，旧源码缺少 WEB-05 确认另建入口，不能供最终验收。A 的 PR #49 已合入 `e2a45a4661fdbe1cf8a17060164392eab3e4a592`，B 合并后基线为 `948dcfe4e2a35f72abb49d3b765cf6d826975900`。共享上传单测 10/10、快照 Task routes Chromium 1/1、OIDC 前端构建通过。WEB-02/03 已实现，WEB-05 仍为部分实现。主线未改 Compose 构建入口、Space 冻结实现或 execution-service。获审提交 `8a6646ea59f336532502c70e35b5dadbfc5b26db` 已归档。直接构建依赖下载超时；同一归档修正权限后经登记代理的 B 回环 SSH 会话重试，Go/npm/apt 通达，但 pnpm 下载未在 240 秒内完成。当前 T5c-0 STOP，MASTER 审核本步离线修订后才重试。
-
-允许修改与专门核对（10 个文件）：B 私有 `web05/web-build/build-web.sh`、`source.tar`、`candidate.json`、`web05/web-build/offline.Dockerfile`；只读核对 `web01-offline-plan/build-offline.sh`、A 已验证离线 context 的 `Dockerfile`、当前 checkout `deploy/compose.yaml`、`deploy/workspace/nginx.conf` 和 `apps/workspace/web/acceptance/web-05-environment.spec.ts`；更新本 RUNBOOK。构建目录、清单、日志和镜像由脚本生成。禁止改原 A13 镜像、tag、构建目录、共享 daemon 配置和 A 的资源。
-
-执行：
-
-1. 保留旧 B `web05/web-build/source.tar` 与失败证据。以合入列表、owner 和同源准备修正的已验证提交重新执行 `git -c tar.umask=0022 archive --format=tar HEAD`，记录完整 revision、新归档与新 spec 的 SHA-256，校验后用于同一次离线镜像构建与 Chromium 执行。禁止沿用旧归档或事后覆盖其中 spec。解包保留 Git archive 权限，确认 `deploy/workspace/nginx.conf` 为 0644，保留确认另建入口及 WEB-05 Chromium 场景。两次失败日志保留在 B。
-2. 只读复用 A 的 `web01-offline-plan/build-offline.sh` 配方及其已成功 Web context 中的 `Dockerfile` 和 `_web01-cache`。已核对同一宿主上这些入口可读，缓存具有 Go、pnpm store/policy、Corepack pnpm 包和 apt mirror。现有 B 归档与 A 缓存输入的 `go.mod`、`go.sum`、根 package.json、pnpm 锁及 workspace、Web/API package.json 均字节一致。重试前再次核对；不一致即 STOP。仅把缓存复制到 B 私有新构建 context，不将 A 的任何源码或镜像标签作为 B 输出，不改 A 路径、缓存或 Docker 镜像标签。
-3. 副本 `offline.Dockerfile` 对比候选 `deploy/compose.yaml` 中的 Web Dockerfile，只采用 A 配方的离线依赖替换。保持 Linux/AMD64、两项原批准的固定 Go/Node 镜像 ID，以 B 私有基底引用、`DOCKER_BUILDKIT=0`、`--pull=false --network=none --no-cache` 构建；输出仅使用 B 专用候选 tag。记录实际 Image ID、OCI revision、归档和 spec SHA-256 至 `candidate.json`。安装前仍以候选镜像默认 USER 执行 `docker run --rm --network none --entrypoint /bin/sh "$candidate_image" -c 'test -r /etc/nginx/bento.conf'`。其余 T5c/T6 同源对账保持原条件。
-
-验证（B 租约根目录）：
-
-```bash
-bash web05/web-build/build-web.sh build-offline
-bash web05/web-build/build-web.sh verify
-```
-
-PASS：输入摘要、两基础镜像、候选 revision、实际 Web Image ID、镜像默认 USER 的 nginx 配置可读性和 Chromium 归档/spec 指纹均通过，以脱敏指纹记录。保留独占候选并删除本步骤，仓库只提交 RUNBOOK 证据。STOP：共享基线未合、镜像/源码不一致、构建依赖不可用或产物验收失败。只按本轮 tag 和已登记 Image ID 回收候选，不触碰原 A13 镜像。
+B Web 候选的 `build-offline` 与 `verify` 均通过。候选 revision `b2886fe2f231387fe9258be63aa895a33453e786`、Docker Image ID `sha256:96be2440803210e6f31c8ada5ef8d48d43d072eba07a4caa2c9cf2ce75f97d83`。归档 SHA-256 `a2702d77bf205ffb4e400d74535072dfa82416b68171e2923c00542be4831bed`、spec SHA-256 `759a2708509f1218a6b45e1d858a5b1e4f621767ef300427cb7bc8d3a429b080`。归档 NGINX 为 0644，镜像默认 USER 读取成功，A 缓存仅作只读复制。私有 `candidate.json` SHA-256 为 `8c58a4571894e674661b1dcf7d1e02633ac1304823a5dbce5139fce05a4cf16e`。
 
 ## T5c：启动独占栈并核验真实 Worker 入口
 
-前置状态：B Worker 和受信验收接口、浏览器枚举、独占存储与认证材料均已通过，T5c-0 候选镜像及源码已对账。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
+前置状态：B Worker 和受信验收接口、浏览器枚举、独占存储与认证材料均已通过，离线候选镜像及源码已对账。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
 
 允许修改与专门核对（10 个文件）：新增 `web05/stack-stage.sh`、`web05/compose.stack.yaml`，更新 `web05/stack.env`；只读核对 `bento/deploy/compose.yaml`、`web-a13/compose.override.yaml`、`web-a13/orchestrator-entry.sh`、`web-a13/full-stack/independent-candidates/compose/stage-env.py`、`web-a13/full-stack/independent-candidates/compose/start-seven.sh`、`web-a13/full-stack/independent-candidates/a13/run-live-a13.r2.sh`；更新本 RUNBOOK。存储与认证输出作为只读、已锁定的运行时输入。
 
-执行：`stack-stage.sh stage` 从上述模板复用七服务启动与 HTTPS/Chromium CA 方式，Web 使用 T5c-0 候选 Image ID。全部项目名、状态目录、issuer、Temporal 队列与 S3 scope 指向副本。Keycloak、MySQL、Postgres、Temporal、Mailpit 使用新命名卷，Workspace 及 Orchestrator SQLite 从副本空目录起步。保留 `stack-stage.sh start`、`invite probe|acceptance`、`stop` 签名，invite 只转交 `auth-stage.sh` 的同名副本入口。每次 `start` 均以副本 Compose 项目定位唯一运行 Web 容器，从实际容器回读 `.Image`，再读取该镜像的 OCI revision 并与锁定的 `candidate.json` 核对，启动时任一不符即失败。
+执行：`stack-stage.sh stage` 从上述模板复用七服务启动与 HTTPS/Chromium CA 方式，Web 使用 已验证的离线候选 Image ID。全部项目名、状态目录、issuer、Temporal 队列与 S3 scope 指向副本。Keycloak、MySQL、Postgres、Temporal、Mailpit 使用新命名卷，Workspace 及 Orchestrator SQLite 从副本空目录起步。保留 `stack-stage.sh start`、`invite probe|acceptance`、`stop` 签名，invite 只转交 `auth-stage.sh` 的同名副本入口。每次 `start` 均以副本 Compose 项目定位唯一运行 Web 容器，从实际容器回读 `.Image`，再读取该镜像的 OCI revision 并与锁定的 `candidate.json` 核对，启动时任一不符即失败。
 
 `stack-stage.sh probe` 先 `storage-stage.sh issue`，再启动副本，核对健康、TLS、OIDC discovery 与新 realm/client 所有权。以 `invite probe` 创建仅本轮探针账号，走正常登记路径并启动一条真实 Worker Run，验证可实际领取、进入活跃探针、解除后读取真实沙盒命令或文件结果。完成后停止副本应用服务并调用 `storage-stage.sh revoke`。Gateway 和 transport 在无活动 Run 且所有权匹配时留给 T6。探针账号与状态不作为 T6 的受邀账号或登录输入。
 
