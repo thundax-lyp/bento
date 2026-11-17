@@ -1,6 +1,6 @@
 ---
 name: bento-runbook-master
-description: Coordinate Bento RUNBOOK work across worker checkouts. Select independent tasks, commission independent reviews, supervise execution and PR delivery, and refill the queue after synchronization.
+description: Coordinate Bento RUNBOOK work across worker checkouts. Select independent tasks, review plans and reconcile delivery evidence, supervise execution and PR delivery, and refill the queue after synchronization.
 ---
 
 # Bento RUNBOOK Master
@@ -20,7 +20,7 @@ description: Coordinate Bento RUNBOOK work across worker checkouts. Select indep
 1. 优先使用用户指定的 WORKER checkout。同级目录名可用于发现候选。核对仓库远端、绝对路径、分支和在途任务归属。没有可用 checkout 时报告缺口，继续评估其他候选。
 2. 为每项任务记录需求、目标、验收、WORKER 聊天、checkout、起始基线、任务分支、RUNBOOK 路径与已审核版本、授权范围、当前阶段、最后 PASS 的 STEP 和提交、PR 编号与 HEAD、阻断及下一动作。接手时从聊天回报、Git、工作区及 GitHub 实况重建记录。聊天空闲时仍须核对原任务是否结束。重发前核对上次消息是否送达及有无在途执行，避免重复派工。
 3. 从最新目标分支读取正式需求和 [Readiness](../../../docs/40-readiness/CURRENT-READINESS.md)。候选任务须有正式需求或接口依据、可观察的验收结果、可核对的代码基线，以及明确的共享资源顺序或无交叠的证据。缺少任一必要条件时暂缓该任务，记录缺项，再评估其他候选。选择能独立交付和验收且适合 RUNBOOK 的最小闭环。复杂任务可按约 6–7 个有独立产物的步骤规划，以真实依赖为准。对照在途任务的文件、接口、权威状态和测试资源。共享账本、API 或 Docker 时先约定执行窗口、合入顺序、后合入方及其需复验的竞态。
-4. 可将多个已确认需求纳入同一任务，说明合并交付的理由，并分别记录每项需求的验收和证据。按 RUNBOOK Rules 核算整项任务的代码范围，至少 500 LOC 且至少 5 个代码文件。选题时可参考约 8 个代码文件，以实际交付范围为准。派工前记录初估，送审时由 WORKER 给出逐文件依据，独立审核者核对计数及代码与验收的关联。范围变化后重新核算，通过后方可开工。
+4. 可将多个已确认需求纳入同一任务，说明合并交付的理由，并分别记录每项需求的验收和证据。按 RUNBOOK Rules 核算整项任务的代码范围，至少 500 LOC 且至少 5 个代码文件。选题时可参考约 8 个代码文件，以实际交付范围为准。派工前记录初估，送审时由 WORKER 给出逐文件依据，MASTER 核对计数及代码与验收的关联。范围变化后重新核算，通过后方可开工。
 5. 每次派发新任务，在空闲且已同步主线的 checkout 中新建一个 WORKER 聊天。首条消息写明范围、正式依据、验收、边界、基线、环境引用及当前动作。只传受控配置的位置和使用方式。记录返回的聊天 ID 并绑定任务。起草、修订、实施、暂停恢复、PR 返修及收尾都回到该任务聊天。复用 checkout 派下一项任务时，再新建聊天。创建结果不明时先核对是否已经创建，再决定是否重试。
 
 ### 选题与分工
@@ -38,8 +38,8 @@ description: Coordinate Bento RUNBOOK work across worker checkouts. Select indep
 
 ## 审核与开工
 
-1. 固定由 MASTER 启动独立 SUBAGENT 只读审核 WORKER 的草稿。给审核者指定仓库、checkout、基线、RUNBOOK 版本和在途边界。审核只查正确性、可执行性、权限、竞态、明显回归和验收可判定性。逐步核对每步最多 10 个文件，包含 RUNBOOK 和专门核对的文件，T0 单列。每步应有独立产物、PASS、STOP 和提交边界。
-2. 要求审核结果为 `Executable`、`Not Executable` 或 `Blocked`，附步骤、证据、影响和最小修订。`Not Executable` 由原 WORKER 修订，独立审核者只复审核心修订及直接受影响步骤。`Blocked` 先处理可恢复原因，产品冲突或权限缺口交用户决定。
+1. MASTER 对照正式文档、代码基线和在途边界，只读核对草稿的范围、可执行性及验收断言。常规审核由 MASTER 完成。用户明确要求独立复核，或存在需独立判断的具体风险且已获授权时，可限定问题和证据范围交给独立审核者。逐步核对每步最多 10 个文件，包含 RUNBOOK 和专门核对的文件，T0 单列。每步应有独立产物、PASS、STOP 和提交边界。
+2. 记录审核结果为 `Executable`、`Not Executable` 或 `Blocked`，附步骤、证据、影响和最小修订。`Not Executable` 由原 WORKER 修订，MASTER 只复核修订及直接受影响步骤。`Blocked` 先处理可恢复原因，产品冲突或权限缺口交用户决定。
 3. 收到 `Executable` 后，派原 WORKER 开任务分支并单独提交获审 RUNBOOK。核对实际提交只包含该文件，内容与审核版本一致。确认分支、基线、工作区及执行环境符合 T0。内容或基线发生影响执行的变化时，复审受影响步骤。
 4. 向绑定的 WORKER 发送显式调用 `$bento-runbook-worker <RUNBOOK 文件名>`，附任务分支、审核提交、基线、授权和合入顺序。全流程时明确包含 `$bento-codex-comment-fix` 的处理权限。核对已送达、WORKER 已开工以及所用 checkout。起草或审核请求仅推进到用户指定的阶段。
 
@@ -52,16 +52,22 @@ description: Coordinate Bento RUNBOOK work across worker checkouts. Select indep
 | WORKER 可接任务     | checkout 已核对。工作区和 Git 状态已确认，目标分支已同步，上一任务已经收尾或明确移交。                                        | 聊天空闲但有开放 PR、待恢复步骤或未收尾任务时，保留原归属。工作区有归属不明的改动时先核实。 |
 | 候选可派工          | 有正式依据、可观察验收、可核对基线，以及共享资源顺序或无交叠的证据。派工范围与启动授权一致。                                  | 记下缺项，暂缓该候选，检查其他任务。依赖未合入时等待前置任务。                              |
 | 草稿可送审          | 已记录本任务的新 WORKER 聊天 ID。WORKER 已交回可读取的 RUNBOOK 路径及草稿版本。文件包含 T0、机械步骤、验证断言、STOP 和收口。 | 文件或版本不清时由作者补齐。消息已送达且仍在起草时继续等待。                                |
-| 审核通过，可开工    | 独立审核者对同一版本给出 `Executable`。计划提交内容与审核版本一致，T0 有通过证据，分支和基线已核对，开工处于授权范围。        | `Not Executable` 回作者修订并复审。正式依据冲突或权限缺失时保留归属并交用户决定。           |
+| 审核通过，可开工    | 同一版本的审核结果为 `Executable`。计划提交内容与审核版本一致，T0 有通过证据，分支和基线已核对，开工处于授权范围。            | `Not Executable` 回作者修订并复审。正式依据冲突或权限缺失时保留归属并交用户决定。           |
 | 正在实施            | 已核实 WORKER 在绑定分支执行指定计划。从最新已核验的步骤提交读取剩余步骤。最后一步以同次提交删除 RUNBOOK 为证据。             | 验证通过但尚未提交时仍停在本步。收到 STOP 后按报告定位并恢复，避免重发整个任务。            |
 | 本地收口，可交付 PR | 最后一步提交已同步验收证据与未覆盖项，并删除 RUNBOOK。已授权时回读同一任务的 PR、base、head 和 HEAD。                         | 尚未发布时保持本地完成。开放 PR 的 CI、Codex 或冲突按实际 HEAD 跟踪。                       |
 | 已合入并收尾        | GitHub 返回合并提交，该提交在目标分支历史中。WORKER 已同步基线，已合入任务分支已按授权清理或记录例外。                        | 已合入但未同步或清理时，仍保留原任务，直到收尾可核验。                                      |
 
+## 交付收口
+
+- WORKER 执行 RUNBOOK 验收并记录证据。MASTER 对照正式文档的验收条件、PR 或目标分支的实际代码、Readiness 的状态与未覆盖项，回读 WORKER 的验收记录及现有 CI、PR 审查结果。核对证据对应的代码版本、环境、覆盖范围和实际结果。验收后有变更时，检查变更是否影响证据适用性。
+- 证据充分且仍适用时直接采用。常规收口无需另起环境、重跑验收或另派审计。READINESS 的状态以实际覆盖为准。
+- 证据缺失、与结论冲突或被相关变更影响时，指出具体缺口、受影响版本和验收断言，交回原 WORKER 定向补验。证据补齐前按已证实的范围记录状态。PR 门禁按仓库规则执行。
+
 ## 监督与继续调度
 
 - 通过 WORKER 聊天、分支提交和 GitHub 回读跟踪进度。能主动回报且已获授权时，由 WORKER 在 STOP、PR 合并及清理完成时回报。MASTER 用状态核对保障调度，尤其要区分本地完成、PR 开放、已合入和已收尾。
-- STOP 后用最后通过的 STEP、提交、失败命令和实际结果定位问题。可恢复的局部问题由 MASTER 与原 WORKER 解决后从原步骤继续。需改变计划时由作者修订、独立审核者复审。待用户决策的任务保留原归属，其他 WORKER 继续。
-- PR 交付按一份 RUNBOOK 一个 PR。以当前 PR 的 HEAD、冲突、CI 和审查线程为准派回原 WORKER。共享边界的任务按已传达的合入顺序推进。全流程内各阶段沿用启动授权。若用户提前合入了另一项，按实际最新主线重算先后，复验共享边界。
+- STOP 后用最后通过的 STEP、提交、失败命令和实际结果定位问题。可恢复的局部问题由 MASTER 与原 WORKER 解决后从原步骤继续。需改变计划时由作者修订、MASTER 复核受影响步骤。待用户决策的任务保留原归属，其他 WORKER 继续。
+- PR 交付按一份 RUNBOOK 一个 PR。以当前 PR 的 HEAD、冲突、CI 和审查线程为准派回原 WORKER。共享边界的任务按已传达的合入顺序推进。全流程内各阶段沿用启动授权。若用户提前合入了另一项，按实际最新主线重算先后，由后合入的 WORKER 复验受影响的共享边界。
 - 核实合并提交在目标分支后，更新自己的 checkout 和空闲 WORKER。在途 WORKER 在 STEP 已提交的安全点纳入新主线，解决交叠并复验受影响行为。保留用户改动和无关分支。清理只涵盖本任务且已确认合入的分支。
 - 启动时可记录用户指定的外部检查观察期限，并传给 WORKER。已在运行的 CI 或 Codex 在期限内持续跟踪。明确外部阻断或期限到达时，记录 PR、HEAD、检查状态和恢复条件，保留原归属并推进其他任务。恢复时重新回读原 PR，HEAD 变化则按当前 HEAD 核验。期限到达只改变调度状态。
-- 每次同步后重新读取同一主线的需求和 Readiness，核对刚合入的证据与剩余缺口。持续为已收尾、已同步且空闲的 WORKER 派工。暂无合适任务但有可推进的在途任务时等待下一次状态变化。有任务待用户决定时继续其他任务。没有合适的新任务且没有可自主推进的在途任务时结束本轮，报告阻断、交付和未派原因。
+- 每次同步后根据交付收口核对结果更新待派范围。持续为已收尾、已同步且空闲的 WORKER 派工。暂无合适任务但有可推进的在途任务时等待下一次状态变化。有任务待用户决定时继续其他任务。没有合适的新任务且没有可自主推进的在途任务时结束本轮，报告阻断、交付和未派原因。
