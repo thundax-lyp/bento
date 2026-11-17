@@ -128,30 +128,11 @@ B Orchestrator 挂载已同步 `83437f2`。本地 Orchestrator 51 项通过、2 
 
 B Chromium 关闭登记 context 并在独立空 context 完成 Workspace OIDC，`auth-stage.sh check` 和实际 `stack-stage.sh probe` 中邀请、邮件验证、组织成员、Workspace 已认证会话及 opaque owner 断言均通过。副本应用停止并确认 STS 撤销。私有 `auth-login.cjs` SHA-256 为 `4eb259d578e49ef53dc3426e563c40d2b24d15cc896a697d7b7a160957a78433`。
 
-## T5c：启动独占栈并核验真实 Worker 入口
-
-前置状态：B Worker 和受信验收接口、浏览器枚举、独占存储与认证材料均已通过，离线候选镜像及源码已对账，副本配置预检通过，七服务启动、候选指纹、实际邮件邀请登记、邮件验证、组织成员与 Workspace OIDC 已通过。实际运行的 Orchestrator 已核对同步源码和原控制钩子。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
-
-允许修改与专门核对（10 个文件）：新增 `web05/stack-stage.sh`、`web05/compose.stack.yaml`，更新 `web05/stack.env`；只读核对 `bento/deploy/compose.yaml`、`web-a13/compose.override.yaml`、`web-a13/orchestrator-entry.sh`、`web-a13/full-stack/independent-candidates/compose/stage-env.py`、`web-a13/full-stack/independent-candidates/compose/start-seven.sh`、`web-a13/full-stack/independent-candidates/a13/run-live-a13.r2.sh`；更新本 RUNBOOK。存储与认证输出作为只读、已锁定的运行时输入。
-
-执行：`stack-stage.sh stage` 从上述模板复用七服务启动与 HTTPS/Chromium CA 方式，Web 使用 已验证的离线候选 Image ID。全部项目名、状态目录、issuer、Temporal 队列与 S3 scope 指向副本。Keycloak、MySQL、Postgres、Temporal、Mailpit 使用新命名卷，Workspace 及 Orchestrator SQLite 从副本空目录起步。保留 `stack-stage.sh start`、`invite probe|acceptance`、`stop` 签名，invite 只转交 `auth-stage.sh` 的同名副本入口。每次 `start` 均以副本 Compose 项目定位唯一运行 Web 容器，从实际容器回读 `.Image`，再读取该镜像的 OCI revision 并与锁定的 `candidate.json` 核对，启动时任一不符即失败。
-
-`stack-stage.sh probe` 先 `storage-stage.sh issue`，再启动副本，核对健康、TLS、OIDC discovery 与新 realm/client 所有权。以 `invite probe` 创建仅本轮探针账号，走正常登记路径并启动一条真实 Worker Run，验证可实际领取、进入活跃探针、解除后读取真实沙盒命令或文件结果。完成后停止副本应用服务并调用 `storage-stage.sh revoke`。Gateway 和 transport 在无活动 Run 且所有权匹配时留给 T6。探针账号与状态不作为 T6 的受邀账号或登录输入。
-
-验证（B 租约根目录）：
-
-```bash
-bash web05/stack-stage.sh preflight
-bash web05/stack-stage.sh probe
-```
-
-PASS：副本路径无原卷，TLS/OIDC/新邀请通过，真实 Worker 领取、暂停解除及沙盒观测通过，探针 STS 撤销成功。记录实际产物指纹。
-
-STOP：原数据挂载、凭据或 realm 错配，或存在 Worker/沙盒实际观测缺口。执行 `stack-stage.sh stop` 与 `storage-stage.sh revoke`，只停止副本并清理本轮授权。状态不明的运行资源保留现场。PASS 后只提交 RUNBOOK 证据及步骤移除。
+2026-11-17，B 的 `stack-stage.sh preflight` 和 `stack-stage.sh probe` 均退出 0。独占七服务、原 Web 候选镜像及 revision、严格 TLS、真实邀请和 Workspace OIDC 通过。实际 OpenShell Worker 领取真实 Run，进入活跃探针，原 Run 放行后成功。受信观测核对同 Run、环境版本、沙盒 marker 和无凭据，公开 results 返回 200 且绑定同 Run。只停止 B 副本应用，已回读短期 STS 撤销收据。
 
 ## T6：真实验收、全量校验与 Readiness 收口
 
-前置状态：控制、浏览器、独占存储、认证和 T5c 实栈启动探针均已通过。B 独占窗口与脚本指纹复核成功。
+前置状态：控制、浏览器、独占存储、认证和真实 Worker 探针均已通过。B 独占窗口与脚本指纹复核成功。
 
 允许修改：[Readiness](../40-readiness/CURRENT-READINESS.md) 的 WEB-05 一行、本 RUNBOOK、隔离副本的 `web05/host.json` 和 `web05/stack.env`。另只读核对 `web05/acceptance/run.sh`、`web05/acceptance/SHA256SUMS`、`web05/stack-stage.sh`、`web05/storage-stage.sh`、`release/web05/versions.json`、`apps/workspace/web/acceptance/web-05-environment.spec.ts`，共 10 个文件。runner 的探针和 Compose 覆盖通过锁定清单复核，运行时依赖沿用已装配副本。实机仅使用 T0 审核后的副本资源。
 
