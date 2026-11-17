@@ -114,15 +114,53 @@ B 受信入口已锁定。`attest <task-id> <run-id|->`、`scan` 以及 `observe
 
 公开浏览器场景 `apps/workspace/web/acceptance/web-05-environment.spec.ts` 已登记。A13 配置 list-only 精确枚举 1 项 Chromium，Web typecheck 通过。实机功能顺序由该场景和本 RUNBOOK T6 共同固定，证据待实际运行。
 
+## T5-fix：对齐 Chromium 列表、受信 owner 与同源准备请求
+
+前置状态：`ecbd4cdfc8a159d04856cba1cde5bd74a5a85619` 已单独提交离线构建审核修订，离线构建尚未开始。审计发现浏览器场景误用列表字段、公开登录账号和没有 Origin 的请求，MASTER 审核本修订后执行。
+
+允许修改（5 个文件）：`apps/workspace/web/acceptance/web-05-environment.spec.ts`、B 私有 `web05/auth-stage.sh`、`web05/auth-provision.py`、`web05/auth-login.cjs`、本 RUNBOOK。只读核对（5 个文件）：`apps/workspace/web/src/api.ts::taskListQuery/taskRunsQuery`、`apps/workspace/api/go/accounts.go::linkIdentity`、`apps/workspace/api/go/projects.go` 的 Origin 门禁、`apps/workspace/api/server.ts` 的 session 与 Origin 门禁、私有 `web05/acceptance/probe.mjs::prepareBlocked`，共 10 个文件。禁止改变 API、生产行为、空间列表及验收范围。
+
+执行：
+
+1. spec 中 GET `/api/tasks` 从 `{tasks: Task[]}.tasks` 改为 `{items: Task[]}.items`，GET `/api/tasks/:id/runs` 从 `{runs: TaskRun[]}.runs` 改为 `{items: TaskRun[]}.items`。保留空状态与只产生一条 Run 的断言。
+2. `auth-stage.sh invite acceptance` 固定先 provision 本轮组织邀请，再由 `auth-login.cjs` 真实登录核对，最后由 `auth-provision.py` 用同一份受信邀请元数据查询 opaque owner。私有 `auth-login.cjs` 确认回调后公开 session 的邮箱与本次邀请一致，只输出受控 storage state。私有 `auth-provision.py` 在该次登录及组织成员验证之后，核对副本 discovery 的 issuer 与本轮 OIDC 配置精确一致，以此 issuer 和本轮经组织验证的 Keycloak 用户 ID（OIDC subject）在副本 MySQL 只读查询 `web_accounts`，以该组合匹配 `oidc_issuer`、`oidc_subject` 且 `closed=FALSE` 的唯一 `owner_id`。用 SQL stdin 传 UTF-8 转 hex 的值，验证唯一结果为 48 位小写 hex。查询仅限副本 Compose mysql，凭据不出容器环境；不按 `account=email` 查询，不输出 owner、SQL 或凭据。以 0600、独占创建写 `web05/acceptance/acceptance-owner.json`，内容固定 `{ownerId:string}`。只在 `invite acceptance` 建立该文件，`probe` 的账号不覆盖。若文件已存在，仅当受信记录证明是同一邀请且重新查询的 owner 与文件一致才允许幂等复用，否则立即 STOP；禁止覆盖其它邀请的文件。Chromium 仅在受信 Node 侧从 runner 根读取该文件，所有 `fail-prepare` 传此 owner；`/api/session.account` 仅验证登录。文件欠缺、格式错误、账号与 owner 混用均失败。T5c 核对错误 issuer 或 subject 找不到绑定；离线负控直接调用既有 `prepareBlocked`，证明登录邮箱或其它 opaque owner 均不命中，唯一正确 owner 才命中。
+3. spec 中 `prepare()` 使用已打开且同源的 Task 页面，由 `page.evaluate` 并行发两次相对路径 `fetch(path,{method:'POST',credentials:'same-origin'})`。浏览器按正式门禁产生同源 Origin，不加请求 body 或幂等键。保留原 Task ID、inputDigest、environmentVersion 与 ready 断言。
+
+验证（B checkout）：
+
+```bash
+BENTO_WEB_A13_LIST_ONLY=1 pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --list acceptance/web-05-environment.spec.ts
+pnpm --filter @bento/web typecheck
+git diff --check
+```
+
+验证（B 私有租约根目录）：
+
+```bash
+bash web05/auth-stage.sh check
+node --input-type=module - <<'JS'
+import assert from 'node:assert/strict';
+import { prepareBlocked } from './web05/acceptance/probe.mjs';
+const owner = 'a'.repeat(48);
+const target = { id: 'task', owner, name: 'fixture' };
+const control = { prepareFailure: { ownerId: owner, taskName: 'fixture', taskId: 'task' } };
+assert(prepareBlocked(target, control));
+assert(!prepareBlocked({ ...target, owner: 'fixture@example.test' }, control));
+assert(!prepareBlocked({ ...target, owner: 'b'.repeat(48) }, control));
+JS
+```
+
+PASS：两处响应使用 `items`，Chromium 精确枚举 1 项，类型检查与 owner 本地负控通过。记录私有认证脚本新指纹；实际 owner 绑定查询及浏览器 Origin 留待实栈。删除本步并单独提交 spec 修复与 RUNBOOK，再锁定同源 archive。STOP：无法唯一绑定真实 owner、无法经正式同源门禁或需更改公开行为。
+
 ## T5c-0：锁定包含 WEB-05 改动的 B Web 候选
 
-前置状态：T5 的 Chromium 枚举与类型检查已通过。旧 A13 镜像的 OCI revision 与历史源码包一致，旧源码缺少 WEB-05 确认另建入口，不能供最终验收。A 的 PR #49 已合入 `e2a45a4661fdbe1cf8a17060164392eab3e4a592`，B 合并后基线为 `948dcfe4e2a35f72abb49d3b765cf6d826975900`。共享上传单测 10/10、快照 Task routes Chromium 1/1、OIDC 前端构建通过。WEB-02/03 已实现，WEB-05 仍为部分实现。主线未改 Compose 构建入口、Space 冻结实现或 execution-service。获审提交 `8a6646ea59f336532502c70e35b5dadbfc5b26db` 已归档。直接构建依赖下载超时；同一归档修正权限后经登记代理的 B 回环 SSH 会话重试，Go/npm/apt 通达，但 pnpm 下载未在 240 秒内完成。当前 T5c-0 STOP，MASTER 审核本步离线修订后才重试。
+前置状态：Chromium 枚举、类型检查和 T5-fix 的列表、owner 和同源准备修正已通过。旧 A13 镜像的 OCI revision 与历史源码包一致，旧源码缺少 WEB-05 确认另建入口，不能供最终验收。A 的 PR #49 已合入 `e2a45a4661fdbe1cf8a17060164392eab3e4a592`，B 合并后基线为 `948dcfe4e2a35f72abb49d3b765cf6d826975900`。共享上传单测 10/10、快照 Task routes Chromium 1/1、OIDC 前端构建通过。WEB-02/03 已实现，WEB-05 仍为部分实现。主线未改 Compose 构建入口、Space 冻结实现或 execution-service。获审提交 `8a6646ea59f336532502c70e35b5dadbfc5b26db` 已归档。直接构建依赖下载超时；同一归档修正权限后经登记代理的 B 回环 SSH 会话重试，Go/npm/apt 通达，但 pnpm 下载未在 240 秒内完成。当前 T5c-0 STOP，MASTER 审核本步离线修订后才重试。
 
 允许修改与专门核对（10 个文件）：B 私有 `web05/web-build/build-web.sh`、`source.tar`、`candidate.json`、`web05/web-build/offline.Dockerfile`；只读核对 `web01-offline-plan/build-offline.sh`、A 已验证离线 context 的 `Dockerfile`、当前 checkout `deploy/compose.yaml`、`deploy/workspace/nginx.conf` 和 `apps/workspace/web/acceptance/web-05-environment.spec.ts`；更新本 RUNBOOK。构建目录、清单、日志和镜像由脚本生成。禁止改原 A13 镜像、tag、构建目录、共享 daemon 配置和 A 的资源。
 
 执行：
 
-1. 保留已校验的 B `web05/web-build/source.tar`、完整 revision 和 spec 指纹，恢复到原构建入口同一 B 源码。解包保留 Git archive 权限，确认 `deploy/workspace/nginx.conf` 为 0644，保留确认另建入口及 WEB-05 Chromium 场景。两次失败日志保留在 B。
+1. 保留旧 B `web05/web-build/source.tar` 与失败证据。以 T5-fix 的已验证提交重新执行 `git -c tar.umask=0022 archive --format=tar HEAD`，记录完整 revision、新归档与新 spec 的 SHA-256，校验后用于同一次离线镜像构建与 Chromium 执行。禁止沿用旧归档或事后覆盖其中 spec。解包保留 Git archive 权限，确认 `deploy/workspace/nginx.conf` 为 0644，保留确认另建入口及 WEB-05 Chromium 场景。两次失败日志保留在 B。
 2. 只读复用 A 的 `web01-offline-plan/build-offline.sh` 配方及其已成功 Web context 中的 `Dockerfile` 和 `_web01-cache`。已核对同一宿主上这些入口可读，缓存具有 Go、pnpm store/policy、Corepack pnpm 包和 apt mirror。现有 B 归档与 A 缓存输入的 `go.mod`、`go.sum`、根 package.json、pnpm 锁及 workspace、Web/API package.json 均字节一致。重试前再次核对；不一致即 STOP。仅把缓存复制到 B 私有新构建 context，不将 A 的任何源码或镜像标签作为 B 输出，不改 A 路径、缓存或 Docker 镜像标签。
 3. 副本 `offline.Dockerfile` 对比候选 `deploy/compose.yaml` 中的 Web Dockerfile，只采用 A 配方的离线依赖替换。保持 Linux/AMD64、两项原批准的固定 Go/Node 镜像 ID，以 B 私有基底引用、`DOCKER_BUILDKIT=0`、`--pull=false --network=none --no-cache` 构建；输出仅使用 B 专用候选 tag。记录实际 Image ID、OCI revision、归档和 spec SHA-256 至 `candidate.json`。安装前仍以候选镜像默认 USER 执行 `docker run --rm --network none --entrypoint /bin/sh "$candidate_image" -c 'test -r /etc/nginx/bento.conf'`。其余 T5c/T6 同源对账保持原条件。
 
