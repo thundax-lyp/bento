@@ -402,7 +402,12 @@ test('WEB-05 real execution environment', async ({
         expect(replayed.run.id).toBe(run.id);
         await expect
             .poll(() => observe(blank.id, run.id), { timeout: 35_000 })
-            .toMatchObject({ matched: true, status: 'running', entered: true });
+            .toMatchObject({
+                matched: true,
+                status: 'running',
+                reserved: true,
+                entered: true,
+            });
         expect(
             (
                 await json<{ items: TaskRun[] }>(
