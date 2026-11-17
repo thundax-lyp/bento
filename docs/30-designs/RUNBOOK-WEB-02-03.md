@@ -60,25 +60,9 @@ A、B 及原开发栈共用宿主，Compose 网络、挂载和端口隔离，此
 
 PASS 同步基线、独占租约、私有命令入口、浏览器严格 TLS 和 PUT CORS、组织成员关系及只读检查权限均已核对，环境基线已封存。当前技术预检通过，计划提交及 MASTER 审核仍待完成。STOP 任一 T0 核对失败，或验收及清理窗口超出最早到期时间。
 
-### T1：让单文件缺块有限并行直传
-
-前置状态为 T0 通过。执行 `git rev-parse HEAD`、`git rev-list --parents -n 1 HEAD`、`git diff-tree --no-commit-id --name-status -r HEAD` 和 `git status --porcelain=v1`。HEAD 必须等于 MASTER 记录的已审计划提交完整 SHA，唯一父提交为 `646d11a95b12ae89f9952f9c1f13b4ffa3fcdada`，提交仅新增 `docs/30-designs/RUNBOOK-WEB-02-03.md`，工作树输出为空。任一不符则 STOP。允许修改 `apps/workspace/web/src/space-api.ts`、`apps/workspace/web/src/space-api.test.ts` 和本 RUNBOOK。禁止修改上传状态、分块签名、服务端及文件间顺序。
-
-1. 在 `transferFile` 用清单构造递增的未确认块号，分为最多四项的小批。每批对各块并行运行原签名及 PUT 逻辑，用 `Promise.allSettled` 等待该批全部结束。单块收到成功响应后原样更新 Set 并通知进度。失败时，优先抛出本批按块号首个 `ApiError` 401，否则抛出首个拒绝原因；不再启动后续批次，不调用 complete。全成功后原条件调用 complete；保留 saved/completing/空文件分支和逐文件批次行为。
-2. 在 `space-api.test.ts` 增加两个确定性回归。六块文件在查询时已有第 1 块，mock 用闸门挂起缺块 2–5 的 PUT，断言这四块均已启动、缺块 6 和 complete 均未启动；释放后断言只补 2–6，最后一次 complete。失败用例使首批同时出现 401 与另一块 PUT 失败，等待在途块结算后按 401 拒绝，断言未请求编号 6 或 complete。闸门在 finally 释放。
-3. 验证命令如下。
-
-```bash
-pnpm --filter @bento/web test src/space-api.test.ts
-pnpm --filter @bento/web typecheck
-pnpm --filter @bento/web test:e2e upload-intake.spec.ts upload-progress.spec.ts space-preview.spec.ts --project=chromium
-```
-
-PASS 两个新增回归、既有续传和空文件回归及 Chromium 9/9 均通过。STOP 断言或编译失败未能在列出的改动内修复，保留测试现场。
-
 ### T2：适配并行观测并按序完成 A02
 
-前置状态为候选包含已验证的四块并行，T0 受控入口就绪。允许修改 `apps/workspace/web/scripts/verify-web-a02.mjs`、`deploy/README.md` 和本 RUNBOOK。禁止改生产代码、存储签名或替换真实 PUT。
+前置状态为当前提交包含四块并行，单元测试 10/10、个人端类型检查及 Chromium 9/9 通过，T0 受控入口就绪。允许修改 `apps/workspace/web/scripts/verify-web-a02.mjs`、`deploy/README.md` 和本 RUNBOOK。禁止改生产代码、存储签名或替换真实 PUT。
 
 1. 运行实栈脚本前，用 T0 固定的受控部署入口从 T1 已提交源码构建并部署候选镜像。记录 T1 提交 SHA 和构建得到的镜像摘要，通过 T0 受控入口读取实际承接验收请求的服务实例镜像摘要，逐一对比部署记录；任一不一致或无法读取则 STOP。通过 A 受限记录的唯一远端浏览器入口加载配置。以同一 Chromium 严格访问候选 Web 200 和私有 S3 403，再由 --small 在第一次传输前完成正式 OIDC 登录及零用量检查。T2 和 T3 使用同一候选实例及同一测试账号。候选路由、正式 OIDC 登录或零用量任一断言失败则 STOP，不进入传输。
 2. 在 `verify` 的 disconnect 阶段对编号大于 1 的签名请求共用单一闸门，释放函数须幂等。先等待第 1 块实际 PUT 200 并回读 parts=[1]，再置 offline 并释放闸门，验证 reload 离线后恢复与回读。故障退出时先释放闸门，再执行 `await context.unrouteAll({ behavior: 'wait' })`，完成后继续既有收尾。capture/expired 阶段只让编号 2 使用原有捕获或旧签名逻辑，其余缺块的签名请求直接中断。等待该轮全部结算后才进入下一阶段。resume 恢复全部缺块的正常签发和直传。

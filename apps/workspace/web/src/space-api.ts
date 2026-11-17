@@ -227,8 +227,28 @@ export async function transferFile(
         });
     }
     if (checksums.length) notifyParts();
-    for (let number = 1; number <= checksums.length; number++) {
-        if (uploaded.has(number)) continue;
+    const missing = checksums
+        .map((_, index) => index + 1)
+        .filter((number) => !uploaded.has(number));
+    const parallelParts = 4;
+    for (let offset = 0; offset < missing.length; offset += parallelParts) {
+        const results = await Promise.allSettled(
+            missing.slice(offset, offset + parallelParts).map(putPart),
+        );
+        const unauthorized = results.find(
+            (result) =>
+                result.status === 'rejected' &&
+                result.reason instanceof ApiError &&
+                result.reason.status === 401,
+        );
+        const failure =
+            unauthorized ??
+            results.find((result) => result.status === 'rejected');
+        if (failure?.status === 'rejected') throw failure.reason;
+    }
+    return complete();
+
+    async function putPart(number: number): Promise<void> {
         const signed = await post<{ url: string; checksum: string }>(
             path + '/part',
             { number },
@@ -245,7 +265,6 @@ export async function transferFile(
         uploaded.add(number);
         notifyParts();
     }
-    return complete();
 
     async function complete(): Promise<void> {
         notify({ phase: 'completing' });
