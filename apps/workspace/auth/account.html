@@ -15,6 +15,11 @@
                 <button>退出登录</button>
             </form>
             <form method="post" action="/api/oidc/close">
+                <p>
+                    注销会立即结束此 Bento
+                    账号的所有会话。已提交的任务会继续执行。任务结束、待核对事项结案且未完成上传的签发地址到期后，系统会继续清理。
+                </p>
+                <p>项目、工作区、上传文件、任务记录和补丁清理后无法恢复。</p>
                 <label
                     ><input
                         type="checkbox"
