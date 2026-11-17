@@ -5141,7 +5141,7 @@ test(
                                 offset: 0,
                                 kind: 'agent_reply',
                                 text: canary,
-                                token: canary,
+                                privateDiagnostic: { marker: canary },
                             },
                         ]),
                         403,
@@ -5264,6 +5264,32 @@ test(
             );
             const result = await api(path + '/results');
             assert.equal(result.body.result.summary, '任务结果');
+            assert.equal(result.text.includes(canary), false);
+            for (const view of ['incremental', 'cumulative']) {
+                const patches = [];
+                for (const download of ['', '&download=1']) {
+                    const response = await fetch(
+                        service.url +
+                            '/v1' +
+                            path +
+                            '/results/1/diff?view=' +
+                            view +
+                            download,
+                        {
+                            headers: {
+                                authorization: 'Bearer ' + testToken,
+                                'x-bento-owner-id': 'account-a',
+                            },
+                            signal: AbortSignal.timeout(5000),
+                        },
+                    );
+                    assert.equal(response.status, 200);
+                    const bytes = Buffer.from(await response.arrayBuffer());
+                    assert.equal(bytes.includes(canary), false);
+                    patches.push(bytes);
+                }
+                assert.deepEqual(patches[0], patches[1]);
+            }
             assert.deepEqual(result.body.result.checks, [
                 { name: 'fixture check', status: 'passed', output: 'ok' },
             ]);

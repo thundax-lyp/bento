@@ -14,11 +14,86 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
+    changes:
+        name: Detect affected paths
+        runs-on: ubuntu-24.04
+        timeout-minutes: 5
+        outputs:
+            workspace: ${{ steps.paths.outputs.workspace }}
+            orchestrator: ${{ steps.paths.outputs.orchestrator }}
+            worker: ${{ steps.paths.outputs.worker }}
+            browser: ${{ steps.paths.outputs.browser }}
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  persist-credentials: false
+                  fetch-depth: 0
+            - id: paths
+              shell: bash
+              env:
+                  BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+              run: |
+                  workspace=false
+                  orchestrator=false
+                  worker=false
+                  browser=false
+
+                  changed_paths=$(mktemp)
+                  # Use the checked-out merge result for PRs and the pushed tip for main.
+                  # Treat renames as a deletion and addition to check both areas.
+                  if git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+                      git diff --no-renames --name-only -z "$BASE_SHA" HEAD -- > "$changed_paths"
+                      while IFS= read -r -d '' path; do
+                          case "$path" in
+                              *.md|assets/*|public-files.json) ;;
+                              apps/workspace/*|deploy/workspace/*|deploy/keycloak/*)
+                                  workspace=true
+                                  browser=true
+                                  ;;
+                              apps/orchestrator/*|deploy/orchestrator/*)
+                                  # Workspace API integration tests import Orchestrator.
+                                  workspace=true
+                                  orchestrator=true
+                                  ;;
+                              apps/worker/*|deploy/worker/*)
+                                  # Orchestrator imports Worker and is exercised by Workspace API tests.
+                                  workspace=true
+                                  orchestrator=true
+                                  worker=true
+                                  ;;
+                              *)
+                                  workspace=true
+                                  orchestrator=true
+                                  worker=true
+                                  browser=true
+                                  ;;
+                          esac
+                      done < "$changed_paths"
+                  else
+                      # A new ref or unavailable base leaves the scope unknown.
+                      workspace=true
+                      orchestrator=true
+                      worker=true
+                      browser=true
+                  fi
+
+                  {
+                      printf 'workspace=%s\n' "$workspace"
+                      printf 'orchestrator=%s\n' "$orchestrator"
+                      printf 'worker=%s\n' "$worker"
+                      printf 'browser=%s\n' "$browser"
+                  } >> "$GITHUB_OUTPUT"
+
     repository:
         name: Repository checks
+        needs: changes
+        if: ${{ always() }}
         runs-on: ubuntu-24.04
         timeout-minutes: 15
         steps:
+            - name: Verify path detection
+              if: ${{ needs.changes.result != 'success' }}
+              run: exit 1
             - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
               with:
                   persist-credentials: false
@@ -36,10 +111,23 @@ jobs:
                   node-version: 22.x
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
-            - run: pnpm check
+            - run: pnpm check:workspace
+              if: ${{ needs.changes.outputs.workspace == 'true' }}
+            - run: pnpm check:orchestrator
+              if: ${{ needs.changes.outputs.orchestrator == 'true' }}
+            - run: pnpm check:worker
+              if: ${{ needs.changes.outputs.worker == 'true' }}
+            - run: pnpm lint
+              if: >-
+                  ${{ needs.changes.outputs.workspace == 'true' ||
+                      needs.changes.outputs.orchestrator == 'true' ||
+                      needs.changes.outputs.worker == 'true' }}
+            - run: pnpm format:check
 
     browser:
         name: Web Chromium E2E
+        needs: changes
+        if: ${{ needs.changes.outputs.browser == 'true' }}
         runs-on: ubuntu-24.04
         timeout-minutes: 15
         steps:

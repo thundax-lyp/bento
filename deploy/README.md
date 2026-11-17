@@ -148,6 +148,14 @@ Task 的 execute 请求含可选 `publicEventsUrl`，与当次 grant 一起交�
 
 回调以本轮 DSH 事件的零基索引作 `offset`。每个索引至多一项，按索引递增。回复、步骤和命令使用 `{offset,kind,text}`，检查使用 `{offset,kind:"check",name,status,output}`。检查状态为 passed、failed、not_run 或 unavailable。仅投影用户可见内容，命令只给出脱敏名称，检查输出只给出可公开摘要。禁止输出工具参数、环境变量、原始 DSH 帧或凭据。Worker 每批最多 100 项及 256 KiB，单个 text/output 最多 4096 UTF-8 字节，name 最多 120 字节。空批标记投影完成；发布结果前服务须收到此批。生产 bootstrap 的投影和保密性使用部署场景验收。
 
+使用仓库自带的 Task 投影适配器时，将 `BENTO_DSH_BOOTSTRAP` 指向 `apps/worker/task-bootstrap.ts`，并将 `BENTO_DSH_BASE_BOOTSTRAP` 指向受信私有运行时的容器内绝对路径。私有基运行时在当次 Workspace 和 Session 中执行工具，并在 Session flush 后由 `publicEvents` 提供可公开内容，由 `trustedTaskChecks` 提供已与真实工具调用及结果关联的检查回执。适配器合并两种投影。模型回复、工具参数和私有诊断字段不能充当可信检查回执。
+
+真实结果交付验收使用 [WEB-A13](../docs/10-requirements/WEB-REQUIREMENTS.md#验收标准)，在已配置 HTTPS、独立测试身份、私有 S3 和真实 DSH/OpenShell Worker 的环境中执行。以受控环境变量提供 `BENTO_WEB_A13_URL` 和 `BENTO_WEB_A13_STORAGE_STATE`，取消设置 `BENTO_WEB_A13_LIST_ONLY`，运行：
+
+```sh
+pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --workers=1
+```
+
 ## Temporal 配置
 
 在 `debug-workspace/execution.env` 设置 `BENTO_TEMPORAL_ADDRESS`、`BENTO_TEMPORAL_NAMESPACE` 和 `BENTO_TEMPORAL_TASK_QUEUE`。正式环境填写受信网络内的 Temporal 服务地址。每个控制器使用独占 Task Queue，重启时保持状态卷、Namespace 和队列名。
