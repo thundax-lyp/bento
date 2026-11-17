@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,7 +12,11 @@ import {
     reconcileSessionPersistence,
     remoteSessionPersistence,
 } from '@/apps/worker/remote-session.ts';
-import { SessionHistory, type VerifiedStopProof } from './session-history.ts';
+import {
+    HistoryCheckpointUnavailable,
+    SessionHistory,
+    type VerifiedStopProof,
+} from './session-history.ts';
 import { PersistenceFence } from './persistence-fence.ts';
 
 test('reconciliation retries with the same writer after a dropped RPC', async () => {
@@ -183,6 +187,7 @@ test('a verified retry restores the checkpoint prefix and reopens with its origi
         receipts: db.prepare('SELECT * FROM batch_receipts').all(),
         intents: db.prepare('SELECT * FROM batch_intents').all(),
         restores: db.prepare('SELECT * FROM history_restores').all(),
+        checkpoints: db.prepare('SELECT * FROM history_checkpoints').all(),
     });
     const expectUnchanged = (changes: Partial<VerifiedStopProof> = {}) => {
         const before = state();
@@ -200,6 +205,74 @@ test('a verified retry restores the checkpoint prefix and reopens with its origi
     );
     expectUnchanged();
     db.prepare('DELETE FROM batch_intents WHERE id=?').run(session);
+    const validate = (sha256 = checkpoint.sha256) =>
+        history.validateRestoreCheckpoint(session, sourceRunId, 2, sha256);
+    const expectUnavailable = (sha256?: string) => {
+        const before = state();
+        assert.throws(() => validate(sha256), HistoryCheckpointUnavailable);
+        assert.deepEqual(state(), before);
+    };
+    const before = state();
+    validate();
+    assert.deepEqual(state(), before);
+
+    const original = before.checkpoints[0]!;
+    assert(typeof original.body === 'string');
+    const originalSnapshot = JSON.parse(original.body);
+    const updateBody = db.prepare(
+        'UPDATE history_checkpoints SET body=?,sha256=? WHERE runId=?',
+    );
+    db.prepare('DELETE FROM history_checkpoints WHERE runId=?').run(
+        sourceRunId,
+    );
+    expectUnavailable();
+    db.prepare('INSERT INTO history_checkpoints VALUES (?,?,?,?,?)').run(
+        sourceRunId,
+        session,
+        2,
+        original.body,
+        checkpoint.sha256,
+    );
+    updateBody.run('{}', checkpoint.sha256, sourceRunId);
+    expectUnavailable();
+    for (const body of [
+        '{"kind":"present","next":0}',
+        ' ' + original.body,
+        JSON.stringify({
+            ...originalSnapshot,
+            events: ['{}', originalSnapshot.events[1]],
+        }),
+    ]) {
+        const sha256 = createHash('sha256').update(body).digest('hex');
+        updateBody.run(body, sha256, sourceRunId);
+        expectUnavailable(sha256);
+    }
+    updateBody.run(original.body, checkpoint.sha256, sourceRunId);
+
+    db.prepare(
+        'UPDATE history_checkpoints SET sessionId=?,authorityGeneration=? WHERE runId=?',
+    ).run(randomUUID(), 1, sourceRunId);
+    expectUnavailable();
+    db.prepare(
+        'UPDATE history_checkpoints SET sessionId=?,authorityGeneration=? WHERE runId=?',
+    ).run(session, 2, sourceRunId);
+
+    const setOwner = db.prepare(
+        'UPDATE sessions SET owner=?,epoch=? WHERE id=?',
+    );
+    setOwner.run(sourceRunId, 2, session);
+    expectUnavailable();
+    setOwner.run('bento:revoked', 1, session);
+    expectUnavailable();
+    setOwner.run('bento:revoked', 2, session);
+
+    const originalHeader = before.sessions[0]?.header;
+    assert(typeof originalHeader === 'string');
+    const setHeader = db.prepare('UPDATE sessions SET header=? WHERE id=?');
+    setHeader.run('{', session);
+    expectUnavailable();
+    setHeader.run(originalHeader, session);
+
     const receipts = state().receipts;
     assert.deepEqual(history.restore(proof), checkpoint);
     assert.deepEqual(state().receipts, receipts);
@@ -235,4 +308,38 @@ test('a verified retry restores the checkpoint prefix and reopens with its origi
     } finally {
         fence.close();
     }
+});
+
+test('explicit absent history checkpoint validates without writes', async (t) => {
+    const folder = await mkdtemp(join(tmpdir(), 'bento-history-absent-'));
+    const path = join(folder, 'history.sqlite');
+    const history = new SessionHistory(path);
+    const db = new DatabaseSync(path);
+    t.after(async () => {
+        history.close();
+        db.close();
+        await rm(folder, { recursive: true, force: true });
+    });
+    const session = randomUUID();
+    const run = randomUUID();
+    const checkpoint = history.checkpoint(session, run, 1);
+    const state = () =>
+        ['sessions', 'events', 'history_checkpoints', 'history_restores'].map(
+            (table) => db.prepare('SELECT * FROM ' + table).all(),
+        );
+    const before = state();
+    assert.equal(before[2]?.[0]?.body, '{"kind":"absent"}');
+    history.validateRestoreCheckpoint(session, run, 1, checkpoint.sha256);
+    assert.deepEqual(state(), before);
+    db.prepare('DELETE FROM history_checkpoints WHERE runId=?').run(run);
+    assert.throws(
+        () =>
+            history.validateRestoreCheckpoint(
+                session,
+                run,
+                1,
+                checkpoint.sha256,
+            ),
+        HistoryCheckpointUnavailable,
+    );
 });

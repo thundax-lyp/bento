@@ -4118,6 +4118,56 @@ test('prepared restore validates staging before changing the published pointer',
     assert.deepEqual(await restarted.snapshot(binding), readme);
 });
 
+function taskRetryTestClient(url: () => string) {
+    return async (
+        path: string,
+        method = 'GET',
+        body?: unknown,
+        key?: string,
+        owner = 'account-a',
+    ) => {
+        const response = await fetch(url() + '/v1' + path, {
+            method,
+            headers: {
+                authorization: 'Bearer ' + testToken,
+                'x-bento-owner-id': owner,
+                ...(key ? { 'idempotency-key': key } : {}),
+                ...(body === undefined
+                    ? {}
+                    : { 'content-type': 'application/json' }),
+            },
+            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+            signal: AbortSignal.timeout(5000),
+        });
+        const text = await response.text();
+        return {
+            status: response.status,
+            text,
+            json: () => JSON.parse(text),
+        };
+    };
+}
+
+function taskRetryTestInput() {
+    return {
+        id: randomUUID(),
+        name: 'Retry task',
+        sourceSpaceId: randomUUID(),
+        inputFiles: readme,
+        inputManifest: [
+            {
+                fileId: randomUUID(),
+                path: 'README.md',
+                bytes: Buffer.byteLength(readme[0]!.text),
+                sha256: createHash('sha256')
+                    .update(readme[0]!.text)
+                    .digest('hex'),
+            },
+        ],
+        inputDigest: snapshotSha256(readme),
+    };
+}
+
 test(
     'private Task HTTP preserves earlier results across a fenced retry',
     { timeout: 15_000 },
@@ -4125,16 +4175,20 @@ test(
         const state = await mkdtemp(join(tmpdir(), 'bento-task-http-'));
         const host = localHost(join(state, 'volume'));
         let performed = 0;
+        let initialRestoreCalls = 0;
+        let binding: WorkerRequest['binding'] | undefined;
         const written = barrier();
         let controller = await start(state, {
             ...host,
             taskRecovery: {
                 ...host.taskRecovery!,
                 async restoreTask() {
+                    initialRestoreCalls++;
                     throw new Error('Wait for restarted controller');
                 },
             },
             async worker(request, signal, slot, onExit) {
+                binding = request.binding;
                 const result = await host.worker(request, signal, slot, onExit);
                 if (request.prompt === 'second' && ++performed === 1) {
                     written.resolve();
@@ -4147,53 +4201,11 @@ test(
             await controller.close();
             await rm(state, { recursive: true, force: true });
         });
-        async function api(
-            path: string,
-            method = 'GET',
-            body?: unknown,
-            key?: string,
-            owner = 'account-a',
-        ) {
-            const response = await fetch(controller.url + '/v1' + path, {
-                method,
-                headers: {
-                    authorization: 'Bearer ' + testToken,
-                    'x-bento-owner-id': owner,
-                    ...(key ? { 'idempotency-key': key } : {}),
-                    ...(body === undefined
-                        ? {}
-                        : { 'content-type': 'application/json' }),
-                },
-                ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-                signal: AbortSignal.timeout(5000),
-            });
-            const text = await response.text();
-            return {
-                status: response.status,
-                text,
-                json: () => JSON.parse(text),
-            };
-        }
+        const api = taskRetryTestClient(() => controller.url);
         const createKey = randomUUID();
-        const sourceSpaceId = randomUUID();
-        const fileId = randomUUID();
-        const input = {
-            id: randomUUID(),
-            name: 'Retry task',
-            sourceSpaceId,
-            inputFiles: readme,
-            inputManifest: [
-                {
-                    fileId,
-                    path: 'README.md',
-                    bytes: Buffer.byteLength(readme[0]!.text),
-                    sha256: createHash('sha256')
-                        .update(readme[0]!.text)
-                        .digest('hex'),
-                },
-            ],
-            inputDigest: snapshotSha256(readme),
-        };
+        const input = taskRetryTestInput();
+        const { sourceSpaceId } = input;
+        const { fileId } = input.inputManifest[0]!;
         const create = await api('/tasks', 'POST', input, createKey);
         assert.equal(create.status, 202, create.text);
         const id = create.json().task.id;
@@ -4273,6 +4285,7 @@ test(
             randomUUID(),
         );
         assert.equal(denied.status, 409, denied.text);
+        assert.equal(initialRestoreCalls, 0);
         assert.equal(denied.json().error.code, 'run_not_retryable');
         assert.equal((await api(path + '/runs')).json().items.length, 2);
         assert.equal(typeof proof.canonicalJson, 'string');
@@ -4304,12 +4317,79 @@ test(
                 [response.status, response.json().error.reason],
                 [409, 'stop_unconfirmed'],
             );
+            assert.equal(initialRestoreCalls, 0);
         }
         fault
             .prepare(
                 'UPDATE stop_proofs SET canonicalJson=?,sha256=? WHERE runId=?',
             )
             .run(proof.canonicalJson as string, proof.sha256, secondId);
+        const history = new DatabaseSync(join(state, 'history.sqlite'));
+        t.after(() => history.close());
+        const original = history
+            .prepare('SELECT * FROM history_checkpoints WHERE runId=?')
+            .get(secondId);
+        assert(original);
+        const removeCheckpoint = history.prepare(
+            'DELETE FROM history_checkpoints WHERE runId=?',
+        );
+        const restoreCheckpoint = history.prepare(
+            'INSERT INTO history_checkpoints VALUES (?,?,?,?,?)',
+        );
+        const replaceOriginalCheckpoint = () =>
+            restoreCheckpoint.run(
+                secondId,
+                original.sessionId!,
+                original.authorityGeneration!,
+                original.body!,
+                original.sha256!,
+            );
+        assert(binding);
+        const workspaceBefore = snapshotSha256(await host.snapshot(binding));
+        for (const faultType of ['missing', 'corrupt']) {
+            if (faultType === 'missing') removeCheckpoint.run(secondId);
+            else
+                history
+                    .prepare(
+                        "UPDATE history_checkpoints SET body='{}' WHERE runId=?",
+                    )
+                    .run(secondId);
+
+            assert.equal(
+                (await api(secondRun)).json().run.retryReason,
+                'checkpoint_unavailable',
+            );
+            const rejected = await api(
+                secondRun + '/retry',
+                'POST',
+                undefined,
+                randomUUID(),
+            );
+            assert.deepEqual(
+                [
+                    rejected.status,
+                    rejected.json().error.code,
+                    rejected.json().error.reason,
+                ],
+                [409, 'run_not_retryable', 'checkpoint_unavailable'],
+            );
+            assert.equal(
+                fault
+                    .prepare(
+                        'SELECT id FROM retry_attempts WHERE sourceRunId=?',
+                    )
+                    .get(secondId),
+                undefined,
+            );
+            assert.equal((await api(path + '/runs')).json().items.length, 2);
+            assert.equal(
+                snapshotSha256(await host.snapshot(binding)),
+                workspaceBefore,
+            );
+            assert.equal(initialRestoreCalls, 0);
+            removeCheckpoint.run(secondId);
+            replaceOriginalCheckpoint();
+        }
         fault.close();
         const retryKey = randomUUID();
         const retry = await api(
@@ -4353,6 +4433,20 @@ test(
         assert.match(total.text, /\+second/);
         assert.equal(total.text.match(/\+second/g)?.length, 1);
         assert.equal(restoreCalls, 1);
+        removeCheckpoint.run(secondId);
+        const replayAfterLoss = await api(
+            secondRun + '/retry',
+            'POST',
+            undefined,
+            retryKey,
+        );
+        assert.equal(replayAfterLoss.status, 200, replayAfterLoss.text);
+        assert.deepEqual(replayAfterLoss.json().retry, {
+            ...retry.json().retry,
+            state: 'queued',
+        });
+        assert.equal(restoreCalls, 1);
+        replaceOriginalCheckpoint();
         assert.equal((await api(firstRun + diffPath)).text, firstDiff.text);
         const events = (await api(path + '/events')).json().items;
         assert.equal(events.length, 3);
@@ -4394,6 +4488,202 @@ test(
             204,
         );
         assert.equal((await api(path)).status, 404);
+    },
+);
+
+test(
+    'Task retry blocks when its history checkpoint disappears before workspace restore',
+    { timeout: 20_000 },
+    async (t) => {
+        for (const fault of [
+            'missing checkpoint',
+            'corrupt session header',
+        ] as const) {
+            await t.test(fault, async (t) => {
+                const state = await mkdtemp(
+                    join(tmpdir(), 'bento-retry-history-'),
+                );
+                const base = localHost(join(state, 'volume'));
+                let binding: WorkerRequest['binding'] | undefined;
+                let queries = 0;
+                let restoreCalls = 0;
+                const controller = await start(state, {
+                    ...base,
+                    async worker(request, signal, slot, exit) {
+                        const result = await base.worker(
+                            request,
+                            signal,
+                            slot,
+                            exit,
+                        );
+                        if (request.mode === 'execute') {
+                            binding = request.binding;
+                            // The fixture closes an empty draft without materializing it.
+                            const created = await rpc(request, 'create', {
+                                header: {
+                                    id: request.grant.session,
+                                    version: 4,
+                                    createdAt: Date.now(),
+                                    isSeeded: false,
+                                },
+                            });
+                            assert.equal(created.status, 200);
+                            const { key } = (await created.json()).value as {
+                                key: string;
+                            };
+                            assert.equal(
+                                (await rpc(request, 'flush', { key })).status,
+                                200,
+                            );
+                            assert.equal(
+                                (await rpc(request, 'close', { key })).status,
+                                200,
+                            );
+                            return 'review';
+                        }
+                        return result;
+                    },
+                    taskRecovery: {
+                        ...base.taskRecovery!,
+                        async queryRestore(...args) {
+                            if (++queries === 1) {
+                                assert(binding && sourceRunId);
+                                const history = new DatabaseSync(
+                                    join(state, 'history.sqlite'),
+                                );
+                                try {
+                                    const result =
+                                        fault === 'missing checkpoint'
+                                            ? history
+                                                  .prepare(
+                                                      'DELETE FROM history_checkpoints WHERE runId=?',
+                                                  )
+                                                  .run(sourceRunId)
+                                            : history
+                                                  .prepare(
+                                                      "UPDATE sessions SET header='{' WHERE id=?",
+                                                  )
+                                                  .run(binding.session);
+                                    assert.equal(result.changes, 1);
+                                } finally {
+                                    history.close();
+                                }
+                            }
+                            return base.taskRecovery!.queryRestore(...args);
+                        },
+                        async restoreTask(...args) {
+                            restoreCalls++;
+                            return base.taskRecovery!.restoreTask(...args);
+                        },
+                    },
+                });
+                t.after(async () => {
+                    await controller.close();
+                    await rm(state, { recursive: true, force: true });
+                });
+                const api = taskRetryTestClient(() => controller.url);
+                const created = await api(
+                    '/tasks',
+                    'POST',
+                    taskRetryTestInput(),
+                    randomUUID(),
+                );
+                assert.equal(created.status, 202, created.text);
+                const taskPath = '/tasks/' + created.json().task.id;
+                const runs = taskPath + '/runs';
+                await until(
+                    () => api(taskPath),
+                    (r) => r.json().task.status === 'ready',
+                    'Task ready',
+                );
+                const first = await api(
+                    runs,
+                    'POST',
+                    { prompt: 'write before failing' },
+                    randomUUID(),
+                );
+                assert.equal(first.status, 202, first.text);
+                const sourceRunId = first.json().run.id as string;
+                const runPath = runs + '/' + sourceRunId;
+                const failed = await until(
+                    () => api(runPath),
+                    (r) => r.json().run.status === 'failed',
+                    'Run failed safely',
+                );
+                assert.equal(failed.json().run.retryReason, null);
+                assert(binding);
+                const workspaceBefore = snapshotSha256(
+                    await base.snapshot(binding),
+                );
+                const history = new DatabaseSync(
+                    join(state, 'history.sqlite'),
+                    { readOnly: true },
+                );
+                try {
+                    assert.equal(
+                        history
+                            .prepare(
+                                'SELECT body FROM history_checkpoints WHERE runId=?',
+                            )
+                            .get(sourceRunId)?.body,
+                        '{"kind":"absent"}',
+                    );
+                } finally {
+                    history.close();
+                }
+
+                const key = randomUUID();
+                const retry = () =>
+                    api(runPath + '/retry', 'POST', undefined, key);
+                const accepted = await retry();
+                assert.equal(accepted.status, 202, accepted.text);
+                const blocked = await until(
+                    retry,
+                    (r) =>
+                        r.status === 200 && r.json().retry.state === 'blocked',
+                    'Retry blocked',
+                );
+                const attempt = accepted.json().retry;
+                assert.deepEqual(blocked.json().retry, {
+                    ...attempt,
+                    state: 'blocked',
+                });
+                assert.equal(
+                    (await api(runs + '/' + attempt.runId)).status,
+                    404,
+                );
+                assert.deepEqual(
+                    (await api(taskPath)).json().task.reconciliation,
+                    {
+                        attemptId: attempt.id,
+                        state: 'blocked',
+                        reason: 'restore_conflict',
+                    },
+                );
+                const business = new DatabaseSync(
+                    join(state, 'business.sqlite'),
+                    { readOnly: true },
+                );
+                try {
+                    assert.equal(
+                        business
+                            .prepare(
+                                'SELECT lastConfirmedPhase FROM retry_attempts WHERE id=?',
+                            )
+                            .get(attempt.id)?.lastConfirmedPhase,
+                        'preparing',
+                    );
+                } finally {
+                    business.close();
+                }
+                assert.equal(queries, 1);
+                assert.equal(restoreCalls, 0);
+                assert.equal(
+                    snapshotSha256(await base.snapshot(binding)),
+                    workspaceBefore,
+                );
+            });
+        }
     },
 );
 
