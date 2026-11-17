@@ -81,32 +81,13 @@ PASS：唯一 B 租约和隔离归属匹配，正常邀请与短时授权入口�
 
 STOP：任何归属、授权、指纹或入口无法复核。当前唯一未能查实的是新建测试沙盒的有效策略 YAML 是否可按下文选定的结构比较规则和发行策略精确对账；只读已确认 CLI 输出契约，需 T3 在隔离副本验证真实载荷。
 
-私有命令的工作目录统一为 B 租约根目录。仓库命令从绑定 checkout 执行。所有 T0 复制来源只读。发布包保留 T2/T3 的材料与校验命令；T4 文件仅保留在私有验收副本。原 WEB-A13 文件、配置、沙盒和库保持原状。新文件计入所属步骤，因当前尚无代码，新增 LOC 在该步提交前据实回读。已有 12 个公开代码文件、1028 LOC 满足基线门槛。私有和附加基线核对范围：T3 原 `host-daemon.mjs::boundContainer/volumeAction` 汇集原文件第 241–260、302–375 行，共 94 个物理行；T4 `service.ts::work` 第 1472–1509 行、`store.ts::dispatchSnapshot/dispatchReserved/schedulableRuns` 第 2184–2249 行，共 96 个非空非注释行；准备故障直接复核第 1233–1280 行的 46 LOC，已计入基线，不重复计。这些附加行未计入 1028 LOC；待实现私有源码的非空、非纯注释行逐个路径记录。
-
-## T2：构建两版可重复发行构件
-
-前置状态：批准稿已单独提交并回读。失败详情确认另建及原址重准备的 focused Chromium 和 Web typecheck 已通过。A 的共享顺序已确认。
-
-允许修改（8 个文件）：`release/web05/Dockerfile`、`release/web05/policy-old.yaml`、`release/web05/policy-new.yaml`、`release/web05/build.sh`、`release/web05/versions.json`、原 `plugin/deploy/openshell/policy.yaml`（只读）、原 `web08-manifest.json`（只读）、本 RUNBOOK。
-
-禁止修改：原镜像引用、原策略和 A13 运行状态。
-
-执行：`build.sh` 从原 manifest 的 runtime 读取并核对本地 Docker Image ID，以 B 专用 tag 引用该基底。Dockerfile 仅增加合成文本 `/opt/bento-web05-version` 和 `/opt/bento-web05-policy/probe.txt`，继承原入口、用户和依赖。旧策略复制原文件；新版仅在 `filesystem_policy.read_only` 增加 `/opt/bento-web05-policy`。以原 ID 和新 `docker image inspect .Id`、两份策略文件 SHA-256 生成两条 `{environmentVersion,runtimeRef,imageDigest,policyPath,policyDigest}`，版本按公开契约派生。这里的 imageDigest 是 Docker 镜像配置 ID。OCI manifest digest 如存在仅记录来源。
-
-验证：
-
-```bash
-bash release/web05/build.sh build
-bash release/web05/build.sh verify
-```
-
-PASS：验证两个 ID 及两个策略摘要各自不同，引用解析到记录的 ID，策略只新增一个允许读取的路径。发布包可重复验证。
-
-STOP：基底不符、结构差异超出一项或摘要对不上。用 `bash release/web05/build.sh undo` 只回收本步骤新增、未被容器引用的 tag 和生成清单，保留 B 原镜像和产物证据。
+私有命令的工作目录统一为 B 租约根目录。仓库命令从绑定 checkout 执行。所有 T0 复制来源只读。发布包保留两版发行构件、T3 材料与校验命令；T4 文件仅保留在私有验收副本。原 WEB-A13 文件、配置、沙盒和库保持原状。新文件计入所属步骤，因当前尚无代码，新增 LOC 在该步提交前据实回读。已有 12 个公开代码文件、1028 LOC 满足基线门槛。私有和附加基线核对范围：T3 原 `host-daemon.mjs::boundContainer/volumeAction` 汇集原文件第 241–260、302–375 行，共 94 个物理行；T4 `service.ts::work` 第 1472–1509 行、`store.ts::dispatchSnapshot/dispatchReserved/schedulableRuns` 第 2184–2249 行，共 96 个非空非注释行；准备故障直接复核第 1233–1280 行的 46 LOC，已计入基线，不重复计。这些附加行未计入 1028 LOC；待实现私有源码的非空、非纯注释行逐个路径记录。
 
 ## T3：在现有 host adapter 接入两版
 
-前置状态：T2 PASS，隔离副本的专用 Gateway 与控制入口可用。
+前置状态：两版发行构件已在 B 租约根目录构建并通过 `bash release/web05/build.sh verify`。隔离副本的专用 Gateway 与控制入口须可用。
+
+构件留在 B 私有发布目录。Dockerfile 11 LOC，build.sh 91 LOC，共 102 LOC。两份策略及版本 JSON 为构件数据。 `versions.json` SHA-256 为 `e6558e1e55a8c47332c43da6cf5ce064c95911a01352926e32f2e82cfa478537`，`build.sh` SHA-256 为 `73a456756b24d21ff5e72dda2268fa840c3a0bfc78d0fcc4165e08f166cbe3d6`，`Dockerfile` SHA-256 为 `05eea309a1a8b6e81e1e223783599136bf323bd1f185aca80a3e575b38c0ced3`。两版镜像 ID、策略摘要与环境版本各自不同，旧构件与现有记录一致。
 
 允许修改（10 个文件）：原 `host-daemon.mjs`（只读）、原 `host-probe.mjs`（只读）、`release/web05/versions.json`（只读）、`release/web05/host-daemon.mjs`、`release/web05/host-probe.mjs`、`release/web05/host-adapter.sh`、隔离副本 `web05/compose.adapter.yaml`、`web05/host.json`、`web05/stack.env`、本 RUNBOOK。
 
