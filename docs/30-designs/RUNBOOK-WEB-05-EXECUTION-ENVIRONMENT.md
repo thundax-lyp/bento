@@ -95,7 +95,7 @@ STOP：任何归属、授权、指纹或入口无法复核。当前唯一未能�
 
 禁止修改：公开协议、原 A13 ledger、沙盒、数据库、镜像与 daemon 文件。
 
-执行：`host-daemon.mjs::volumeAction` 在资源变更前核验恰好两条不同版本的配置、策略文件摘要、镜像引用与 ID，且默认版本命中其中一条。原 `provision` 使用默认，`provisionTask` 只使用请求的冻结版本。沿用原卷、seed、CLI 创建与绑定检查，用选中引用替换固定镜像和策略。可信 `boundContainer` 以容器 `Image` 校验实际镜像 ID，按已验证绑定的 sandbox 名称在同一个 B Gateway 与 workspace 执行 `cli/openshell sandbox get "$sandbox" --policy-only`，读取活跃策略 YAML。受信探针把观察值与发行文件作为 YAML 单文档解析，拒绝重复键和其它文档，递归排序对象键、保留列表顺序，再比较 JSON 结构。引用文件字节的 SHA-256 仍负责版本派生。任何字段差异均失败；T3 不猜测字段或丢弃额外项。保留现有 binding ledger，仅在新记录增加 `environmentVersion`，因为后续 snapshot/start/stop/purge 必须检查原容器镜像。旧 A13 ledger 不挂载到副本。
+执行：`host-daemon.mjs::volumeAction` 在资源变更前核验恰好两条不同版本的配置、策略文件摘要、镜像引用与 ID，且默认版本命中其中一条。原 `provision` 使用默认，`provisionTask` 只使用请求的冻结版本。沿用原卷、seed、CLI 创建与绑定检查，用选中引用替换固定镜像和策略。可信 `boundContainer` 以容器 `Image` 校验实际镜像 ID，按已验证绑定的 sandbox 名称在同一个 B Gateway 与 workspace 执行 `cli/openshell sandbox get "$sandbox" --policy-only`，读取活跃策略 YAML。受信探针把观察值与发行文件作为 YAML 单文档解析，拒绝重复键和其它文档，递归排序对象键、保留列表顺序，再比较 JSON 结构。引用文件字节的 SHA-256 仍负责版本派生。仅当发行策略对象显式包含 `network_policies: {}`，且有效策略对象自身完全省略 `network_policies` 键时，比较前在有效策略对象补入空映射。显式 `null`、非映射类型、非空项差异、其它字段缺失或多余及其它值差异全部拒绝。禁止省略对非空网络策略的核对。现有 `release/web05/host-probe.mjs` 增加最小断言：空映射与该键缺省通过，显式 null、错误类型、发行非空且观察缺省、非空内容差异或其它字段差异均失败。保留现有 binding ledger，仅在新记录增加 `environmentVersion`，因为后续 snapshot/start/stop/purge 必须检查原容器镜像。旧 A13 ledger 不挂载到副本。
 
 未知版本、损坏配置或不一致 ledger 在改变资源前拒绝。实际镜像或生效策略不符时拒绝 ready 回执和正常执行，仅清理本次新建且通过 ownership 校验的沙盒、卷和 creating 记录；已有记录只告警并保留现场。对外沿用脱敏 `preparation_failed`。所有失败验证都检查版本或原始错误没有泄漏。
 
@@ -110,7 +110,7 @@ bash release/web05/host-adapter.sh install
 bash release/web05/host-adapter.sh probe
 ```
 
-PASS：Orchestrator 实际网络、SAN、SDK 新 scope 和 control socket 核对通过，旧身份及无证书均拒绝。复用专用 OpenShell，验证两版、未知版本、损坏配置、绑定记录损坏、镜像与策略错配、原版本重放。用同一新版镜像分别加载旧、新策略，经 `sandbox exec` 验证合成路径分别拒绝与允许；OpenShell 策略回读与发行材料对账通过。脚本只输出布尔、计数及非秘密摘要。
+PASS：Orchestrator 实际网络、SAN、SDK 新 scope 和 control socket 核对通过，旧身份及无证书均拒绝。复用专用 OpenShell，验证两版、未知版本、损坏配置、绑定记录损坏、镜像与策略错配、原版本重放。用同一新版镜像分别加载旧、新策略，经 `sandbox exec` 验证合成路径分别拒绝与允许；OpenShell 策略回读与发行材料对账通过。最小策略比对断言全部通过；保留真实沙盒的允许与拒绝对照。脚本只输出布尔、计数及非秘密摘要。
 
 STOP：观察读不到、错配仍返回 ready，或清理所有权不明。用 `bash release/web05/host-adapter.sh undo` 按副本 PID、启动 UID、argv 和 socket 所有权核对后停止两版 adapter，解除本轮挂载，将同一副本恢复到 T2a daemon。探针容器只按记录的容器 ID 及副本标签清理并留证。状态不明时保留并复核。
 
