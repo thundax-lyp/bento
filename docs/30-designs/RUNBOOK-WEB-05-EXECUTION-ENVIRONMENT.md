@@ -132,6 +132,18 @@ B Chromium 关闭登记 context 并在独立空 context 完成 Workspace OIDC，
 
 T6 首轮实机中，Task 首写 202、同键重放 200，Run 首写 202 后 Worker 已进入暂停。测试等待第二次点击时，前端根据活跃 Run 禁用发送，代理仅收到一次 Run POST。原 Run 保留为 `needs_review`，一次 dispatch、零结果回执、沙盒 marker 为 0。锁定 cleanup 和 STS 撤销已通过。修订后的 Chromium spec 保留 Task 两次 UI 点击和真实 Run 首发，页面丢失回执后核对活跃 Run 与禁用状态，再由同源浏览器 fetch 发送原请求字节、Content-Type 和 Idempotency-Key。Prettier、Web check（13 项测试）和锁定命令的唯一场景枚举通过。真实重放待 T6。核对 `deploy/compose.yaml` 与 B 私有 `web05/web-build/offline.Dockerfile`，后者整目录复制 Web 源码，故重新锁定 B Web 镜像和含新 spec 的归档。下次实机先对账 B 独占运行镜像，归档旧私有验收材料并保留原 Run，使用新的 B 临时受邀账号。
 
+## T6-images：锁定 B 专属服务镜像与运行身份
+
+前置状态：T6 的 Run 同键同体重放修订已通过本地 Web check、Prettier 和唯一场景枚举。提交 `0d5bd5d` 补齐同 Run 的持久 reservation 断言。旧 T6 Run 保持 `needs_review`，保留其业务库、两次执行租约、entered witness 及沙盒证据。应用栈已停止，STS 撤销收据存在。B Web 与 A 候选独立，B Orchestrator 与已识别 A 容器镜像不同。历史 A/B 容器的 Keycloak、MySQL、Postgres、Mailpit、Temporal 镜像 ID 相同。本步先准备镜像及核对入口，经审核后执行。
+
+允许修改：B 私有 `web05/compose.stack.yaml`、`web05/stack.env`、`web05/web-build/candidate.json`、`web05/runtime-images.json`、本 RUNBOOK。只读核对 `web05/compose.adapter.yaml`、`web05/acceptance/compose.yaml`、`web05/acceptance/SHA256SUMS`、`web05/web08-manifest.json`、`web05/storage/scope.json`。生成的 B 候选构建目录和 Docker 镜像均留在 B。保留锁定 runner，A 仅作只读身份对照。
+
+执行：以 `0d5bd5d` 的 Git 归档和 spec 生成 B Web 候选，复用离线构建流程，核对 Image ID、OCI revision、归档和 spec 关联。原 B 候选继续保留用于旧失败证据。对五个基础服务和测试 Chromium，用现有 B 锁定的基础镜像离线构建 B 专属派生镜像。派生镜像仅添加 B 租约、Git revision、服务角色和原基础 Image ID 的 OCI 标签，核对 RootFS、入口、用户、环境、工作目录和架构一致，实际 Image ID 与已知 A 运行镜像不同。锁定旧新身份，不引用 A 的运行标签。Orchestrator、Gateway、Worker、对象存储及沙盒镜像必须按其 B 镜像来源与 A 清单逐项对账，逐个记录 B 现有镜像或待派生的原始身份。若已有镜像不能证明独立，先为该服务另行审核替换，保留旧 needs_review 相关容器和证据。
+
+验证：在 B 使用已锁定的镜像 ID 渲染 Compose，确认所有七服务匹配 B 清单。启动时从实际运行的容器核对镜像 ID、OCI revision 或锁定版本、Compose 所属、B bridge、队列、卷、浏览器 HTTPS origin、issuer 和 owner。Gateway、Worker、对象存储和浏览器凭相同原则回读受测实体以及绑定，禁止转到 A。只输出匹配布尔，实际 ID 留在受限证据。复验启动配置、原 runner 的九项指纹、候选 `build-web.sh verify` 与副本清理。任何归属、来源或镜像 ID 无法核对时停止新 smoke。
+
+PASS：B 专属镜像及实机启动身份核对通过，记录脱敏证据后同次删除本步、提交，继续正式 T6。开始 T6 前在 B 将旧的 `acceptance-invite.json`、`acceptance-owner.json`、`acceptance-state.json`、`browser.env` 安全归档，确认旧 watcher 和租约不再写入。旧 Run 和旧沙盒的证据保持现场。为新一轮使用新的 B 临时受邀账号，先断言空 Task 和项目列表。
+
 ## T6：真实验收、全量校验与 Readiness 收口
 
 前置状态：控制、浏览器、独占存储、认证和真实 Worker 探针均已通过。B 独占窗口与脚本指纹复核成功。
