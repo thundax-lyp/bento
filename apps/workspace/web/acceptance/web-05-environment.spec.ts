@@ -1,7 +1,8 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { isAbsolute } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { expect, test, type Page, type Response } from '@playwright/test';
 import type { Session, Task, TaskResult, TaskRun } from '../src/api.ts';
 
@@ -265,13 +266,25 @@ async function result(
 
 async function prepare(page: Page, task: Task) {
     const path = '/api' + taskPath(task.id) + '/prepare';
-    const receipts = await Promise.all([
-        page.request.post(path),
-        page.request.post(path),
-    ]);
-    for (const response of receipts) {
-        expect(response.status()).toBe(200);
-        expect(((await response.json()) as { task: Task }).task).toMatchObject({
+    const receipts = await page.evaluate(
+        (url) =>
+            Promise.all(
+                [0, 1].map(async () => {
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        credentials: 'same-origin',
+                    });
+                    return {
+                        status: response.status,
+                        body: (await response.json()) as { task: Task },
+                    };
+                }),
+            ),
+        path,
+    );
+    for (const { status, body } of receipts) {
+        expect(status).toBe(200);
+        expect(body.task).toMatchObject({
             id: task.id,
             inputDigest: task.inputDigest,
             environmentVersion: task.environmentVersion,
@@ -292,7 +305,16 @@ test('WEB-05 real execution environment', async ({
     const { account } = await json<Session>(page, '/api/session');
     expect(typeof account).toBe('string');
     if (!account) throw new Error('WEB-05 requires the invited account');
-    expect((await json<{ tasks: Task[] }>(page, '/api/tasks')).tasks).toEqual(
+    const { ownerId } = JSON.parse(
+        readFileSync(
+            join(runnerRoot(), 'web05/acceptance/acceptance-owner.json'),
+            'utf8',
+        ),
+    ) as { ownerId?: string };
+    if (!ownerId || !/^[a-f0-9]{48}$/.test(ownerId) || ownerId === account) {
+        throw new Error('WEB-05 requires its trusted invitation owner binding');
+    }
+    expect((await json<{ items: Task[] }>(page, '/api/tasks')).items).toEqual(
         [],
     );
     expect(
@@ -338,11 +360,11 @@ test('WEB-05 real execution environment', async ({
             .toMatchObject({ matched: true, status: 'running', entered: true });
         expect(
             (
-                await json<{ runs: TaskRun[] }>(
+                await json<{ items: TaskRun[] }>(
                     page,
                     '/api' + taskPath(blank.id) + '/runs',
                 )
-            ).runs,
+            ).items,
         ).toHaveLength(1);
         surfaces.push(await page.content());
         await page.close();
@@ -364,7 +386,7 @@ test('WEB-05 real execution environment', async ({
             expect(attest(blank, run).markerCount).toBe(1);
 
             const failedName = 'WEB-05 prepare ' + randomUUID();
-            callRunner(['fail-prepare', account, failedName]);
+            callRunner(['fail-prepare', ownerId, failedName]);
             const failed = await createBlank(active, failedName);
             await waitTask(active, failed, 'failed');
             await expect(active.getByText('任务准备失败。')).toBeVisible();
@@ -383,7 +405,7 @@ test('WEB-05 real execution environment', async ({
             const source = new URL(active.url()).pathname;
             await upload(active, first, 'base\n');
 
-            callRunner(['fail-prepare', account, projectName]);
+            callRunner(['fail-prepare', ownerId, projectName]);
             const originalFailure = await snapshot(active, [first]);
             const recorded = await waitTask(active, originalFailure, 'failed');
             callRunner(['bind-prepare', recorded.id]);
