@@ -92,11 +92,14 @@ async function replay<T>(
     path: string,
     submit: () => Promise<void>,
     accepted: (value: T) => void,
+    beforeFetchReplay?: () => Promise<void>,
 ) {
     const receipts: {
         status: number;
         key: string | undefined;
         body: string | null;
+        bytes: number[] | undefined;
+        contentType: string | undefined;
         value: T;
     }[] = [];
     await page.route(
@@ -109,6 +112,8 @@ async function replay<T>(
                 status: response.status(),
                 key: route.request().headers()['idempotency-key'],
                 body: route.request().postData(),
+                bytes: route.request().postDataBuffer()?.toJSON().data,
+                contentType: route.request().headers()['content-type'],
                 value,
             });
             if (receipts.length === 1) {
@@ -122,7 +127,39 @@ async function replay<T>(
     try {
         await submit();
         await expect.poll(() => receipts.length).toBe(1);
-        await submit();
+        if (beforeFetchReplay) {
+            await beforeFetchReplay();
+            const first = receipts[0];
+            if (!first?.key || !first.contentType || !first.bytes)
+                throw new Error('WEB-05 missing original request data');
+            await page.unroute((url) => url.pathname === path);
+            const reply = await page.evaluate(
+                async ({ path, key, contentType, bytes }) => {
+                    const response = await fetch(path, {
+                        method: 'POST',
+                        headers: {
+                            'content-type': contentType,
+                            'idempotency-key': key,
+                        },
+                        body: new Uint8Array(bytes),
+                        redirect: 'error',
+                    });
+                    return {
+                        status: response.status,
+                        value: await response.json(),
+                    };
+                },
+                {
+                    path,
+                    key: first.key,
+                    contentType: first.contentType,
+                    bytes: first.bytes,
+                },
+            );
+            receipts.push({ ...first, ...reply });
+        } else {
+            await submit();
+        }
         await expect.poll(() => receipts.length).toBe(2);
         expect(receipts.map((value) => value.status)).toEqual([202, 200]);
         const [first, replayed] = receipts;
@@ -351,6 +388,14 @@ test('WEB-05 real execution environment', async ({
                     ([code]) => code as number | null,
                     () => null,
                 );
+            },
+            async () => {
+                await expect(
+                    page.getByRole('status').filter({ hasText: '运行中' }),
+                ).toBeVisible();
+                await expect(
+                    page.getByRole('button', { name: '发送要求' }),
+                ).toBeDisabled();
             },
         );
         const run = firstReceipt.run;
