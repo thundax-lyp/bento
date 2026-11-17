@@ -116,16 +116,20 @@ B 受信入口已锁定。`attest <task-id> <run-id|->`、`scan` 以及 `observe
 
 ## T5c-0：锁定包含 WEB-05 改动的 B Web 候选
 
-前置状态：T5 的 Chromium 枚举与类型检查已通过。旧 A13 镜像的 OCI revision 与历史源码包一致，旧源码缺少 WEB-05 确认另建入口，不能供最终验收。A 的 PR #49 已合入 `e2a45a4661fdbe1cf8a17060164392eab3e4a592`，B 合并后基线为 `948dcfe4e2a35f72abb49d3b765cf6d826975900`。共享上传单测 10/10、快照 Task routes Chromium 1/1、OIDC 前端构建通过。WEB-02/03 已实现，WEB-05 仍为部分实现。主线未改 Compose 构建入口、Space 冻结实现或 execution-service。MASTER 审核后才构建。
+前置状态：T5 的 Chromium 枚举与类型检查已通过。旧 A13 镜像的 OCI revision 与历史源码包一致，旧源码缺少 WEB-05 确认另建入口，不能供最终验收。A 的 PR #49 已合入 `e2a45a4661fdbe1cf8a17060164392eab3e4a592`，B 合并后基线为 `948dcfe4e2a35f72abb49d3b765cf6d826975900`。共享上传单测 10/10、快照 Task routes Chromium 1/1、OIDC 前端构建通过。WEB-02/03 已实现，WEB-05 仍为部分实现。主线未改 Compose 构建入口、Space 冻结实现或 execution-service。获审提交 `8a6646ea59f336532502c70e35b5dadbfc5b26db` 已归档。直接构建依赖下载超时；同一归档修正权限后经登记代理的 B 回环 SSH 会话重试，Go/npm/apt 通达，但 pnpm 下载未在 240 秒内完成。当前 T5c-0 STOP，MASTER 审核本步离线修订后才重试。
 
-允许修改与专门核对（8 个文件）：新增 B 私有 `web05/web-build/build-web.sh`、`source.tar`、`candidate.json`；只读核对原 `web-a13/web-build/build-web.sh`、当前 checkout `deploy/compose.yaml`、`deploy/workspace/nginx.conf` 和 `apps/workspace/web/acceptance/web-05-environment.spec.ts`；更新本 RUNBOOK。构建目录、清单、日志和镜像由脚本生成。禁止改原 A13 镜像、tag、构建目录、共享 daemon 配置和 A 的资源。
+允许修改与专门核对（10 个文件）：B 私有 `web05/web-build/build-web.sh`、`source.tar`、`candidate.json`、`web05/web-build/offline.Dockerfile`；只读核对 `web01-offline-plan/build-offline.sh`、A 已验证离线 context 的 `Dockerfile`、当前 checkout `deploy/compose.yaml`、`deploy/workspace/nginx.conf` 和 `apps/workspace/web/acceptance/web-05-environment.spec.ts`；更新本 RUNBOOK。构建目录、清单、日志和镜像由脚本生成。禁止改原 A13 镜像、tag、构建目录、共享 daemon 配置和 A 的资源。
 
-执行：从同步后的 B 候选提交以 `git archive` 导出跟踪文件，记录完整 Git SHA 和 tar SHA-256。上传到 B 私有目录，解包保留 `git archive` 所记录的权限，避免受限目录的 umask 改写文件 mode。非敏感的 `deploy/workspace/nginx.conf` 必须为 0644，不放宽其它文件权限。复用原构建脚本的 tar/源码 SHA 校验、Linux AMD64、本地固定 Go/Node 基础镜像、`--pull=false` 和构建日志方式，仅把输入目录和输出 tag 改为本轮副本。Dockerfile 从候选提交的 `deploy/compose.yaml` 提取 `bento-web.build.dockerfile_inline`，处理 Compose 的美元转义。构建前核对候选包含确认另建入口和 WEB-05 Chromium 场景；构建后采集实际 Docker Image ID、OCI revision、归档 SHA-256 和归档内 Chromium spec 的 SHA-256 写入 `candidate.json`。安装前在候选镜像默认 USER 下用 `docker run --rm --network none --entrypoint /bin/sh "$candidate_image" -c 'test -r /etc/nginx/bento.conf'`，禁止用 `--user` 覆盖。T5c/T6 用该 Image ID，Chromium runner 的 checkout 指向同一已校验的解包源码。若 A 改到空间 API 或发布入口，同步后按实际候选完整构建，禁止只叠加旧静态文件。
+执行：
+
+1. 保留已校验的 B `web05/web-build/source.tar`、完整 revision 和 spec 指纹，恢复到原构建入口同一 B 源码。解包保留 Git archive 权限，确认 `deploy/workspace/nginx.conf` 为 0644，保留确认另建入口及 WEB-05 Chromium 场景。两次失败日志保留在 B。
+2. 只读复用 A 的 `web01-offline-plan/build-offline.sh` 配方及其已成功 Web context 中的 `Dockerfile` 和 `_web01-cache`。已核对同一宿主上这些入口可读，缓存具有 Go、pnpm store/policy、Corepack pnpm 包和 apt mirror。现有 B 归档与 A 缓存输入的 `go.mod`、`go.sum`、根 package.json、pnpm 锁及 workspace、Web/API package.json 均字节一致。重试前再次核对；不一致即 STOP。仅把缓存复制到 B 私有新构建 context，不将 A 的任何源码或镜像标签作为 B 输出，不改 A 路径、缓存或 Docker 镜像标签。
+3. 副本 `offline.Dockerfile` 对比候选 `deploy/compose.yaml` 中的 Web Dockerfile，只采用 A 配方的离线依赖替换。保持 Linux/AMD64、两项原批准的固定 Go/Node 镜像 ID，以 B 私有基底引用、`DOCKER_BUILDKIT=0`、`--pull=false --network=none --no-cache` 构建；输出仅使用 B 专用候选 tag。记录实际 Image ID、OCI revision、归档和 spec SHA-256 至 `candidate.json`。安装前仍以候选镜像默认 USER 执行 `docker run --rm --network none --entrypoint /bin/sh "$candidate_image" -c 'test -r /etc/nginx/bento.conf'`。其余 T5c/T6 同源对账保持原条件。
 
 验证（B 租约根目录）：
 
 ```bash
-bash web05/web-build/build-web.sh build
+bash web05/web-build/build-web.sh build-offline
 bash web05/web-build/build-web.sh verify
 ```
 
