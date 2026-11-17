@@ -130,6 +130,18 @@ B Chromium 关闭登记 context 并在独立空 context 完成 Workspace OIDC，
 
 2026-11-17，B 的 `stack-stage.sh preflight` 和 `stack-stage.sh probe` 均退出 0。独占七服务、原 Web 候选镜像及 revision、严格 TLS、真实邀请和 Workspace OIDC 通过。实际 OpenShell Worker 领取真实 Run，进入活跃探针，原 Run 放行后成功。受信观测核对同 Run、环境版本、沙盒 marker 和无凭据，公开 results 返回 200 且绑定同 Run。只停止 B 副本应用，已回读短期 STS 撤销收据。
 
+## T6-replay：用原浏览器请求重放 Run 回执
+
+前置状态：`fe14af9` 和 `e6645ea` 的真实 OIDC 和 Worker 探针通过。T6 用 B CA 严格校验 Chromium 和 Node，有效恢复原受邀账号的 Workspace 会话，opaque owner 一致，Task 和项目为空。真实场景收到 Task 首写 202、同键重放 200、Run 首写 202。Run 回执丢失后，权威 Run 已领取，真实 entered witness 已存在，原 pause 仍在，代理只收到一次 Run POST。测试第二次点击依赖可用的发送按钮，而页面在活跃 Run 存在时禁用该按钮。原 Run 进入 `needs_review`，一次 dispatch、零结果回执，沙盒 marker 为 0，未见凭据。停止阻塞的 Playwright 后，锁定 cleanup 退出 0，B STS 撤销收据存在。保留原 Run、绑定与验收证据。MASTER 审核本步后执行。
+
+允许修改：`apps/workspace/web/acceptance/web-05-environment.spec.ts` 和本 RUNBOOK。只读核对 `apps/workspace/web/src/pages.tsx` 与 `deploy/workspace/Dockerfile` 或实际 B 构建文件。公开前端、API、Worker、Run 语义、原失败 Task 和实栈资源保持现状。
+
+执行：保持 Task 创建两次真实 UI 点击的回执丢失重放。Run 第一次仍通过真实 UI 发送。拦截后同原流程实际发出 POST，保留 202 原回执并启动同 Run watcher，在页面侧丢失该回执。断言任务页通过真实读取识别活跃 Run、发送按钮禁用。取消该 URL 的测试路由后，在同一浏览器页会话以同源 fetch 发出第二次 POST，使用原 URL、原 Idempotency-Key、原 Content-Type 和原请求体字节，拒绝重定向。要求 200 和相同 Run ID。保持原同 Run entered、关闭页面、释放、重开页面取回结果与沙盒 marker 等断言，并用现有受信 `observe` 的 reservation 记录和同一 Run 列表断言证实单 Run，最终 marker 恰为 1。保持严格 TLS、真实请求和所有剩余 T6 场景。
+
+验证：运行 `pnpm exec prettier --check apps/workspace/web/acceptance/web-05-environment.spec.ts`、`pnpm --filter @bento/web check` 和 `BENTO_WEB_A13_LIST_ONLY=1 pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --workers=1 acceptance/web-05-environment.spec.ts --list`。核对仅枚举 1 项，并对照 Git diff 逐条核对 Run 真实发出、同键同体、正式回执和前端禁用断言。离线通过后，删本步并同次提交本测试修改和证据。真实重放仍由 T6 验证。
+
+下一次实测前：把新 spec 和归档绑定到 B 提交。实际 B 离线 Dockerfile 对 `apps/workspace/web/` 使用整目录 COPY，因此 spec 进入构建输入。仅用 B 锁定的离线流程构建新 B Web 镜像并保留此前失败候选的记录。启动真实验收前先单独审核 B 专属运行镜像清单及启动回读。现有容器的 B Web 镜像与 A Web 镜像不同，B Orchestrator 与已识别 A 容器不同。按 A 租约挂载归属交叉对账时，Keycloak、MySQL、Postgres、Mailpit 和 Temporal 的历史 Image ID 相同，下一次服务器 smoke 前须落实 B 独占运行镜像及路由要求。原账户已有失败 Task，不用它冒充空账号，也不重发原 Run。下一次独立验收的账号和保留方案须随实测恢复一并明确。
+
 ## T6：真实验收、全量校验与 Readiness 收口
 
 前置状态：控制、浏览器、独占存储、认证和真实 Worker 探针均已通过。B 独占窗口与脚本指纹复核成功。
