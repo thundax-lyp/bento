@@ -10,7 +10,7 @@ mkdir -p debug-workspace/execution debug-workspace/keycloak-import
 
 在仓库根目录的受控 `.env` 中设置 `BENTO_MYSQL_PASSWORD`、`KEYCLOAK_DB_PASSWORD`、`KEYCLOAK_ADMIN_PASSWORD` 和 `BENTO_EXECUTION_BEARER`。四项分别生成，例如分别执行 `openssl rand -hex 32`。Web 和 Orchestrator 使用同一个 `BENTO_EXECUTION_BEARER`。本地入口默认为 `http://127.0.0.1:8080`。远端部署设置 `BENTO_PUBLIC_ORIGIN` 为用户实际访问的 HTTPS origin，由受信反向代理转发到宿主机回环的 8080，并覆盖 `Host` 和 `X-Forwarded-Proto`。容器内的 Web API 和浏览器都必须能访问该 origin。
 
-准备受控的 Keycloak Realm 导出文件，放入 `debug-workspace/keycloak-import/`。默认 Realm 为 `bento`，其他名称通过 `BENTO_KEYCLOAK_REALM` 配置。Realm 启用 Organizations、邮箱验证和 SMTP，关闭公开注册。设置组织 alias，创建启用 Standard Flow 和 S256 PKCE 的 confidential client，提供 `email`、`email_verified` 和 `organization` 声明。登记 `<BENTO_PUBLIC_ORIGIN>/api/oidc/callback` 回调和 `<BENTO_PUBLIC_ORIGIN>/auth` 退出回跳地址。Keycloak 的浏览器入口为 `/identity/`。部署入口对 Keycloak 管理路径应用管理访问控制。
+准备受控的 Keycloak Realm 导出文件，放入 `debug-workspace/keycloak-import/`。默认 Realm 为 `bento`，其他名称通过 `BENTO_KEYCLOAK_REALM` 配置。Realm 启用 Organizations、邮箱验证和 SMTP，关闭公开注册。设置组织 alias，创建启用 Standard Flow 和 S256 PKCE 的 confidential client，ID token 提供 `email`、`email_verified`、`organization` 和 `auth_time` 声明。若客户端未关联含 `auth_time` mapper 的 `basic` scope，为该客户端配置 Keycloak 的 `AUTH_TIME` 用户会话注记到 ID token。账号注销使用 `prompt=login` 和 `max_age=0` 重新认证并校验该时间。登记 `<BENTO_PUBLIC_ORIGIN>/api/oidc/callback` 回调和 `<BENTO_PUBLIC_ORIGIN>/auth` 退出回跳地址。Keycloak 的浏览器入口为 `/identity/`。部署入口对 Keycloak 管理路径应用管理访问控制。
 
 在 `debug-workspace/web.env` 中设置以下变量。若没有配置文件空间，省略三项 `BENTO_SPACE_*`。对象存储凭据通过运行环境的 AWS 凭证链提供。
 
