@@ -4169,6 +4169,212 @@ function taskRetryTestInput() {
 }
 
 test(
+    'SDK evidence does not enable Task retry without trusted workspace recovery',
+    { timeout: 15_000 },
+    async (t) => {
+        for (const tracking of [false, true]) {
+            await t.test(
+                tracking ? 'with decoder' : 'without decoder',
+                async (t) => {
+                    const state = await mkdtemp(
+                        join(tmpdir(), 'bento-sdk-task-guard-'),
+                    );
+                    const root = join(state, 'volume');
+                    const base = localHost(root);
+                    const written = barrier();
+                    let execution: WorkerRequest | undefined;
+                    let stopCalls = 0;
+                    let observations = 0;
+                    let restores = 0;
+                    const controller = await start(state, {
+                        ...base,
+                        sdk: {
+                            ...fixtureSdk,
+                            ...(tracking
+                                ? {
+                                      decodeExecEvent: () => ({
+                                          kind: 'exit' as const,
+                                          code: 0,
+                                      }),
+                                  }
+                                : {}),
+                        },
+                        async stop(binding) {
+                            stopCalls++;
+                            await base.stop(binding);
+                        },
+                        async worker(request, signal, slot, onExit) {
+                            const receipt = await base.worker(
+                                request,
+                                signal,
+                                slot,
+                                onExit,
+                            );
+                            if (request.mode !== 'execute') return receipt;
+                            execution = request;
+                            // Keep this scenario's operation ledger empty while the fixture volume changes.
+                            await writeFile(
+                                join(
+                                    root,
+                                    request.binding.project,
+                                    'task-volume',
+                                    'partial.txt',
+                                ),
+                                'partial',
+                            );
+                            written.resolve();
+                            await delay(30_000, undefined, { signal });
+                            return receipt;
+                        },
+                        taskRecovery: {
+                            ...base.taskRecovery!,
+                            async retryObservation() {
+                                observations++;
+                                return {
+                                    unknownOperations: 0,
+                                    workspaceOnly: true,
+                                };
+                            },
+                            async restoreTask(...args) {
+                                restores++;
+                                return base.taskRecovery!.restoreTask(...args);
+                            },
+                        },
+                    });
+                    t.after(async () => {
+                        await controller.close();
+                        await rm(state, { recursive: true, force: true });
+                    });
+                    const api = taskRetryTestClient(() => controller.url);
+                    const created = await api(
+                        '/tasks',
+                        'POST',
+                        taskRetryTestInput(),
+                        randomUUID(),
+                    );
+                    assert.equal(created.status, 202, created.text);
+                    const path = '/tasks/' + created.json().task.id;
+                    await until(
+                        () => api(path),
+                        (r) => r.json().task.status === 'ready',
+                        'SDK Task ready',
+                    );
+                    const started = await api(
+                        path + '/runs',
+                        'POST',
+                        { prompt: 'noop' },
+                        randomUUID(),
+                    );
+                    assert.equal(started.status, 202, started.text);
+                    const runId = started.json().run.id as string;
+                    const run = path + '/runs/' + runId;
+                    await written.promise;
+                    assert(execution);
+                    const cancelled = await api(run + '/cancel', 'POST');
+                    assert.equal(cancelled.status, 200, cancelled.text);
+                    const review = await until(
+                        () => api(run),
+                        (r) => r.json().run.status === 'needs_review',
+                        'SDK stop requires review',
+                    );
+                    assert.equal(review.json().run.retryReason, 'needs_review');
+                    assert.equal(review.json().run.canContinue, false);
+                    const retry = await api(
+                        run + '/retry',
+                        'POST',
+                        undefined,
+                        randomUUID(),
+                    );
+                    assert.deepEqual(
+                        [
+                            retry.status,
+                            retry.json().error.code,
+                            retry.json().error.reason,
+                        ],
+                        [409, 'run_not_retryable', 'needs_review'],
+                    );
+                    const continuation = await api(
+                        path + '/runs',
+                        'POST',
+                        { prompt: 'continue' },
+                        randomUUID(),
+                    );
+                    assert.equal(continuation.status, 409, continuation.text);
+
+                    const authority = new DatabaseSync(
+                        join(state, 'authority.sqlite'),
+                        { readOnly: true },
+                    );
+                    const business = new DatabaseSync(
+                        join(state, 'business.sqlite'),
+                        { readOnly: true },
+                    );
+                    try {
+                        const current = authority
+                            .prepare(
+                                'SELECT generation,state,run,capability FROM execution_sessions WHERE session=?',
+                            )
+                            .get(execution.grant.session);
+                        assert.deepEqual(
+                            { ...current },
+                            {
+                                generation: execution.grant.generation + 1,
+                                state: 'READY',
+                                run: null,
+                                capability: null,
+                            },
+                        );
+                        assert.equal(
+                            authority
+                                .prepare(
+                                    'SELECT count(*) AS count FROM operations',
+                                )
+                                .get()?.count,
+                            0,
+                        );
+                        const exit = business
+                            .prepare(
+                                'SELECT bindingDigest FROM worker_exit WHERE runId=? AND generation=?',
+                            )
+                            .get(runId, execution.grant.generation);
+                        assert.equal(
+                            exit?.bindingDigest,
+                            executionBindingDigest(execution.binding),
+                        );
+                        assert.equal(
+                            business
+                                .prepare(
+                                    'SELECT count(*) AS count FROM stop_proofs',
+                                )
+                                .get()?.count,
+                            0,
+                        );
+                        assert.equal(
+                            business
+                                .prepare(
+                                    'SELECT count(*) AS count FROM retry_attempts',
+                                )
+                                .get()?.count,
+                            0,
+                        );
+                    } finally {
+                        authority.close();
+                        business.close();
+                    }
+                    assert.equal(stopCalls, 1);
+                    assert.equal(observations, 0);
+                    assert.equal(restores, 0);
+                    assert.deepEqual(await base.snapshot(execution.binding), [
+                        ...readme,
+                        { path: 'partial.txt', text: 'partial' },
+                    ]);
+                },
+            );
+        }
+    },
+);
+
+test(
     'private Task HTTP preserves earlier results across a fenced retry',
     { timeout: 15_000 },
     async (t) => {
