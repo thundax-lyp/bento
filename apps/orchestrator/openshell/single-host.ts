@@ -1,5 +1,6 @@
 import { maxTaskEventBatchBytes } from '@/apps/worker/protocol.ts';
 import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
 import { Authority } from './authority.ts';
 import { SandboxManagement } from './management.ts';
 import { PersistenceFence } from './persistence-fence.ts';
@@ -262,6 +263,26 @@ export class SingleHostExecution {
             this.gate,
             (authorization) => this.grant(authorization, allow),
             options,
+            options.decodeExecEvent
+                ? (grant, frame) => {
+                      const id = 'sdk:' + randomUUID();
+                      if (
+                          !this.authority.reserveOperation(
+                              grant.token,
+                              id,
+                              frame.toString('base64'),
+                          )
+                      )
+                          throw new Error('SDK execution reservation denied');
+                      return (outcome) =>
+                          this.authority.observeOperation(
+                              grant.session,
+                              grant.generation,
+                              id,
+                              outcome,
+                          );
+                  }
+                : undefined,
         );
     }
 
