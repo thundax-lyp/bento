@@ -60,31 +60,9 @@ A、B 及原开发栈共用宿主，Compose 网络、挂载和端口隔离，此
 
 PASS 同步基线、独占租约、私有命令入口、浏览器严格 TLS 和 PUT CORS、组织成员关系及只读检查权限均已核对，环境基线已封存。当前技术预检通过，计划提交及 MASTER 审核仍待完成。STOP 任一 T0 核对失败，或验收及清理窗口超出最早到期时间。
 
-### T2：适配并行观测并按序完成 A02
-
-前置状态为当前提交包含四块并行，单元测试 10/10、个人端类型检查及 Chromium 9/9 通过，T0 受控入口就绪。允许修改 `apps/workspace/web/scripts/verify-web-a02.mjs`、`deploy/README.md` 和本 RUNBOOK。禁止改生产代码、存储签名或替换真实 PUT。
-
-1. 运行实栈脚本前，用 T0 固定的受控部署入口从 T1 已提交源码构建并部署候选镜像。记录 T1 提交 SHA 和构建得到的镜像摘要，通过 T0 受控入口读取实际承接验收请求的服务实例镜像摘要，逐一对比部署记录；任一不一致或无法读取则 STOP。通过 A 受限记录的唯一远端浏览器入口加载配置。以同一 Chromium 严格访问候选 Web 200 和私有 S3 403，再由 --small 在第一次传输前完成正式 OIDC 登录及零用量检查。T2 和 T3 使用同一候选实例及同一测试账号。候选路由、正式 OIDC 登录或零用量任一断言失败则 STOP，不进入传输。
-2. 在 `verify` 的 disconnect 阶段对编号大于 1 的签名请求共用单一闸门，释放函数须幂等。先等待第 1 块实际 PUT 200 并回读 parts=[1]，再置 offline 并释放闸门，验证 reload 离线后恢复与回读。故障退出时先释放闸门，再执行 `await context.unrouteAll({ behavior: 'wait' })`，完成后继续既有收尾。capture/expired 阶段只让编号 2 使用原有捕获或旧签名逻辑，其余缺块的签名请求直接中断。等待该轮全部结算后才进入下一阶段。resume 恢复全部缺块的正常签发和直传。
-3. PUT 证据按请求发出时的阶段归属；记录实际请求 Content-Length 和签名中 content-length 绑定位，缺失则 STOP。小文件、边界、额度的完成断言按块号排序后比较，保留长度和重复检测。断言 2 块的长度为 16,777,216 和 1；100 MB 为前五块各 16,777,216，末块 16,113,920。拦截每个 complete 请求，从该请求 URL 的路径解析上传 ID，据此查询同一上传的 API parts，确认全量编号及存储校验结果后再放行该请求。无法解析 ID 或回读不符则 STOP。额度轮次第二个文件从自身 complete 请求取得 ID 并回读自身 parts。
-4. 过期签名优先用 Chromium 的实际 PUT 证据，按旧 URL 和 CDP requestId 绑定发送头及 HTTP 状态。上一轮在 600 秒自然过期后观察到线级 502、CORS `MissingAllowOriginHeader`，已清理归零并保留受限恢复快照。诊断确认同一 A HTTPS 入口即时发送大块请求返回 NGINX 502 页面，MinIO 内部监听未提供可由现有 CA 验证的 TLS。使用诊断签名经同一 HTTPS 入口发送 `Expect: 100-continue`，收到 100 后写入完整的 16,777,216 字节，三次均收到 MinIO 的 403 过期拒绝。诊断签名只用于定位代理路径。
-    - 仅在新轮复现浏览器 502 和 `MissingAllowOriginHeader` 时，用同一验收进程的 Node `node:https.request` 重放同一自然过期的 URL。使用受限入口已有的 A 私有 DNS 映射和 CA，保持 Host、SNI 及证书验证，禁止重定向和额外重试。
-    - 从原文件偏移 16,777,216 读取完整第 2 块，核对 SHA-256 与旧签名回执的 `checksum` 相同。请求方法为 PUT，发送 `Expect: 100-continue`、原 `x-amz-checksum-sha256` 和 `content-length: 16777216`，先刷新请求头，收到 `continue` 事件后发送原字节。30 秒内断言 body 已发送、MinIO 实际 HTTP 403 且 XML 为 `AccessDenied` 过期拒绝。任何其他浏览器结果、证书或传输错误、响应不匹配均 STOP。
-    - 确认同一上传仅有第 1 块，再由同一 Chromium 页面获新签名并只补 2–6。日志仅记录状态、长度和阶段。
-5. 起始空间要求 saved=reserved=0。扩展现有检查器调用，仅 saved 模式增加可选第三参数 expectedBytes（缺省仍为 100,000,000），让 --small 在清理前核对 HEAD 16,777,217 及无 multipart 残留。更新部署手册的检查器契约。--quota 的复用测试 UUID 必须在发送 start 前写入 recovery 记录。环境仅通过 T0 受控入口注入。按如下顺序执行，须逐条 PASS。`--check` 必须退出 0 且恰好一次输出 `WEB_A02_PREFLIGHT_OK`。
-
-```bash
-python3 /tmp/bento-a-web02-t0/stage-verifier.py
-/tmp/bento-a-web02-t0/browser-run --check
-/tmp/bento-a-web02-t0/browser-run --small
-/tmp/bento-a-web02-t0/browser-run
-```
-
-PASS 自检通过；同一候选、同栈同账号先完成 16,777,217 字节两块上传、下载 SHA-256 与清理；再完成 100,000,000 字节断网刷新、同大小异内容 409 且无 PUT、旧 URL 实际 PUT 403、新签名只补 2–6、同 ID 原始下载摘要、100,000,001 字节页面和 API 拒收且无预占/无 PUT。每档应在其本轮输出 WEB_A02_PASS，真实对象和分块清理且用量归零。另轮 --download-boundary 仅供定位。STOP 网络、浏览器、检查器、对象一致性或任一断言异常；按部署手册保留 recovery.json 和原 ID，遵守现有阶段及清理截止。以正常 API 清理本轮项目，达到清理截止仍未确认时保留租约及恢复记录，禁止继续 A03。
-
 ### T3：完成 A03 真实额度闭环
 
-前置状态为 A02 同一候选实栈通过、同账号空间已归零。允许修改本 RUNBOOK。执行如下命令。
+前置状态为候选 `3e11d9b` 同一实栈两轮均输出 `WEB_A02_PASS`，同账号空间已归零。100 MB 轮次确认 Chromium 旧签名 PUT 403、缺块 2–6 新签名 PUT 200、下载摘要匹配。允许修改本 RUNBOOK。执行如下命令。
 
 ```bash
 /tmp/bento-a-web02-t0/browser-run --quota
@@ -93,7 +71,7 @@ node --import ./register-paths.mjs --test --test-name-pattern='WEB-A03' apps/wor
 
 实栈和 HTTP 验收断言满足后，在 T3 PASS 前执行私有命令契约的 Withdrawal 小节。先走正常 API 清理并逐 ID 回读对象和 multipart 均不存在，确认账号用量归零。再撤下候选 Workspace、回读 A 与原开发栈环境指纹、以同一远端 Chromium 核对 Web 404 和未签名 S3 403、撤销本轮临时账号及只读策略。四条命令全部退出 0 且各自输出契约所列标记。清理未确认时保留租约及恢复记录，禁止宣告 T3 PASS。
 
-PASS 撤场和环境回读全部通过。同一账号实际保存两个 100,000,000 字节对象，HEAD 核对且无 multipart 残留；用量为 200,000,000/0，新增 1 字节返回 409 space_quota，仍为原值。删除一个对象后，两笔 100 MB 并发预占仅成功一笔；取消、物理清理、额度再用和最终回到基线得到 WEB_A03_PASS。HTTP 受控时钟 5/5，覆盖签名未失效时取消和上传记录过期、存储清理失败保留预占、确认后额度复用。STOP 按 T2 清理规则处理，保留测试账号原数据和原环境。
+PASS 撤场和环境回读全部通过。同一账号实际保存两个 100,000,000 字节对象，HEAD 核对且无 multipart 残留；用量为 200,000,000/0，新增 1 字节返回 409 space_quota，仍为原值。删除一个对象后，两笔 100 MB 并发预占仅成功一笔；取消、物理清理、额度再用和最终回到基线得到 WEB_A03_PASS。HTTP 受控时钟 5/5，覆盖签名未失效时取消和上传记录过期、存储清理失败保留预占、确认后额度复用。STOP 按部署手册保存 recovery.json 和原 ID，执行正常 API 清理。清理未确认时保留租约和现场。
 
 ### T4：完成 A04 / A05 验收并收口
 
