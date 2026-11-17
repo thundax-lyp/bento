@@ -89,33 +89,11 @@ STOP：任何归属、授权、指纹或入口无法复核。当前唯一未能�
 
 B 私有发布包中 `host-daemon.mjs`（419 LOC）SHA-256 为 `7384b14d7467f3f11682b98a8c470a5a7997621838c2d2dda547dfdfdecd9de4`，`host-adapter.sh`（154 LOC）为 `a61eee5d27063466537b7c40110fb0b2b1f8abad0a57a4bf5ad018d7eb46d86d`，`host-probe.mjs`（258 LOC）为 `fb3a11491d8e924a0705e3f795d5c3815757f75aa9dbf2ef711fcade36daf1f4`。
 
-## T3a：装配 B 副本的既有 Worker transport
-
-前置状态：T3 已通过并提交 `4f490527ba9489e36b09dabaf20ecf301e94b7b6`，独占 Gateway 与适配器仍可用。MASTER 审核本步骤后执行。
-
-允许修改与专门核对（9 个文件）：新增 `web05/worker-stage.sh`、`web05/worker-loopback.mjs`、`web05/bootstrap/base.ts`；仅更新副本 `web05/web08-manifest.json` 的 transport 登记；只读核对原 `web08-manifest.json`、`web08ctl.mjs`、`worker-loopback.mjs` 和 `bootstrap/base.ts`；更新本 RUNBOOK。其余只读 bootstrap 运行依赖通过原发布目录的整包复制与校验装配；凭据为运行时受控输入。
-
-禁止修改：原 A13 进程、目录、凭据、容器、资源；T3 已锁定的两版适配器；公开 Worker 协议。
-
-执行：原 Worker 镜像 ID 已确认在 B 本地存在。以 `worker-stage.sh stage` 核对原 manifest 所载镜像 ID，在副本专用的 `<owner>-worker` 引用下使用同一镜像。复用原 loopback 文件及 bootstrap 包，按包内容核对原 `check-tool.ts`、`official-model.ts`、SDK 等依赖均可解析，只把 A13 的固定探针路径留给历史实现。T4 的 `worker-probe.ts` 通过私有副本 `base.ts` 的现有工具注册位置接入；选定 WEB-05 合成路径，沿用授权的沙盒命令及文件入口。模型凭据由登记环境或既有受控入口静默注入新 `web05/model-private` 的受限文件；旧 A13 目录为空，禁止把空目录当作凭据可用证明。
-
-`worker-stage.sh start` 持租约锁，按副本 manifest 核对现有 daemon 和 relay 的 PID、UID、启动时间、argv 和 socket。保持两个进程及原 Gateway 不动，复用 `web08ctl.mjs start` 的现有 transport 记录结构，原子登记新的 instance、上述 PID 与启动时间、已校验的 Worker 镜像 ID、`closed=false` 和 `probe=false`。随后以副本 `WEB08_DIR`、副本 owner 作为 `BENTO_WEB_A13_PROJECT`、新端口和新 mTLS 调用原 `node web08ctl.mjs ready`。真实 Worker 模式保持 `WEB08_DAEMON_PROBE` 和 `WEB08_PROBE` 未启用。T4 的副本 Compose 覆盖只读挂接既有 Worker 命令路径，`/run/web08/{runs,control,relay}` 均绑定新副本。
-
-验证（B 租约根目录）：
-
-```bash
-bash web05/worker-stage.sh stage
-bash web05/worker-stage.sh start
-bash web05/worker-stage.sh probe
-```
-
-PASS：原镜像未重建，依赖从原锁定包解析，副本独有 transport instance、进程和 socket，SDK 只连新 Gateway。Worker 沙盒命令和活跃探针由 T5c/T6 在独占栈内验证。
-
-STOP：身份或依赖不明、socket/认证检查失败、Worker 运行需要未经登记的凭据。按副本 manifest 运行 `bash web05/worker-stage.sh undo`，在没有活动 Worker 的前提下原子撤回本步 transport 登记，按所有权清理本步新引用和暂存凭据，保留 T3 的两版 daemon、relay 和 Gateway。PASS 后只提交剩余 RUNBOOK 的证据及步骤移除，私有部署材料留 B。
+B 副本 Worker 装配的 `stage`、`start`、`probe` 均已退出 0。已有 Worker 镜像仅增加副本引用，bootstrap 已装配，使用原 `web08ctl.mjs ready` 通过独立 transport、进程与 socket 所有权和新 Gateway 的 mTLS 核验。模型配置已从登记入口静默暂存到副本 0600 文件，尚未通过真实 Worker 使用。私有 `worker-stage.sh`（105 LOC）、`worker-loopback.mjs`（116 LOC）及 `bootstrap/base.ts`（129 LOC）指纹依次为 `eea15896892d561a07b61093025a262ad319f784721669e558bb8cc1b958a840`、`0ec9745b5052a6a2a4c0ca7507abd2ef075d9fbfbd405e4a01598b258c67f350` 和 `989404993df12263e4d605b3fbdd5d24f952741ce5a3fc9cbf69fbf88826aeed`。
 
 ## T4：离线预检 B 私有排队、故障和生命周期控制
 
-前置状态：两版适配器和独立 Gateway 已验证，T3a 的 B Worker transport、Bootstrap 和受控凭据入口已核对。
+前置状态：两版适配器和独立 Gateway 已验证，B Worker transport、已装配 Bootstrap 和受控凭据入口已核对。
 
 允许修改（10 个文件）：`web05/acceptance/SHA256SUMS`、`web05/acceptance/service.ts`、`web05/acceptance/compose.yaml`、`web05/acceptance/control.json`、`web05/acceptance/worker-probe.ts`、`web05/acceptance/run.sh`、`web05/acceptance/probe.mjs`、仓库 `service.ts`、`store.ts`（后二者只读）、本 RUNBOOK。
 
@@ -123,7 +101,7 @@ STOP：身份或依赖不明、socket/认证检查失败、Worker 运行需要�
 
 执行：
 
-1. `compose.yaml` 基于 T3 副本适配器覆盖挂载 T3a transport、控制文件和 B 私有候选源码。
+1. `compose.yaml` 基于 T3 副本适配器覆盖挂载 已登记的 B transport、控制文件和 B 私有候选源码。
 2. `run.sh hold <task-id>` 在提交 Run 前写入目标，`run.sh release <task-id> <run-id>` 核对同 Task、同 Run、仍为 `queued` 且无 reservation 后清除它。私有 `service.ts` 的两处 `db.dispatchSnapshot(slots)` 使用同一规则过滤 `queued`：以 `db.findRun(id).projectId` 匹配目标 Task，保留其它候选和 occupied 槽位。损坏控制 JSON 时停止验收。验收不使用槽位饱和模拟。
 3. `run.sh fail-prepare <owner-id> <unique-task-name>` 在首次提交前设置准备故障。私有 `service.ts::importProject` 在现有 try 内、host 变更前对该账号及名称失败。首次响应后 `run.sh bind-prepare <task-id>` 从只读 SQLite 核对同账号及名称并固定 ID，`run.sh clear-prepare <task-id>` 核对后解除；同一名称无并行创建。活跃探针用 `run.sh active-pause <task-id>` 在提交前设目标，Worker 工具在第一笔沙盒探针写入前等待匹配。浏览器关闭后用 `run.sh active-release <task-id> <run-id>` 在核对该 Run 已实际进入探针且仍 `running` 后放行。
 4. `web05/acceptance/control.json` 固定为 `{heldTaskId:null|string,prepareFailure:null|{ownerId:string,taskName:string,taskId:null|string},activePause:null|{taskId:string}}`。B 租约操作账号独占写入，0600；通过同一 UID 或只读同 UID 挂载供私有服务及 Worker 闸点读取。runner 复用租约根的 `.acceptance.lock`，对配置校验后在同目录写临时文件并原子替换，不向浏览器或沙盒暴露控制文件。Worker 探针只从现有受信 launcher 得到本 Run 的等待决定。
@@ -239,7 +217,7 @@ STOP：原数据挂载、凭据或 realm 错配，或存在 Worker/沙盒实际�
 
 1. 核对 T4 锁定 runner 及 T5a/T5c 启动脚本指纹，运行 `run.sh verify`。runner 依次调用 `storage-stage.sh issue`、`stack-stage.sh start`、`stack-stage.sh invite acceptance`。新邀请只作用于 B 副本 realm/client 和本轮临时邮箱，不使用 T5c 的探针账号。以该受邀账号生成受控 storage state，运行唯一真实场景，记录启动指纹及各断言结果。runner 内固定使用 `pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --workers=1 acceptance/web-05-environment.spec.ts`。真实模式禁用重试、截图、视频、trace 和不必要的日志。
 2. 在 T5 场景指定的轮换点首次实机执行 `run.sh rotate <task-id> <run-id>`。核对目标处于 hold、原 Run 为 `queued` 且无 `run_dispatches` 记录。停止并等待唯一旧 Orchestrator 退出。在停机窗口原子更换 `web05/host.json` 的 `imageDigest/policyDigest` 和 `web05/stack.env` 的 `BENTO_EXECUTION_ENVIRONMENT_VERSION`，启动前重算并对账。复用原 B 隔离副本的同一 Compose 项目与参数，执行 `up -d --no-deps --force-recreate orchestrator` 只重建 Orchestrator，使单文件 bind mount 指向新 inode。确认只有一个运行中的实例，从容器内读回已挂载 JSON 的两个摘要及容器环境版本，与新版记录核对，只输出匹配结果。保持同一业务库、authority 库、Temporal namespace/task queue、Gateway、对象、控制文件与绑定。确认同一 Run 仍排队且无 reservation，再 release，核对领取的是同一 Run。
-3. 实机结束或失败时执行 `bash web05/acceptance/run.sh cleanup`，依次调用 `stack-stage.sh stop` 与 `storage-stage.sh revoke`，核对副本应用服务退出、短授权已撤销。若本轮通过且所有 Run 终态、无活动 Worker 与待清沙盒，按 T3a/T2a 所有权记录撤场专用 transport、relay 与 Gateway，保留发布材料及证据。失败或状态不明时保留所需副本 Gateway、transport 与 Run 证据，避免更换任务或重发写入遮盖失败。所有路径按原已签核脚本执行，前后 SHA 必须与锁定记录一致。
+3. 实机结束或失败时执行 `bash web05/acceptance/run.sh cleanup`，依次调用 `stack-stage.sh stop` 与 `storage-stage.sh revoke`，核对副本应用服务退出、短授权已撤销。若本轮通过且所有 Run 终态、无活动 Worker 与待清沙盒，按 B transport 与 Gateway 的所有权记录撤场专用 transport、relay 与 Gateway，保留发布材料及证据。失败或状态不明时保留所需副本 Gateway、transport 与 Run 证据，避免更换任务或重发写入遮盖失败。所有路径按原已签核脚本执行，前后 SHA 必须与锁定记录一致。
 4. 所有真实断言通过后将 WEB-05 改为「已实现」，记录日期、候选版本、真实验证范围、结果与未覆盖项。长期配置行为仍引用现有 Task 接口及部署说明。删除本 RUNBOOK 及仅指向它的引用，再运行最终验证。全部通过后按 WORKER/PR 规则交付。若最终验证失败，保留失败证据、恢复本步骤的 RUNBOOK 和此前的 Readiness 状态，交 MASTER 处理。
 5. 完成真实验收、清理及 Readiness 迁移后，同一候选版本运行一次下列完整本地验证，保留本机和实机证据边界。当前默认 e2e 共 20 项，随 A 同步后记录实际数量；所有必要场景必须执行。仓库既有可选 Temporal 场景的 skip 单列说明。
 
