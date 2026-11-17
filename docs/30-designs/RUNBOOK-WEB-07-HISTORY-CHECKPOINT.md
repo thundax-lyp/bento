@@ -1,10 +1,10 @@
 # WEB-07 重试前校验 DSH 检查点 RUNBOOK
 
-2026-11-17。独立合入候选，等待独立审核。基线 `e2a45a4661fdbe1cf8a17060164392eab3e4a592`，工作目录 `/Volumes/storage/workspace/bento-a`。获审后任务分支为 `codex/web-07-history-checkpoint`。
+2026-11-17。独立合入候选，独立审核已通过。基线 `e2a45a4661fdbe1cf8a17060164392eab3e4a592`，工作目录 `/Volumes/storage/workspace/bento-a`。获审后任务分支为 `codex/web-07-history-checkpoint`。
 
 ## 执行者契约
 
-T0 由作者与审核者完成。实施、验证和收口按 T1–T3，依现有 WORKER 规则 PASS 后逐步提交。STOP 时保留现场，报告最后 PASS、触发断言、路径和脱敏输出。T1/T2 只用临时本地 DB 和本地宿主 fixture，不依赖 A 独占 OpenShell 租约。B 先合共享 Readiness，T3 等 B 合入并同步复验后再改该文件。上游独立改动若改变本 RUNBOOK 固定的入口或契约，停止交还作者。
+T0 由作者与审核者完成。剩余实施、验证和收口按 T2–T3，依现有 WORKER 规则 PASS 后逐步提交。STOP 时保留现场，报告最后 PASS、触发断言、路径和脱敏输出。T2 只用临时本地 DB 和本地宿主 fixture，不依赖 A 独占 OpenShell 租约。B 先合共享 Readiness，T3 等 B 合入并同步复验后再改该文件。上游独立改动若改变本 RUNBOOK 固定的入口或契约，停止交还作者。
 
 ## 目标、依据与范围
 
@@ -54,29 +54,9 @@ pnpm exec prettier --check docs/30-designs/RUNBOOK-WEB-07-HISTORY-CHECKPOINT.md
 
 PASS：版本与审核结论可追溯，运行契约一致。STOP：工作树有归属不明的改动、独立审核未通过或入口与草稿不同。继续前记录具体差异。
 
-### T1：提取可复用的只读历史校验
-
-前置状态：T0 PASS。允许修改：`apps/orchestrator/openshell/session-history.ts`、`apps/orchestrator/openshell/remote-session.test.ts`、本 RUNBOOK。禁止修改：persistence ingress、数据结构、回执重放和 admit 逻辑。
-
-执行：
-
-1. 在 `session-history.ts` 定义 `export class HistoryCheckpointUnavailable extends Error {}`。新增 `private readRestoreCheckpoint(sessionId: string, sourceRunId: string, oldGeneration: number, checkpointSha256: string): HistorySnapshot`。把现有 `restore` 的无活动写 handle/intents、读源行、校验 session 和代数及 SHA、检查 revoked epoch、匹配当前前缀的部分收敛到该方法。SELECT 和同一事务内的当前历史读保持现有实现。
-2. 源行缺失、身份/摘要不符、body 解析或结构非法、活跃 handle/intents、旧 owner/epoch 不符或目标前缀不符抛 `HistoryCheckpointUnavailable`。body 的 absent 仅接受原写入形态，present 仅接受上述键和类型，计数为非负安全整数，`next === events.length`。有 Session 行时必须为 `owner === "bento:revoked"` 且 `epoch === oldGeneration`，包括显式 absent 时已经由原 Run 建立 Session 的情况。使用现有 `snapshot` 校验当前历史。present 要求当前存在同一 header、inherited 和完整有序原始事件前缀。按 `snapshot` 写入顺序构造规范快照并核对其序列化字节与 body 完全一致，确保没有一种经预检通过的非规范编码会使 `readRestoredDigest` 在历史发布后才报摘要不符。在现有 `snapshot` 内，保持事件 SELECT 在错误转换边界外。只把其后纯内容校验的确定性失败转换为 `HistoryCheckpointUnavailable`，包括孤儿事件、header/event JSON 错误、非法版本或格式、历史不完整、序号不连续及事件序列校验错误。session/事件 SELECT 和事务的 SQLite I/O 错误保留原错误。禁止在调用方用宽泛 catch 把 SQLite 错误转成历史证据冲突。
-3. 新增 `validateRestoreCheckpoint(sessionId: string, sourceRunId: string, oldGeneration: number, checkpointSha256: string): void`。用已有同步 txn 调用该 helper，零 DML。原 `restore` 先保留 proof 校验及原 receipt 回读，然后在首次历史写入前调用同一 helper。保持事务内 DELETE/UPDATE、恢复回执和摘要回读原顺序。
-4. 扩展既有 `a verified retry restores the checkpoint prefix and reopens with its original receipt` 测试。在恢复前调用只读入口，断言 sessions/events/checkpoints/batch receipts/intents/restore receipts 完全一致。依次测试删除 checkpoint、改 body 保留原 SHA、使用正确摘要的非法 body、合法 JSON 的非规范编码、身份或代数不匹配、当前 owner 未撤销、当前 epoch 不匹配、前缀不符，每项把测试行恢复原值后继续。增加子场景 `explicit absent history checkpoint validates without writes`，在独立 session 无已存在历史时创建显式 absent，验证通过且未写 receipt，随后删除该行并断言同参校验抛 `HistoryCheckpointUnavailable`。
-
-验证：
-
-```bash
-pnpm --filter @bento/orchestrator exec node --import ../../register-paths.mjs --experimental-strip-types --test openshell/remote-session.test.ts
-pnpm --filter @bento/orchestrator typecheck
-```
-
-PASS：两条历史回归及新增断言均运行，现有恢复/重放成功，非法检查点明确失败，验证过程无写入。STOP：出现错误分类漂移、合法 absent 被拒或原恢复事务行为变化。保留测试现场，先修复本步。
-
 ### T2：接通 retry 受理和首次卷恢复门禁
 
-前置状态：T1 通过，有同步只读方法及类型错误。允许修改：`apps/orchestrator/openshell/single-host.ts`、`apps/orchestrator/execution-service/service.ts`、`apps/orchestrator/execution-service/service.test.ts`、本 RUNBOOK。禁止修改：Store schema、host 实现、HTTP/SDK 协议、浏览器、Readiness。
+前置状态：`SessionHistory.validateRestoreCheckpoint` 和 `HistoryCheckpointUnavailable` 已提交。历史 focused 验证 3 项和 Orchestrator typecheck 已通过。允许修改：`apps/orchestrator/openshell/single-host.ts`、`apps/orchestrator/execution-service/service.ts`、`apps/orchestrator/execution-service/service.test.ts`、本 RUNBOOK。禁止修改：Store schema、host 实现、HTTP/SDK 协议、浏览器、Readiness。
 
 执行：
 
