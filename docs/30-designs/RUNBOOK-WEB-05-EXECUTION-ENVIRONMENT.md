@@ -106,16 +106,34 @@ B 独占 MinIO 已通过 `bash web05/storage-stage.sh prepare` 和 `probe`。核
 
 B 副本认证材料的 `bash web05/auth-stage.sh stage` 与 `check` 已通过。副本 realm/client、Mailpit、回环 origin 和邀请链接的异源、异 realm 负例已验证；组织邀请、邮件登记与 Chromium 实际登录留待 T5c。后续调用 `auth-stage.sh invite probe|acceptance`。 `auth-stage.sh`（73 LOC）SHA-256 为 `8c908fe27b236d45e3e0e24193486268c70bc14561ee893166ac38a4862eb8db`，`auth-provision.py`（139 LOC）为 `25c4c6ed7e9a922a130fbaf8c27b65167fbbb36bd36f08c5eda2cd073a058a42`，`auth-login.cjs`（58 LOC）为 `e06b5a308bae897c0942e984b97384a353f05a4fa2efe5690fc9c63ee2252a0d`，`realm.json` 为 `c0735cc8e057d46f0bf16da9d36dec8bd661cc8908d0123023ee15ca69d3e3fe`。
 
+## T4a-0：把活跃暂停判定绑定到 B 私有 Run lease
+
+前置状态：T4 离线控制已通过。原 Worker 启动器有 `request.grant.run`、`request.binding.project` 与对应的私有 lease 目录，但没有向 Worker 提供可信的 armed 判定。MASTER 审核后执行。
+
+允许修改与专门核对（7 个文件）：新增 `web05/acceptance/worker-entry.mjs`；更新 `web05/acceptance/compose.yaml` 和 `SHA256SUMS`；只读核对 `debug-workspace/execution/web08-worker.mjs`、`web05/acceptance/control.json`、`web05/acceptance/probe.mjs`；更新本 RUNBOOK。禁止修改生产启动器、两版适配器、公开 Worker 协议与镜像。
+
+执行：在副本 `worker-entry.mjs` 复用原启动器全部授权和目录检查。它从已挂载的受信 `control.json` 读 `activePause.taskId`，仅在与 `request.binding.project` 相等时 armed。创建原有 lease 目录后、请求 launcher 启动前，以独占创建、0600 写入同一目录下的 `web05-active-arm.json`。精确结构为 `{taskId:string,runId:string,armed:boolean}`，前两项来自已校验的 binding 和 grant。仅将已有 Compose 覆盖中 Worker 命令脚本挂载切换到此副本，容器内路径保持一致。Worker 后续只读已有 per-lease 挂载中的该文件，核对两个 ID。浏览器无法写入，任意提示词无法启用暂停。不存在控制文件、结构损坏、重复标记或 binding 不匹配时拒绝该验收启动。
+
+验证（B 租约根目录）：
+
+```bash
+node --check web05/acceptance/worker-entry.mjs
+node web05/acceptance/worker-entry.mjs --fixture
+sha256sum -c web05/acceptance/SHA256SUMS
+```
+
+PASS：固定输入证明同 Task armed、其它 Task 未 armed、已存在或损坏的标记被拒绝，且 lease 之外无写入。锁定包装器与 Compose 覆盖指纹，清理 fixture，删除本步骤并只提交 RUNBOOK 证据。STOP：需要新增 Worker 挂载、公开字段或绕过原授权。撤回本步私有包装器及覆盖差异，保留已通过的 T4/T5a/T5b 证据。
+
 ## T4a：在 B 私有 Worker fixture 接入真实 SDK 与暂停见证
 
-前置状态：T4 离线预检和 B transport 已通过。MASTER 审核本步骤后执行。
+前置状态：T4 离线预检、B transport 和 T4a-0 的 per-lease armed 判定已通过。MASTER 审核本步骤后执行。
 
 允许修改及专门核对（10 个文件）：修改 `web05/bootstrap/base.ts`、`web05/acceptance/worker-probe.ts`、`web05/acceptance/run.sh`、`web05/acceptance/SHA256SUMS`；新增 `web05/acceptance/watch-active.mjs`；只读核对原 `bootstrap/base.ts`、`worker-loopback.mjs`、`debug-workspace/execution/web08-worker.mjs` 与两版 `host-daemon.mjs`；更新本 RUNBOOK。现有 companion 文件从锁定 bootstrap 目录复用，禁止修改原 A13、公开代码、发布适配器、Worker 镜像或模型 provider。
 
 执行：
 
 1. 副本 `base.ts` 复用已经装配的 fixture、固定输入模式与本 Run grant，只接受四个固定测试提示 `WEB05 blank`、`WEB05 frozen`、`WEB05 continue`、`WEB05 isolated`。通过原 SDK/Worker 权限在绑定沙盒内实测文件及命令。blank 只写一次 `web05-marker.txt`；frozen 读 `web05-first.txt` 的 `base\n`，确认 `web05-second.txt` 缺失并写入 marker；continue 核对 marker 已存在并追加一次；isolated 核对两份文件均存在、marker 缺失，保留只读结果。第二份文件为 `new\n`。所有输入输出为合成文本，结果仍经既有 Run 持久化、发布及补丁。固定 fixture 不需要启用官方模型启动参数。运行时从 `/app` 使用私有 fixture 源，Worker 不读取浏览器 storage state、业务 SQLite 或原始凭据。
-2. `run.sh watch-active <task-id> <run-id>` 在可信宿主读取 `control.json.activePause.taskId` 和业务 SQLite 的匹配 Run，最多等 30 秒直至同一 Run 为 `running` 且找到对应的唯一 B Run lease，再在该目录放置 `web05-active.sock`，归同 UID，0600。仅已 armed 的 Worker grant 在既有 `/run/web08/run` 挂载中连接同一 lease socket。对 `ENOENT` 或 `ECONNREFUSED` 最多重试 30 秒，连接后提交自己 grant 的 Run ID。未 armed 不等待；其他错误立即失败。不新增容器挂载和服务端口。宿主只在匹配原 Run、原 lease 的连接完成握手后原子写 `web05/acceptance/active/<run-id>.json`，字段固定为 `{taskId,runId,entered:true}`。现有 `active-release` 仍核对该见证和 running 状态，仅清空原 `activePause`；watch 发现已清空后向原连接返回放行并回收 socket。超时、错误绑定、第二连接或失去 lease 即退出且不放行。T5c/T6 保留实际 SDK 和暂停断言。
+2. `run.sh watch-active <task-id> <run-id>` 在可信宿主读取 `control.json.activePause.taskId` 和业务 SQLite 的匹配 Run，最多等 30 秒直至同一 Run 为 `running` 且找到对应的唯一 B Run lease，再在该目录放置 `web05-active.sock`，归同 UID，0600。Worker 先核对该 lease 的 `web05-active-arm.json` 与原 Task/Run，再仅在 `armed=true` 时在既有 `/run/web08/run` 挂载中连接同一 lease socket。对 `ENOENT` 或 `ECONNREFUSED` 最多重试 30 秒，连接后提交自己 grant 的 Run ID。未 armed 不等待；其他错误立即失败。不新增容器挂载和服务端口。宿主只在匹配原 Run、原 lease 的连接完成握手后原子写 `web05/acceptance/active/<run-id>.json`，字段固定为 `{taskId,runId,entered:true}`。现有 `active-release` 仍核对该见证和 running 状态，仅清空原 `activePause`；watch 发现已清空后向原连接返回放行并回收 socket。超时、错误绑定、第二连接或失去 lease 即退出且不放行。T5c/T6 保留实际 SDK 和暂停断言。
 3. 在合成 fixture 中验证固定提示识别、握手、见证、原 Run 放行及清理。错误 Run、错误 Task、第二连接或错误提示均失败，无见证且无放行。只在现有锁定材料上增加 `watch-active.mjs` 与副本 `base.ts` 指纹，运行后记录替代 T4 清单的新 SHA。
 
 验证（B 租约根目录）：
