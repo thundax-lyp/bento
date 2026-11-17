@@ -124,6 +124,18 @@ B 私有邀请解析的 `bash web05/auth-stage.sh check` 已通过。实际邮�
 
 2026-11-17，B 独占副本执行 `bash web05/auth-stage.sh check` 和 `bash web05/stack-stage.sh invite probe` 通过。复用原候选并回读实际镜像和 revision。Chromium 以 Keycloak 默认 account 接受实际组织邀请，提交资料后打开同浏览器会话的独立验证邮件并设置密码，再清除登记会话并走 Workspace 正常 OIDC 登录。会话返回 200，回读组织成员、邮箱已验证和 opaque owner 均通过。副本应用停止并确认 STS 撤销退出 0。认证脚本 `auth-provision.py` 和 `auth-login.cjs` 的 SHA-256 分别为 `bdd35b910cac0ed965b170aebcd87fa6382719aa3efa840268b698a42845ef47` 和 `cf1e424c8f9f494362e06f570c627462ad84b7e23cab0f132cb3523f1e0fc259`。
 
+## T5c-sync：同步 B Orchestrator 挂载源码到 #50
+
+前置状态：真实邀请登记已按 `589f08b` 收口。本分支已同步主线 `349d09f`，同步提交 `83437f2` 的 `pnpm --filter @bento/orchestrator test` 通过 51 项、跳过 2 项。Web 构建输入、依赖与 Chromium spec 与原候选一致，保留原 Web 镜像。T5c 的 Compose preflight 通过，下一次浏览器取得 Workspace OIDC 登录页 HTTP 200 后断言超时或失败，未提交 Worker Run，应用服务已停止。独占 Orchestrator 四处源码挂载仍对应原基线及私有控制接线。MASTER 和 SUBAGENT 审核本步后修改锁定材料。
+
+允许修改：B 租约的 `orchestrator-offline/apps/orchestrator/execution-service/service.ts`、`orchestrator-offline/apps/orchestrator/openshell/session-history.ts`、`orchestrator-offline/apps/orchestrator/openshell/single-host.ts`、`web05/acceptance/service.ts`、`web05/acceptance/SHA256SUMS`、本 RUNBOOK。只读核对 `web05/acceptance/run.sh`、`web05/stack-stage.sh`、`web05/compose.stack.yaml`、`web05/compose.adapter.yaml`，共 10 个文件。
+
+执行：确认 B 副本服务已退出及 STS 撤销，回核九项清单。源文件只使用 `83437f2` 的对应 Git blob。将旧目录内的 service.ts 作为三方合并基底、当前私有 hook overlay 作为 ours、新 Git blob 作为 theirs，先在私有临时目录合并。预演已得到 overlay SHA-256 `4150a461df6cc2d6f0e46d9db493628c3f3f482d26abe60be2d9b5f5f0c30d60`，同步前后的 hook diff 均为同一 11 行变更，基线更新 diff 也一致。原子替换三个 B 目录文件和单文件 overlay，仅更新九项清单的 `web05/acceptance/service.ts` 一条摘要。按锁定 Compose 重新启动时，从实际 Orchestrator 容器回读三个有效挂载文件摘要及标签，核对新 Git blob 或预演 overlay。
+
+验证：三源码 Git blob SHA-256 按上述路径顺序应为 `acf1095117123b148cbaed3ea065aa6815adaebca8bfe819b4fbb1f7179b22df`、`93130393719311e0c4a061f28e86a0b489d1e9b02ded0cd7c046de1e28173ced`、`373f6b9a8e2a9846a47c52ad48b256e9dfaf179730fd242abb8221744ad02578`。核对更新前后 `run.sh` 指纹 `f3b8de4d85be024dfb74420f7334b9bf1a50922942a58092e9b8edffb780af84` 和其余八项锁定摘要不变。全量校验九项，运行 `bash web05/acceptance/run.sh probe`、`bash web05/stack-stage.sh preflight`，并复核实际运行文件。当前读回 `compose.stack.yaml`、`stack-stage.sh` 指纹分别为 `a62c1fe7af3ec13a8c5ffdab0e20ba9e26305cf8acbc3b5c1346682ce55d7c0b`、`9efca8f84de5f10118a95c208d38a2b1649094fbad66439d1f0487df48646fe4`，与较早启动修复记录不同。确认其改动来源和已授权范围后才用其做新实栈验证，核对后的指纹需写入 PASS 证据。
+
+PASS：离线和实际挂载回读均匹配，停止副本应用并核对授权撤销。记录新清单和实际挂载指纹，删除本步并同次提交后恢复 T5c。STOP：基底、控制钩子、锁定入口、上游 Git blob、Compose 和实际挂载无法对账，或启动或清理失败。保留证据和相关独占资源。
+
 ## T5c：启动独占栈并核验真实 Worker 入口
 
 前置状态：B Worker 和受信验收接口、浏览器枚举、独占存储与认证材料均已通过，离线候选镜像及源码已对账，副本配置预检通过，七服务启动、候选指纹、实际邮件邀请登记、邮件验证、组织成员与 Workspace OIDC 已通过。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
