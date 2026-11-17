@@ -118,9 +118,23 @@ Chromium 的 Task/Run 列表、同源 prepare 和受信 owner 读取已校正，
 
 B Web 候选的 `build-offline` 与 `verify` 均通过。候选 revision `b2886fe2f231387fe9258be63aa895a33453e786`、Docker Image ID `sha256:96be2440803210e6f31c8ada5ef8d48d43d072eba07a4caa2c9cf2ce75f97d83`。归档 SHA-256 `a2702d77bf205ffb4e400d74535072dfa82416b68171e2923c00542be4831bed`、spec SHA-256 `759a2708509f1218a6b45e1d858a5b1e4f621767ef300427cb7bc8d3a429b080`。归档 NGINX 为 0644，镜像默认 USER 读取成功，A 缓存仅作只读复制。私有 `candidate.json` SHA-256 为 `8c58a4571894e674661b1dcf7d1e02633ac1304823a5dbce5139fce05a4cf16e`。
 
+## T5c-fix：对齐 B 副本容器的环境版本与 Temporal 端口
+
+前置状态：离线候选已验证并提交 `259c1892ac14182ff30eb46a2f06501b9849683e`。T5c 的 `stage` 通过，`probe` 未通过。专用 Temporal 已用真实 CLI 核对，默认 namespace 只在 7233 通过，8233 失败。容器探针同时确认 host config 与容器环境版本不符，虽然副本 host JSON 与宿主 stack.env 一致。只读检查发现两个私有 Compose 文件的变量插值前误有反斜杠，adapter 中一处、stack 中十一处。应用服务已停止，探针 STS 已撤销，保留副本存储和 Gateway。MASTER 审核后执行。
+
+允许修改：B 私有 `web05/compose.adapter.yaml`、`web05/compose.stack.yaml`、`web05/stack-stage.sh` 和本 RUNBOOK。只读核对 `web05/host.json`、`web05/stack.env`、`release/web05/versions.json`，共 7 个文件。禁止修改 A13、候选镜像/归档、生产代码、锁定的验收 runner 或长期配置。
+
+执行：
+
+1. 只去除三份私有装配产物中 Compose 环境插值起始美元符号之前的误加反斜杠。保留环境变量名、路径、凭据来源和 Compose 合并顺序。把副本 Orchestrator 的 Temporal 地址和生成模版统一到 `temporal:7233`，保留同一 namespace、task queue 与数据库。
+2. 在副本 Compose 下渲染配置只检查版本、Temporal 地址和服务归属。版本必须精确等于同一 B host JSON 派生值与获审旧版记录。仅输出匹配布尔。保留已修复的副本 Keycloak 正确 realm 文件名、私有导入材料、Temporal 卷属主和 MySQL healthcheck 转义；不重置副本数据库。
+3. 在 `stack-stage.sh` 加 `preflight` 分支执行上述校验。用 `bash web05/stack-stage.sh preflight` 验证。随后删除本步并单独提交恢复证据，按原 T5c 继续实际启动与 Worker 验证。
+
+PASS：已渲染的 B 副本变量版本与旧版精确对账，Temporal 地址等于已实测的地址，未改变绑定数据库和候选。STOP：Compose 归属、版本或地址仍不符。保留旧 Web 候选与私有证据，撤回本步私有配置差异。
+
 ## T5c：启动独占栈并核验真实 Worker 入口
 
-前置状态：B Worker 和受信验收接口、浏览器枚举、独占存储与认证材料均已通过，离线候选镜像及源码已对账。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
+前置状态：B Worker 和受信验收接口、浏览器枚举、独占存储与认证材料均已通过，离线候选镜像及源码已对账，T5c-fix 的副本配置预检通过。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
 
 允许修改与专门核对（10 个文件）：新增 `web05/stack-stage.sh`、`web05/compose.stack.yaml`，更新 `web05/stack.env`；只读核对 `bento/deploy/compose.yaml`、`web-a13/compose.override.yaml`、`web-a13/orchestrator-entry.sh`、`web-a13/full-stack/independent-candidates/compose/stage-env.py`、`web-a13/full-stack/independent-candidates/compose/start-seven.sh`、`web-a13/full-stack/independent-candidates/a13/run-live-a13.r2.sh`；更新本 RUNBOOK。存储与认证输出作为只读、已锁定的运行时输入。
 
@@ -131,7 +145,7 @@ B Web 候选的 `build-offline` 与 `verify` 均通过。候选 revision `b2886f
 验证（B 租约根目录）：
 
 ```bash
-bash web05/stack-stage.sh stage
+bash web05/stack-stage.sh preflight
 bash web05/stack-stage.sh probe
 ```
 
