@@ -102,28 +102,26 @@ async function replay<T>(
         contentType: string | undefined;
         value: T;
     }[] = [];
-    await page.route(
-        (url) => url.pathname === path,
-        async (route) => {
-            if (route.request().method() !== 'POST') return route.continue();
-            const response = await route.fetch({ maxRetries: 0 });
-            const value = (await response.json()) as T;
-            receipts.push({
-                status: response.status(),
-                key: route.request().headers()['idempotency-key'],
-                body: route.request().postData(),
-                bytes: route.request().postDataBuffer()?.toJSON().data,
-                contentType: route.request().headers()['content-type'],
-                value,
-            });
-            if (receipts.length === 1) {
-                accepted(value);
-                await route.abort('failed');
-            } else {
-                await route.fulfill({ response });
-            }
-        },
-    );
+    const requestPath = (url: URL) => url.pathname === path;
+    await page.route(requestPath, async (route) => {
+        if (route.request().method() !== 'POST') return route.continue();
+        const response = await route.fetch({ maxRetries: 0 });
+        const value = (await response.json()) as T;
+        receipts.push({
+            status: response.status(),
+            key: route.request().headers()['idempotency-key'],
+            body: route.request().postData(),
+            bytes: route.request().postDataBuffer()?.toJSON().data,
+            contentType: route.request().headers()['content-type'],
+            value,
+        });
+        if (receipts.length === 1) {
+            accepted(value);
+            await route.abort('failed');
+        } else {
+            await route.fulfill({ response });
+        }
+    });
     try {
         await submit();
         await expect.poll(() => receipts.length).toBe(1);
@@ -132,7 +130,7 @@ async function replay<T>(
             const first = receipts[0];
             if (!first?.key || !first.contentType || !first.bytes)
                 throw new Error('WEB-05 missing original request data');
-            await page.unroute((url) => url.pathname === path);
+            await page.unroute(requestPath);
             const reply = await page.evaluate(
                 async ({ path, key, contentType, bytes }) => {
                     const response = await fetch(path, {
@@ -173,7 +171,7 @@ async function replay<T>(
         ).toBe(false);
         return [first.value, replayed.value] as const;
     } finally {
-        await page.unroute((url) => url.pathname === path);
+        await page.unroute(requestPath);
     }
 }
 

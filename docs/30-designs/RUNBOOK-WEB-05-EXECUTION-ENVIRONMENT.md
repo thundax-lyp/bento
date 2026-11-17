@@ -134,6 +134,8 @@ T6 首轮实机中，Task 首写 202、同键重放 200，Run 首写 202 后 Wor
 
 B 服务器独立构建并验证 `0d5bd5d` 的 Web 镜像、OCI revision、源码归档与 Chromium spec，原候选已归档。五项基础服务和 Chromium 的 B 派生镜像均核对为独立 Image ID，RootFS 和启动配置与锁定基础版一致。实际运行七服务的 Image ID、revision 或锁定版本、所属 Compose、B bridge 与挂载均匹配，逐项与已识别 A 容器镜像对账无重合。B Gateway、对象存储、Worker、Chromium 绑定和严格 HTTPS issuer、先前受邀用户的 opaque owner 已核对。受限 B 运行身份清单 SHA-256 为 `0c270bc04ffdda9b044f98a1702e5e3da6e8ebeaee338b4c80f776caed3db5ca`。锁定 runner 九项指纹、Compose preflight、副本停止和 STS 撤销均通过。T6 新尝试前保留旧 Run、租约、沙盒及证据，仅归档旧私有验收材料，确认无旧 watcher 或 lease 进程后清除测试暂停输入，用新的 B 临时受邀账号从空 Task 和项目状态运行。
 
+B 专属镜像实机收到 Task 首写 202、重放 200，Run 首写 202、重放 200，均为各一次。Playwright 在回执计数处退出，副本清理和 STS 撤销通过。路由注销需要与注册共用同一个 matcher 对象，原测试使用不同函数而重复记录浏览器重放的回执。已用本地 Chromium 复现函数对象差异并验证修复，Web check（13 项测试）与唯一场景枚举通过。真实同 ID、reservation、marker 和后续场景仍由 T6 验证。
+
 ## T6：真实验收、全量校验与 Readiness 收口
 
 前置状态：控制、浏览器、独占存储、认证和真实 Worker 探针均已通过。B 独占窗口与脚本指纹复核成功。
