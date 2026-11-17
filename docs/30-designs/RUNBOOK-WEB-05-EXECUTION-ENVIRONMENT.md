@@ -126,6 +126,18 @@ B 私有邀请解析的 `bash web05/auth-stage.sh check` 已通过。实际邮�
 
 B Orchestrator 挂载已同步 `83437f2`。本地 Orchestrator 51 项通过、2 项跳过。三方合并逐行对账原控制钩子的 11 行差异，实际运行容器指纹核对通过。有效 `execution-service/service.ts`、`openshell/session-history.ts`、`openshell/single-host.ts` SHA-256 依次为 `4150a461df6cc2d6f0e46d9db493628c3f3f482d26abe60be2d9b5f5f0c30d60`、`93130393719311e0c4a061f28e86a0b489d1e9b02ded0cd7c046de1e28173ced`、`373f6b9a8e2a9846a47c52ad48b256e9dfaf179730fd242abb8221744ad02578`。九项验收清单仅替换 overlay 的摘要，新清单 SHA-256 为 `fc680bf2185ca0521c9f7e8808b217bdb5837586c7760740fd1caf285b7f4a6c`。`run.sh probe`、`stack-stage.sh preflight`、候选 Web 镜像与 revision 回读、停止副本和 STS 撤销均通过。两份启动文件相对早期记录的变化已逆向复算，均源自 Keycloak healthcheck 的 Compose 美元转义。当前 `compose.stack.yaml`、`stack-stage.sh` SHA-256 依次为 `a62c1fe7af3ec13a8c5ffdab0e20ba9e26305cf8acbc3b5c1346682ce55d7c0b` 与 `9efca8f84de5f10118a95c208d38a2b1649094fbad66439d1f0487df48646fe4`。
 
+## T5c-oidc：隔离登记回跳和 Workspace 登录导航
+
+前置状态：邀请登记已在 `589f08b` 通过，实际 Orchestrator 源码已在 `8699af5` 对账。T5c 的七服务启动和镜像回读通过。当前故障可复现为登记邮件验证及更新密码返回成功后，Chromium 在 `OIDC route` 阶段报错。代理记录 `/api/oidc/start` 返回 303，后续 Keycloak OIDC 授权请求返回 499，未收到 Workspace callback 或已认证会话。副本应用已停止，STS 撤销收据已回读。现有测试脚本在密码表单刚消失时清空同一 context 的 cookie，并在原页面发起新导航。MASTER 审核本步后执行。
+
+允许修改：B 私有 `web05/auth-login.cjs` 与本 RUNBOOK。保持邀请和验证邮件的解析约束、原 realm/client、PKCE、候选、启动脚本及锁定 runner。
+
+执行：完成原邮件验证与密码设置后，等待登记页面完成导航，核对最终页面同源且已离开 Keycloak required-action。关闭原登记 context。用独立空 Chromium context 和新页面访问同源 `/api/oidc/start`，验证真实登录、callback 及对应邮箱的 Workspace 会话。仅保存新登录 context 的 storage state，TLS 严格校验。失败只输出阶段、已知浏览器错误类别或脱敏状态。
+
+验证：运行 `bash web05/auth-stage.sh check`，再执行原 `bash web05/stack-stage.sh probe`。以该次探针输出的邀请、邮箱验证、组织成员、Workspace OIDC 及账户 ID 断言和已认证会话作为本步证据。若随后 Worker 失败，仍需确认 B 应用已停止和 STS 撤销，保留 T5c 的失败证据。
+
+PASS：独立登录 context 的认证断言全部通过，记录新脚本指纹并删除本步，同次提交。本次 probe 的 Worker 断言也通过时，按 T5c 另行删步、提交。STOP：登记或首次独立 Workspace 登录仍失败，或需要变更候选、realm/client、runner 或公共代码。核对副本清理，仅保留脱敏阶段、状态及错误类别。
+
 ## T5c：启动独占栈并核验真实 Worker 入口
 
 前置状态：B Worker 和受信验收接口、浏览器枚举、独占存储与认证材料均已通过，离线候选镜像及源码已对账，副本配置预检通过，七服务启动、候选指纹、实际邮件邀请登记、邮件验证、组织成员与 Workspace OIDC 已通过。实际运行的 Orchestrator 已核对同步源码和原控制钩子。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
