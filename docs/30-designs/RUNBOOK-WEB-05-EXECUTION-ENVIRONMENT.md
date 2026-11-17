@@ -91,15 +91,9 @@ B 私有发布包中 `host-daemon.mjs`（419 LOC）SHA-256 为 `7384b14d7467f3f1
 
 B 副本 Worker 装配的 `stage`、`start`、`probe` 均已退出 0。已有 Worker 镜像仅增加副本引用，bootstrap 已装配，使用原 `web08ctl.mjs ready` 通过独立 transport、进程与 socket 所有权和新 Gateway 的 mTLS 核验。模型配置已从登记入口静默暂存到副本 0600 文件，尚未通过真实 Worker 使用。私有 `worker-stage.sh`（105 LOC）、`worker-loopback.mjs`（116 LOC）及 `bootstrap/base.ts`（129 LOC）指纹依次为 `eea15896892d561a07b61093025a262ad319f784721669e558bb8cc1b958a840`、`0ec9745b5052a6a2a4c0ca7507abd2ef075d9fbfbd405e4a01598b258c67f350` 和 `989404993df12263e4d605b3fbdd5d24f952741ce5a3fc9cbf69fbf88826aeed`。
 
-## T4：离线预检 B 私有排队、故障和生命周期控制
+## B 私有验收 runner 接口
 
-前置状态：两版适配器和独立 Gateway 已验证，B Worker transport、已装配 Bootstrap 和受控凭据入口已核对。
-
-允许修改（10 个文件）：`web05/acceptance/SHA256SUMS`、`web05/acceptance/service.ts`、`web05/acceptance/compose.yaml`、`web05/acceptance/control.json`、`web05/acceptance/worker-probe.ts`、`web05/acceptance/run.sh`、`web05/acceptance/probe.mjs`、仓库 `service.ts`、`store.ts`（后二者只读）、本 RUNBOOK。
-
-禁止修改：T3 发布包、生产代码和原 A13 部署。
-
-执行：
+T4 已通过离线 `bash web05/acceptance/run.sh probe`，覆盖目标及对照 Task 候选、同 ID 释放、准备故障匹配、活跃探针状态和披露扫描正控。候选 `service.ts` 源与当前仓库基线一致后仅施加上述私有接线。五项锁定材料校验通过，`web05/acceptance/SHA256SUMS` SHA-256 为 `e8c1ccd16fb2a88544d59c99b409b0a61301baa6a52957c6be1eb0488ecc649a`。新增 `run.sh` 38 LOC、`probe.mjs` 179 LOC、`worker-probe.ts` 36 LOC。T4 未运行真实 Worker。
 
 1. `compose.yaml` 基于 T3 副本适配器覆盖挂载 已登记的 B transport、控制文件和 B 私有候选源码。
 2. `run.sh hold <task-id>` 在提交 Run 前写入目标，`run.sh release <task-id> <run-id>` 核对同 Task、同 Run、仍为 `queued` 且无 reservation 后清除它。私有 `service.ts` 的两处 `db.dispatchSnapshot(slots)` 使用同一规则过滤 `queued`：以 `db.findRun(id).projectId` 匹配目标 Task，保留其它候选和 occupied 槽位。损坏控制 JSON 时停止验收。验收不使用槽位饱和模拟。
@@ -108,19 +102,9 @@ B 副本 Worker 装配的 `stage`、`start`、`probe` 均已退出 0。已有 Wo
 5. `run.sh observe <task-id> <run-id>` 只输出匹配状态、计数和非秘密摘要。此步用合成 SQLite、控制 JSON 和 Worker 探针输入，离线验证调度候选过滤、故障匹配、活跃状态判定、放行及泄露扫描正控制。不启动或连接真实栈，不执行真实领取、Worker 或沙盒观察。
 6. 锁定 `run.sh verify` 和 `cleanup` 的 T6 调用。前者从租约根使用 `bash web05/storage-stage.sh issue`、`bash web05/stack-stage.sh start`、`bash web05/stack-stage.sh invite acceptance`，然后运行 Playwright。后者调用 `bash web05/stack-stage.sh stop` 与 `bash web05/storage-stage.sh revoke`。T5a/T5c 实现这些固定签名，T6 不改已有 runner。
 
-验证：
-
-```bash
-bash web05/acceptance/run.sh probe
-```
-
-PASS：离线输入中目标被过滤、解除后原 ID 重现，对照 Task 保留。准备故障只匹配目标，解除后原准备判断通过。活跃探针状态分支和泄露正控制通过。配置和 runner 指纹固定。
-
-STOP：离线结果无法区分目标与对照、控制 JSON 或状态判定错误。仅撤回本轮合成 fixture，保留脱敏证据；真实副本服务和凭据不参与此步。
-
 ## T5：固定真实验收脚本与控制面探针
 
-前置状态：T0 至 T4 PASS，固定私有 runner 和浏览器入口已回读。
+前置状态：已通过私有 runner 离线预检，固定入口和指纹已回读。
 
 允许修改：新增 `apps/workspace/web/acceptance/web-05-environment.spec.ts`，在 `public-files.json` 中紧接 WEB-A13 spec 登记新文件，再更新本 RUNBOOK。复用现有 A13 的隔离 HTTPS 配置与结果读取路径。T0 须固定必要私有接线的文件和命令。
 
@@ -186,7 +170,7 @@ STOP：配置仍指向原 realm、client、邮箱或状态路径。用 `bash web
 
 ## T5c：启动独占栈并核验真实 Worker 入口
 
-前置状态：T4 离线预检、T5a 存储与 T5b 认证材料均已通过。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
+前置状态：已通过私有 runner 离线预检、T5a 存储与 T5b 认证材料均已通过。保留 T3 的 B Compose bridge、socket 和 TLS 路径。
 
 允许修改与专门核对（10 个文件）：新增 `web05/stack-stage.sh`、`web05/compose.stack.yaml`，更新 `web05/stack.env`；只读核对 `bento/deploy/compose.yaml`、`web-a13/compose.override.yaml`、`web-a13/orchestrator-entry.sh`、`web-a13/full-stack/independent-candidates/compose/stage-env.py`、`web-a13/full-stack/independent-candidates/compose/start-seven.sh`、`web-a13/full-stack/independent-candidates/a13/run-live-a13.r2.sh`；更新本 RUNBOOK。T5a/T5b 输出作为只读、已锁定的运行时输入。
 
