@@ -116,6 +116,21 @@ export class SingleHostExecution {
         return this.history.checkpoint(sessionId, runId, generation);
     }
 
+    validateRestoreCheckpoint(
+        sessionId: string,
+        sourceRunId: string,
+        oldGeneration: number,
+        checkpointSha256: string,
+    ): void {
+        this.requireReadyHistory(sessionId, oldGeneration + 1);
+        this.history.validateRestoreCheckpoint(
+            sessionId,
+            sourceRunId,
+            oldGeneration,
+            checkpointSha256,
+        );
+    }
+
     restoreHistory(proof: VerifiedStopProof) {
         this.requireReadyHistory(proof.sessionId, proof.newGeneration);
         return this.history.restore(proof);

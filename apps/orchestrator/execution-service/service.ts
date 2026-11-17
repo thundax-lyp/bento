@@ -6,7 +6,10 @@ import type { Socket } from 'node:net';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { SingleHostExecution } from '../openshell/single-host.ts';
-import type { VerifiedStopProof } from '../openshell/session-history.ts';
+import {
+    HistoryCheckpointUnavailable,
+    type VerifiedStopProof,
+} from '../openshell/session-history.ts';
 import { unifiedDiff } from './diff.ts';
 import { executionHttp, RetryUnavailable } from './http.ts';
 import { conflict, textSnapshot } from './input.ts';
@@ -583,6 +586,12 @@ export async function serveExecution(options: Options) {
                         throw new RetryEvidenceConflict(
                             'Restore receipt changed',
                         );
+                    execution.validateRestoreCheckpoint(
+                        proof.sessionId,
+                        proof.sourceRunId,
+                        proof.oldGeneration,
+                        proof.checkpointSha256,
+                    );
                     if (receipt?.phase !== 'ready') {
                         const output = await recovery.restoreTask(
                             binding,
@@ -629,7 +638,8 @@ export async function serveExecution(options: Options) {
                 if (
                     !stop.signal.aborted &&
                     (error instanceof RetryEvidenceConflict ||
-                        error instanceof TaskRestoreEvidenceConflict)
+                        error instanceof TaskRestoreEvidenceConflict ||
+                        error instanceof HistoryCheckpointUnavailable)
                 )
                     db.advanceTaskRetry(attempt.id, phase, 'blocked');
                 // An ambiguous host response is queried under the same attempt on the next tick.
@@ -682,16 +692,27 @@ export async function serveExecution(options: Options) {
                 return 'not_terminal';
             if (!host.taskRecovery || !db.readStopProof(run.id))
                 return 'stop_unconfirmed';
-            if (!db.taskCheckpoint(run.id)) return 'checkpoint_unavailable';
+            const checkpoint = db.taskCheckpoint(run.id);
+            if (!checkpoint) return 'checkpoint_unavailable';
+            const oldGeneration = run.admittedGeneration;
+            if (oldGeneration === null) return 'stop_unconfirmed';
+            let binding: Binding;
             try {
-                if (run.admittedGeneration === null) return 'stop_unconfirmed';
-                readProof(
-                    run,
-                    run.admittedGeneration,
-                    run.admittedGeneration + 1,
-                );
+                binding = readProof(run, oldGeneration, oldGeneration + 1);
             } catch {
                 return 'stop_unconfirmed';
+            }
+            try {
+                execution.validateRestoreCheckpoint(
+                    binding.session,
+                    run.id,
+                    oldGeneration,
+                    checkpoint.historySha256,
+                );
+            } catch (error) {
+                if (error instanceof HistoryCheckpointUnavailable)
+                    return 'checkpoint_unavailable';
+                throw error;
             }
             return null;
         }

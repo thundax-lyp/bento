@@ -43,6 +43,8 @@ export type VerifiedStopProof = Readonly<{
     checkpointSha256: string;
 }> & { readonly [verifiedStopProof]: true };
 
+export class HistoryCheckpointUnavailable extends Error {}
+
 type HistorySnapshot =
     | { kind: 'absent' }
     | {
@@ -170,39 +172,48 @@ export class SessionHistory {
     private requireQuiescent(sessionId: string) {
         const { handleOpen, pendingBatches } = this.quiescence(sessionId);
         if (handleOpen || pendingBatches)
-            throw new Error('Session history is not quiescent');
+            throw new HistoryCheckpointUnavailable(
+                'Session history is not quiescent',
+            );
     }
 
     private snapshot(sessionId: string, row: Row | undefined): HistorySnapshot {
         const records = this.db
             .prepare('SELECT seq,event FROM events WHERE id=? ORDER BY seq')
             .all(sessionId);
-        if (!row) {
-            if (records.length) throw new Error('Orphaned history events');
-            return { kind: 'absent' };
+        try {
+            if (!row) {
+                if (records.length) throw new Error('Orphaned history events');
+                return { kind: 'absent' };
+            }
+            const header = JSON.parse(row.header) as Header;
+            assertVersion(header);
+            if (
+                header.id !== sessionId ||
+                records.length !== row.next ||
+                records.some(({ seq }, index) => seq !== index) ||
+                !row.materialized ||
+                !Number.isSafeInteger(row.inherited) ||
+                row.inherited < 0
+            )
+                throw new Error('Session history is incomplete');
+            const events = records.map(({ event }) => event as string);
+            const parsed = events.map((event) => JSON.parse(event) as Event);
+            assertContiguous(header.id, parsed, 0);
+            validateStoredEvents(header, parsed);
+            return {
+                kind: 'present',
+                header: row.header,
+                inherited: row.inherited,
+                next: row.next,
+                events,
+            };
+        } catch (cause) {
+            throw new HistoryCheckpointUnavailable(
+                'Invalid current session history',
+                { cause },
+            );
         }
-        const header = JSON.parse(row.header) as Header;
-        assertVersion(header);
-        if (
-            header.id !== sessionId ||
-            records.length !== row.next ||
-            records.some(({ seq }, index) => seq !== index) ||
-            !row.materialized ||
-            !Number.isSafeInteger(row.inherited) ||
-            row.inherited < 0
-        )
-            throw new Error('Session history is incomplete');
-        const events = records.map(({ event }) => event as string);
-        const parsed = events.map((event) => JSON.parse(event) as Event);
-        assertContiguous(header.id, parsed, 0);
-        validateStoredEvents(header, parsed);
-        return {
-            kind: 'present',
-            header: row.header,
-            inherited: row.inherited,
-            next: row.next,
-            events,
-        };
     }
 
     checkpoint(sessionId: string, runId: string, authorityGeneration: number) {
@@ -260,6 +271,89 @@ export class SessionHistory {
         return receipt;
     }
 
+    private readRestoreCheckpoint(
+        sessionId: string,
+        sourceRunId: string,
+        oldGeneration: number,
+        checkpointSha256: string,
+    ): HistorySnapshot {
+        this.requireQuiescent(sessionId);
+        const checkpoint = this.db
+            .prepare('SELECT * FROM history_checkpoints WHERE runId=?')
+            .get(sourceRunId);
+        if (
+            !checkpoint ||
+            checkpoint.sessionId !== sessionId ||
+            checkpoint.authorityGeneration !== oldGeneration ||
+            typeof checkpoint.body !== 'string' ||
+            checkpoint.sha256 !== checkpointSha256 ||
+            hash(checkpoint.body) !== checkpointSha256
+        )
+            throw new HistoryCheckpointUnavailable(
+                'Invalid history checkpoint',
+            );
+
+        const row = this.sessionRow(sessionId);
+        if (
+            row &&
+            (row.owner !== 'bento:revoked' || row.epoch !== oldGeneration)
+        )
+            throw new HistoryCheckpointUnavailable(
+                'Prior history owner is not revoked',
+            );
+        const current = this.snapshot(sessionId, row);
+        let stored: { kind?: unknown; next?: unknown } | null;
+        try {
+            stored = JSON.parse(checkpoint.body);
+        } catch (cause) {
+            throw new HistoryCheckpointUnavailable(
+                'Invalid history checkpoint JSON',
+                { cause },
+            );
+        }
+        if (
+            stored?.kind === 'absent' &&
+            checkpoint.body === '{"kind":"absent"}'
+        )
+            return { kind: 'absent' };
+
+        const next = stored?.next;
+        if (
+            stored?.kind === 'present' &&
+            current.kind === 'present' &&
+            typeof next === 'number' &&
+            Number.isSafeInteger(next) &&
+            next >= 0 &&
+            next <= current.next
+        ) {
+            const prefix = {
+                ...current,
+                next,
+                events: current.events.slice(0, next),
+            };
+            if (JSON.stringify(prefix) === checkpoint.body) return prefix;
+        }
+        throw new HistoryCheckpointUnavailable(
+            'Checkpoint does not match current history prefix',
+        );
+    }
+
+    validateRestoreCheckpoint(
+        sessionId: string,
+        sourceRunId: string,
+        oldGeneration: number,
+        checkpointSha256: string,
+    ): void {
+        this.transaction(() =>
+            this.readRestoreCheckpoint(
+                sessionId,
+                sourceRunId,
+                oldGeneration,
+                checkpointSha256,
+            ),
+        );
+    }
+
     restore(proof: VerifiedStopProof) {
         return this.transaction(() => {
             if (
@@ -279,45 +373,14 @@ export class SessionHistory {
                 newGeneration,
                 checkpointSha256,
             } = proof;
-            this.requireQuiescent(sessionId);
             if (this.restoreReceipt(proof))
                 return { sha256: this.readRestoredDigest(proof) };
-            const checkpoint = this.db
-                .prepare('SELECT * FROM history_checkpoints WHERE runId=?')
-                .get(sourceRunId);
-            if (
-                !checkpoint ||
-                checkpoint.sessionId !== sessionId ||
-                checkpoint.authorityGeneration !== oldGeneration ||
-                checkpoint.sha256 !== checkpointSha256 ||
-                hash(checkpoint.body as string) !== checkpointSha256
-            )
-                throw new Error('Invalid history checkpoint');
-
-            const row = this.sessionRow(sessionId);
-            if (
-                row &&
-                (row.owner !== 'bento:revoked' || row.epoch !== oldGeneration)
-            )
-                throw new Error('Prior history owner is not revoked');
-            const before = JSON.parse(
-                checkpoint.body as string,
-            ) as HistorySnapshot;
-            const current = this.snapshot(sessionId, row);
-            if (
-                before.kind === 'present' &&
-                (!row ||
-                    current.kind !== 'present' ||
-                    current.header !== before.header ||
-                    current.inherited !== before.inherited ||
-                    before.next !== before.events.length ||
-                    before.events.some(
-                        (event, index) => current.events[index] !== event,
-                    ))
-            )
-                throw new Error(
-                    'Checkpoint does not match current history prefix',
-                );
+            const before = this.readRestoreCheckpoint(
+                sessionId,
+                sourceRunId,
+                oldGeneration,
+                checkpointSha256,
+            );
             if (before.kind === 'absent') {
                 this.db.prepare('DELETE FROM events WHERE id=?').run(sessionId);
                 this.db
