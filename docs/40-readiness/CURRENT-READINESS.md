@@ -15,7 +15,7 @@
 | [A6 调度与池化](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#执行链验收门槛)                      | 部分实现 | 本地 Temporal SDK、Go Activity 与 TypeScript 宿主验证重投仅写入一次（`5c8ffb9`）及双槽、公平派发、FIFO、429 和幂等（`6e3515f`），两项均连跑三轮。待验真实 Temporal、心跳、OpenShell、资源上限、池复用与升级排空。                                       |
 | [A7 部署等级](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#执行链验收门槛)                        | 部分实现 | 隔离 Node.js 22.23.2 停服演练通过。单库（`84cb251`）验证终态 Run 和幂等回执，三库（`715b303`）验证会话历史、代次和继续执行。[演练命令](../../deploy/README.md#单节点执行宿主停服备份还原演练)。待验真实卷、外部依赖、生产与在线恢复、多节点及 RPO/RTO。 |
 | [A8 证据与可运维性](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#执行链验收门槛)                  | 部分实现 | 隔离 Linux/amd64 Compose 在 `1803ad6` 通过[同版本 Web 镜像回滚](../../deploy/README.md#单节点-web-镜像回滚演练)，恢复原镜像且 MySQL、账号和卷校验一致。待验跨版本回退、迁移、真实登录与执行链、S3、生产恢复和审计告警。                                 |
-| [WEB-01 账号和访问控制](../10-requirements/WEB-REQUIREMENTS.md#web-01-账号和访问控制)                          | 部分实现 | 已有 Keycloak 登录、组织准入、账号绑定和注销清理。缺待核对结案后继续注销清理。                                                                                                                                                                          |
+| [WEB-01 账号和访问控制](../10-requirements/WEB-REQUIREMENTS.md#web-01-账号和访问控制)                          | 已实现   | A 独占实栈通过真实 OIDC、WEB-A01、跨重启注销清理和可信结案。见 [WEB-01 实栈证据](#web-01-实栈证据)。                                                                                                                                                    |
 | [WEB-02 上传与续传](../10-requirements/WEB-REQUIREMENTS.md#web-02-上传与续传)                                  | 已验证   | 100 MB 单文件限制已实现。WEB-A02 的两块页面预检、真实六块上传、缺块续传、过期签名重新授权和下载摘要已分段核对。见[上传规格与验证基线](#上传规格与验证基线)。                                                                                            |
 | [WEB-03 空间额度与文件生命周期](../10-requirements/WEB-REQUIREMENTS.md#web-03-空间额度与文件生命周期)          | 已验证   | 真实开发栈验证 200 MB 额度、并发预占及回收。上传记录过期由 API 受控时钟验证。WEB-A05（`75c78b1`）本地 Chromium 19/19、API 23/23，覆盖目录、预览下载、路径冲突和删除门禁。待验真实 S3 与外部执行联合场景。                                               |
 | [WEB-04 项目与 Agent 输入](../10-requirements/WEB-REQUIREMENTS.md#web-04-项目与-agent-输入)                    | 部分实现 | 2026-11-16 本地双 HTTP（`b616304`）通过 WEB-A07 的快照冻结、独立工作区、重放与文件门禁。待验真实对象存储、OpenShell 隔离和凭据隔离。                                                                                                                    |
@@ -23,6 +23,15 @@
 | [WEB-06 任务提交与结果](../10-requirements/WEB-REQUIREMENTS.md#web-06-任务提交与结果)                          | 部分实现 | 本地 Chromium 与回环 mock（`058a272`，18 项通过）验证查找、重连与待核对隐藏补丁。WEB-A08/A11 已覆盖单账号关页后交付及两浏览器回读。待验真实三账号执行、事件去重、续做与隔离，待实现可信运维结案。                                                       |
 | [WEB-07 连续对话与任务控制](../10-requirements/WEB-REQUIREMENTS.md#web-07-连续对话与任务控制)                  | 部分实现 | 2026-11-16 本地 Orchestrator、Chromium（`b616304`）通过 WEB-A11/A12 的续聊、重连、撤权、双检查点和崩溃回读。真实 OpenShell 安全重试未覆盖。两项可选 Temporal 场景跳过。                                                                                 |
 | [WEB-08 结果审阅与交付](../10-requirements/WEB-REQUIREMENTS.md#web-08-结果审阅与交付)                          | 部分实现 | 2026-11-16 本地 Orchestrator、Chromium（`b616304`）通过 WEB-A13 的两轮结果、结构化检查、增量/累计 diff、旧版本及下载一致。待验真实 DSH 投影和交付。                                                                                                     |
+
+## WEB-01 实栈证据
+
+2026-11-17，候选 `76ea4de85fd09f4e81ea6f03da516d8e90bd9814` 在 A 独占 Compose、Chromium、Keycloak/MySQL、Temporal/OpenShell 与 HTTPS 私有 MinIO 上验收。受控结果 `bento-web01-evidence/results.md` 的 SHA-256 为 `a29888cdf0edeba1303ab24c794dcb8b9414c1939066f9eaf1c30f771dc4a33c`。
+
+- A/B/C 真实组织邀请、邮件验证和 OIDC 回跳通过；未验证和非成员被拒，关闭公开注册，Keycloak 重启后主体和认证审计一致。注销回跳实测要求 ID token 包含 `auth_time`，已在 Workspace 客户端补充内置映射。部署要求见[身份配置](../../deploy/README.md)。
+- 三个 owner 通过真实 HTTPS 上传嵌套项目并读取自己的预览、Task 与补丁。三组跨租户项目、文件和传输请求与不存在资源一致，补丁下载另有两条跨租户对照。B/C 经服务重启及重新登录仍能回读原项目、文件和补丁。私有 S3 拒绝匿名对象请求和错误键、分块号、方法；原签名到期返回 403。
+- A 错身份注销返回 401，正确身份回跳 303，两个旧会话和新签发请求均为 401，已提交 Run 在注销后继续完成。另一 Run 经可信退出与错代拒绝后结案，随后清理 A 的 Task、Run、diff、S3 对象和工作区，保留最小审计、IdP 主体及 MySQL 关闭标记。独立 D 对照在注销后、签发期内重启，原 multipart 保留且可继续使用原签名；到期后自动清理。
+- 模型续轮单独验证两次 HTTP 200、同 ID 工具、公开检查和持久 Session。正式浏览器用非模型 fixture 产生 SDK 补丁。未覆盖 WEB-A10 完整多账号并发验收。现有 Chromium 回归 20 项通过。正式服务已撤下，原 A 环境健康，旧 `needs_review` 指纹一致。
 
 ## 开发环境
 
