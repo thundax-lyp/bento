@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import console from 'node:console';
+import dns from 'node:dns/promises';
 import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import * as fs from 'node:fs/promises';
+import { request as httpsRequest } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
@@ -71,6 +73,60 @@ async function fixtures(directory, size) {
     return files;
 }
 
+async function verifyExpiredPut(url, original, checksum) {
+    const bytes = Buffer.alloc(partSize);
+    const file = await fs.open(original, 'r');
+    try {
+        const { bytesRead } = await file.read(bytes, 0, partSize, partSize);
+        assert.equal(bytesRead, partSize);
+    } finally {
+        await file.close();
+    }
+    assert.equal(createHash('sha256').update(bytes).digest('base64'), checksum);
+    const address = await dns.lookup(new URL(url).hostname, { family: 4 });
+    const { status, body, sent } = await new Promise((resolve, reject) => {
+        let sent = false;
+        const request = httpsRequest(
+            url,
+            {
+                method: 'PUT',
+                signal: globalThis.AbortSignal.timeout(30_000),
+                lookup: (_hostname, options, callback) =>
+                    options.all
+                        ? callback(null, [address])
+                        : callback(null, address.address, address.family),
+                headers: {
+                    Expect: '100-continue',
+                    'content-length': String(bytes.length),
+                    'x-amz-checksum-sha256': checksum,
+                },
+            },
+            (response) => {
+                let body = '';
+                response.setEncoding('utf8');
+                response.on('data', (chunk) => {
+                    if (body.length < 4096) body += chunk;
+                });
+                response.on('error', reject);
+                response.on('end', () =>
+                    resolve({ status: response.statusCode, body, sent }),
+                );
+            },
+        );
+        request.once('continue', () => {
+            sent = true;
+            request.end(bytes);
+        });
+        request.on('error', reject);
+        request.flushHeaders();
+    });
+    console.log('WEB_A02_EXPIRED_NODE_PUT', status, bytes.length, Number(sent));
+    assert(sent, 'expired PUT sent the original block');
+    assert.equal(status, 403);
+    assert.match(body, /<Code>AccessDenied<\/Code>/);
+    assert.match(body, /<Message>[^<]*expired/i);
+}
+
 async function poll(read, accept, timeout = 30_000) {
     const end = Date.now() + timeout;
     do {
@@ -117,7 +173,16 @@ async function verify(browser) {
     const observed = { writes: [], puts: [], parts: [] };
     let lastProgress = Date.now();
     let phase = 'setup';
-    let blocked;
+    let releaseDisconnect;
+    const disconnectGate = new Promise((resolve) => {
+        releaseDisconnect = resolve;
+    });
+    const putPhases = new WeakMap();
+    const storageRequests = new Map();
+    const wireLengths = new Map();
+    const wireStatuses = new Map();
+    const corsErrors = new Map();
+    const expiredPuts = [];
     let cached;
     let fresh;
     let routingFailure = false;
@@ -159,11 +224,58 @@ async function verify(browser) {
     const puts = (name) => observed.puts.filter((item) => item.phase === name);
     const writes = (name) =>
         observed.writes.filter((item) => item.phase === name);
-    const checkObject = (mode, id) =>
-        execFileSync(checker, [mode, 'space/' + id], {
-            stdio: 'ignore',
-            timeout: 30_000,
-        });
+    const checkObject = (mode, id, expectedBytes) =>
+        execFileSync(
+            checker,
+            [
+                mode,
+                'space/' + id,
+                ...(expectedBytes === undefined ? [] : [String(expectedBytes)]),
+            ],
+            { stdio: 'ignore', timeout: 30_000 },
+        );
+
+    async function putLength(request, number, status) {
+        const contentLength = await poll(
+            () => wireLengths.get(storageRequests.get(request.url())),
+            (value) => value !== undefined,
+            5_000,
+        );
+        const length = /^\d+$/.test(contentLength) ? Number(contentLength) : -1;
+        const lengthSigned = new URL(request.url()).searchParams
+            .get('X-Amz-SignedHeaders')
+            ?.split(';')
+            .includes('content-length');
+        console.log(
+            'WEB_A02_PUT_LENGTH',
+            number,
+            status,
+            length,
+            Number(Boolean(lengthSigned)),
+        );
+        assert(lengthSigned, 'content-length is signed');
+        assert(length >= 0, 'PUT content-length exists');
+        return length;
+    }
+
+    async function expectPuts(name, bytes, numbers) {
+        const actual = await Promise.all(
+            puts(name).map(async ({ number, status, request }) => [
+                number,
+                status,
+                await putLength(request, number, status),
+            ]),
+        );
+        actual.sort(([a], [b]) => a - b);
+        assert.deepEqual(
+            actual,
+            numbers.map((number) => [
+                number,
+                200,
+                Math.min(partSize, bytes - (number - 1) * partSize),
+            ]),
+        );
+    }
 
     function read(path) {
         return page.evaluate(async (url) => {
@@ -222,9 +334,10 @@ async function verify(browser) {
                 (count) => count === index + 1,
                 600_000,
             );
-            assert.deepEqual(
-                puts(phase).map(({ number, status }) => [number, status]),
-                Array.from({ length: partCount }, (_, i) => [i + 1, 200]),
+            await expectPuts(
+                phase,
+                size,
+                Array.from({ length: partCount }, (_, i) => i + 1),
             );
             checkObject('saved', record.uploadIds[index]);
             await usage((index + 1) * size, 0);
@@ -309,6 +422,8 @@ async function verify(browser) {
         checkObject('absent', winner.id);
         await usage(size, 0);
         const reusable = input('reusable.bin', size);
+        record.uploadIds.push(reusable.id);
+        await persist();
         assert.equal((await start(reusable)).status, 200);
         await usage(size, size);
         assert.equal(
@@ -332,6 +447,16 @@ async function verify(browser) {
         assert.deepEqual(status.body.parts, [1]);
     }
 
+    page.on('request', (request) => {
+        if (
+            request.method() === 'PUT' &&
+            new URL(request.url()).origin === storage
+        ) {
+            putPhases.set(request, phase);
+            if (phase === 'expired') expiredPuts.push(request);
+        }
+    });
+
     page.on('response', (response) => {
         const url = new URL(response.url());
         if (url.origin === storage && response.request().method() === 'PUT') {
@@ -339,17 +464,21 @@ async function verify(browser) {
                 lastProgress = Date.now();
             }
             const number = Number(url.searchParams.get('partNumber'));
+            const request = response.request();
+            const requestPhase = putPhases.get(request);
             console.log(
                 'WEB_A02_PUT',
-                phase,
+                requestPhase,
                 number,
                 response.status(),
                 new Date(lastProgress).toISOString(),
             );
+            if (!requestPhase) routingFailure = true;
             observed.puts.push({
-                phase,
+                phase: requestPhase,
                 number,
                 status: response.status(),
+                request,
             });
         }
         if (url.origin === web && url.pathname === projectPath() + '/uploads') {
@@ -362,6 +491,40 @@ async function verify(browser) {
     });
 
     try {
+        // Chromium reports the headers written on the wire separately from Request.
+        const network = await context.newCDPSession(page);
+        network.on('Network.requestWillBeSent', ({ request, requestId }) => {
+            if (
+                request.method === 'PUT' &&
+                new URL(request.url).origin === storage
+            )
+                storageRequests.set(request.url, requestId);
+        });
+        network.on(
+            'Network.requestWillBeSentExtraInfo',
+            ({ headers, requestId }) => {
+                const contentLength = Object.entries(headers).find(
+                    ([name]) => name.toLowerCase() === 'content-length',
+                )?.[1];
+                if (contentLength !== undefined)
+                    wireLengths.set(requestId, contentLength);
+            },
+        );
+        // CORS can hide the S3 response from the page while the request still reached storage.
+        network.on(
+            'Network.responseReceivedExtraInfo',
+            ({ requestId, statusCode }) => {
+                wireStatuses.set(requestId, statusCode);
+            },
+        );
+        network.on(
+            'Network.loadingFailed',
+            ({ corsErrorStatus, requestId }) => {
+                if (phase === 'expired' && corsErrorStatus)
+                    corsErrors.set(requestId, corsErrorStatus.corsError);
+            },
+        );
+        await network.send('Network.enable');
         await page.goto(web + '/auth');
         await page.getByRole('link', { name: '受邀用户登录' }).click();
         await page.locator('#username').fill(login);
@@ -379,7 +542,8 @@ async function verify(browser) {
         assert.equal(initial.fileLimit, size);
         assert.equal(initial.quota, 200_000_000);
         assert.equal(initial.partSize, partSize);
-        assert(initial.quota - initial.saved - initial.reserved >= size);
+        assert.equal(initial.saved, 0);
+        assert.equal(initial.reserved, 0);
         record.saved = initial.saved;
         record.reserved = initial.reserved;
         await stage('fixtures');
@@ -430,16 +594,46 @@ async function verify(browser) {
                     }
                     if (
                         request.method() === 'POST' &&
+                        path.endsWith('/complete')
+                    ) {
+                        const match =
+                            /^\/api\/space\/uploads\/([\da-f-]+)\/complete$/i.exec(
+                                path,
+                            );
+                        assert(
+                            match &&
+                                uuid.test(match[1]) &&
+                                record.uploadIds.includes(match[1]),
+                        );
+                        const { status, body } = await read(
+                            '/api/space/uploads/' + match[1],
+                        );
+                        assert.equal(status, 200);
+                        assert.equal(body.id, match[1]);
+                        assert.equal(body.size, fixtureSize);
+                        assert.deepEqual(
+                            body.parts,
+                            Array.from(
+                                { length: Math.ceil(fixtureSize / partSize) },
+                                (_, i) => i + 1,
+                            ),
+                        );
+                    }
+                    if (
+                        request.method() === 'POST' &&
                         path === uploadPath() + '/part'
                     ) {
                         const { number } = request.postDataJSON();
                         observed.writes.push({ phase, kind: 'sign', number });
-                        if (number === 2 && phase === 'disconnect') {
-                            await new Promise((resolve) => {
-                                blocked = resolve;
-                            });
+                        if (number > 1 && phase === 'disconnect') {
+                            await disconnectGate;
                             return await route.abort().catch(() => {});
                         }
+                        if (
+                            (phase === 'capture' || phase === 'expired') &&
+                            number !== 2
+                        )
+                            return await route.abort();
                         if (number === 2 && phase === 'capture') {
                             const response = await route.fetch({
                                 timeout: 10_000,
@@ -452,10 +646,12 @@ async function verify(browser) {
                             assert(cached);
                             const expired = cached;
                             cached = undefined;
-                            return await route.fulfill({
+                            await route.fulfill({
                                 status: 200,
                                 json: expired,
                             });
+                            console.log('WEB_A02_EXPIRED_SIGN_DELIVERED');
+                            return;
                         }
                         if (number === 2 && phase === 'resume') {
                             const response = await route.fetch({
@@ -508,11 +704,12 @@ async function verify(browser) {
             await page
                 .getByRole('link', { name: '下载文件', exact: true })
                 .waitFor({ timeout: 120_000 });
-            assert.deepEqual(
-                puts(phase).map(({ number, status }) => [number, status]),
+            await expectPuts(
+                phase,
+                fixtureSize,
                 Array.from(
                     { length: Math.ceil(fixtureSize / partSize) },
-                    (_, index) => [index + 1, 200],
+                    (_, i) => i + 1,
                 ),
             );
         } else {
@@ -565,18 +762,16 @@ async function verify(browser) {
 
             await stage('disconnect');
             await select(original);
-            await poll(() => blocked, Boolean, 120_000);
-            assert.deepEqual(puts('disconnect'), [
-                { phase: 'disconnect', number: 1, status: 200 },
-            ]);
+            await poll(() => puts('disconnect').length, Boolean, 120_000);
+            await expectPuts('disconnect', size, [1]);
+            await sameParts();
             const first = writes('disconnect').find(
                 (item) => item.kind === 'registration',
             );
             assert.equal(first.bytes, size);
             assert.equal(first.count, partCount);
             await context.setOffline(true);
-            blocked();
-            blocked = undefined;
+            releaseDisconnect();
             await assert.rejects(
                 page.reload({ timeout: 10_000 }),
                 /ERR_INTERNET_DISCONNECTED/,
@@ -608,7 +803,7 @@ async function verify(browser) {
                 .waitFor({ timeout: 120_000 });
             assert(cached);
             assert.deepEqual(puts('capture'), []);
-            const stale = cached.url;
+            const { url: stale, checksum: staleChecksum } = cached;
             const signed = new URL(stale);
             assert.equal(signed.origin, storage);
             const date = signed.searchParams.get('X-Amz-Date');
@@ -627,13 +822,43 @@ async function verify(browser) {
             await delay(Math.max(0, issued + 605_000 - Date.now()));
 
             await stage('expired');
+            assert.equal((await read('/api/session')).status, 200);
             await select(original);
+            await poll(() => expiredPuts.length, Boolean, 120_000);
             await resultArea
-                .getByText(/分块上传失败/)
+                .getByText(/本次上传未确认/)
                 .waitFor({ timeout: 120_000 });
-            assert.deepEqual(puts('expired'), [
-                { phase: 'expired', number: 2, status: 403 },
-            ]);
+            assert.equal(expiredPuts.length, 1);
+            const [expiredPut] = expiredPuts;
+            assert.equal(expiredPut.url(), stale);
+            assert.equal(signed.searchParams.get('partNumber'), '2');
+            const expiredRequestId = await poll(
+                () => storageRequests.get(expiredPut.url()),
+                Boolean,
+                5_000,
+            );
+            const expiredStatus = await poll(
+                () => wireStatuses.get(expiredRequestId),
+                (status) => status !== undefined,
+                5_000,
+            );
+            console.log('WEB_A02_EXPIRED_CHROMIUM_PUT', expiredStatus);
+            if (expiredStatus === 502) {
+                const corsError = await poll(
+                    () => corsErrors.get(expiredRequestId),
+                    Boolean,
+                    5_000,
+                );
+                assert.equal(corsError, 'MissingAllowOriginHeader');
+                console.log('WEB_A02_EXPIRED_CORS', corsError);
+                await verifyExpiredPut(stale, original, staleChecksum);
+            } else {
+                assert.equal(expiredStatus, 403);
+                assert.equal(
+                    await putLength(expiredPut, 2, expiredStatus),
+                    partSize,
+                );
+            }
             await sameParts();
 
             await stage('resume');
@@ -664,13 +889,10 @@ async function verify(browser) {
                 }),
             );
             assert(fresh && fresh.url !== stale);
-            assert.deepEqual(
-                puts('resume'),
-                Array.from({ length: partCount - 1 }, (_, i) => ({
-                    phase: 'resume',
-                    number: i + 2,
-                    status: 200,
-                })),
+            await expectPuts(
+                'resume',
+                size,
+                Array.from({ length: partCount - 1 }, (_, i) => i + 2),
             );
             for (const name of ['capture', 'expired', 'resume']) {
                 const reads = observed.parts.filter(
@@ -697,7 +919,9 @@ async function verify(browser) {
             const destination = join(directory, 'download.bin');
             await download.saveAs(destination);
             assert.equal((await fs.stat(destination)).size, fixtureSize);
-            if (!preflight) checkObject('saved', record.uploadIds[0]);
+            if (preflight)
+                checkObject('saved', record.uploadIds[0], fixtureSize);
+            else checkObject('saved', record.uploadIds[0]);
             const sha256 = await digest(original);
             assert.equal(await digest(destination), sha256);
             result = { sha256 };
@@ -708,8 +932,8 @@ async function verify(browser) {
         failed = true;
     } finally {
         try {
+            releaseDisconnect();
             await context.setOffline(false);
-            blocked?.();
             await context.unrouteAll({ behavior: 'wait' });
             if (record.projectId) {
                 await stage('cleanup read');
@@ -776,7 +1000,7 @@ async function verify(browser) {
             clearTimeout(timeout);
         }
     }
-    assert(!failed && result);
+    assert(!failed && !routingFailure && result);
     console.log(quotaRun ? 'WEB_A03_PASS' : 'WEB_A02_PASS');
 }
 

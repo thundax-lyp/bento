@@ -5,7 +5,7 @@ import {
     type TransferProgress,
     getProjectDeletionImpact,
     deleteSpaceProject,
-} from './space-api';
+} from './space-api.ts';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -144,6 +144,85 @@ test.each([
         expect(fetch.mock.calls.map(([url]) => url)).toEqual(paths);
     },
 );
+
+test.each([
+    { name: '四块并行完成后才开始下一批', failed: false },
+    { name: '等待首批全部结算并优先返回 401', failed: true },
+])('分块并行 · $name', async ({ failed }) => {
+    const signed: number[] = [];
+    const puts: number[] = [];
+    const steps: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+        release = resolve;
+    });
+    const fetch = vi.fn(async (url: string, options?: RequestInit) => {
+        if (url === register) return uploading();
+        if (url === statusPath)
+            return Response.json({ state: 'uploading', parts: [1] });
+        if (url === partPath) {
+            const { number } = JSON.parse(String(options?.body));
+            signed.push(number);
+            if (failed && number === 3)
+                return Response.json({}, { status: 401 });
+            return Response.json({
+                url: signedUrl + '/' + number,
+                checksum: 'checksum',
+            });
+        }
+        if (url === completePath) {
+            steps.push('complete');
+            return saved();
+        }
+        expect(url).toMatch(signedUrl + '/');
+        expect(options?.method).toBe('PUT');
+        const number = Number(url.split('/').at(-1));
+        puts.push(number);
+        steps.push('put ' + number);
+        if (number <= 5) await gate;
+        return new Response(null, {
+            status: failed && number === 2 ? 500 : 200,
+        });
+    });
+    vi.stubGlobal('fetch', fetch);
+    const settled = vi.fn();
+    const transfer = transferFile(
+        'project',
+        'upload',
+        new File(['abcdef'], 'file'),
+        'file',
+        1,
+        () => {},
+    ).then(
+        () => settled('saved'),
+        (error: unknown) => settled(error),
+    );
+    try {
+        await vi.waitFor(() => expect(puts).toHaveLength(failed ? 3 : 4));
+        expect(signed).toEqual([2, 3, 4, 5]);
+        expect(puts).toEqual(failed ? [2, 4, 5] : [2, 3, 4, 5]);
+        expect(steps).not.toContain('complete');
+        expect(settled).not.toHaveBeenCalled();
+    } finally {
+        release();
+        await transfer;
+    }
+    if (failed) {
+        expect(settled).toHaveBeenCalledWith(
+            expect.objectContaining({ status: 401 }),
+        );
+        expect(signed).toEqual([2, 3, 4, 5]);
+        expect(steps).not.toContain('complete');
+    } else {
+        expect(settled).toHaveBeenCalledWith('saved');
+        expect(signed).toEqual([2, 3, 4, 5, 6]);
+        expect(puts).toEqual([2, 3, 4, 5, 6]);
+        expect(steps.filter((step) => step === 'complete')).toEqual([
+            'complete',
+        ]);
+        expect(steps.at(-1)).toBe('complete');
+    }
+});
 
 test('项目删除使用编码后的原项目地址及 202/204 回执', async () => {
     const id = 'a/b';
