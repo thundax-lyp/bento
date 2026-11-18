@@ -468,3 +468,88 @@ test('项目删除响应丢失后用原编号确认完成', async ({ browser, ba
         }
     }
 });
+
+test('任务快照逐文件提示失败，保留原选择和下载', async ({ page }) => {
+    const valid = savedFile('valid', 8);
+    const invalid = savedFile('invalid', 1);
+    const oversized = savedFile('oversized', 1024 * 1024 + 1);
+    const files = [valid, invalid, oversized];
+    const submissions: string[][] = [];
+    await page.route('**/api/session', (route) =>
+        route.fulfill({ json: { account: 'snapshot-demo' } }),
+    );
+    await page.route('**' + projectApi, (route) =>
+        route.fulfill({
+            json: { ...project, files, execution: { state: 'uninitialized' } },
+        }),
+    );
+    await page.route('**/api/space', (route) =>
+        route.fulfill({
+            json: {
+                projects: [project],
+                uploads: files,
+                quota: 2 * 1024 * 1024,
+                saved: files.reduce((sum, file) => sum + file.size, 0),
+                reserved: 0,
+            },
+        }),
+    );
+    await page.route('**/api/tasks', (route) => {
+        if (route.request().method() === 'GET')
+            return route.fulfill({ json: { items: [] } });
+        const { fileIds } = route.request().postDataJSON().source;
+        submissions.push(fileIds);
+        const overBudget = fileIds.includes(oversized.id);
+        const file = overBudget ? oversized : invalid;
+        const code = overBudget ? 'too_large' : 'invalid_utf8';
+        return route.fulfill({
+            status: overBudget ? 413 : 400,
+            json: {
+                error: {
+                    code: overBudget ? 'too_large' : 'invalid_input',
+                    message: overBudget
+                        ? '任务快照的文本总量不能超过 1 MiB。'
+                        : '请调整所选文件后重试。',
+                    issues: [{ fileId: file.id, path: file.path, code }],
+                },
+            },
+        });
+    });
+    await page.goto(spaceUrl);
+    const choose = (file: typeof valid) =>
+        page.getByRole('checkbox', { name: file.path, exact: true });
+    const submit = page.getByRole('button', { name: '从所选文件新建任务' });
+    await choose(valid).check();
+    await choose(invalid).check();
+    await submit.click();
+    await expect(
+        page.getByText('invalid.txt · 不是有效的 UTF-8 文本'),
+    ).toBeVisible();
+    await expect(choose(valid)).toBeChecked();
+    await expect(choose(invalid)).toBeChecked();
+    const invalidDownload = page
+        .getByRole('listitem')
+        .filter({ hasText: invalid.path })
+        .getByRole('link', { name: '下载文件' });
+    await expect(invalidDownload).toHaveAttribute(
+        'href',
+        fileApi + invalid.id + '/download',
+    );
+    await choose(invalid).uncheck();
+    await choose(oversized).check();
+    await submit.click();
+    await expect(
+        page.getByText('任务快照的文本总量不能超过 1 MiB。'),
+    ).toBeVisible();
+    await expect(
+        page.getByText('oversized.txt · 单个文件已超过快照的 1 MiB 总量限制'),
+    ).toBeVisible();
+    await expect(
+        page.getByText('invalid.txt · 不是有效的 UTF-8 文本'),
+    ).toHaveCount(0);
+    await expect(page).toHaveURL(/\/space\/preview-project$/);
+    expect(submissions).toEqual([
+        [invalid.id, valid.id],
+        [oversized.id, valid.id],
+    ]);
+});

@@ -151,6 +151,7 @@
 - `TaskEventDTO={id,sequence,runId,at,kind,text,check}`。kind 为 user_message/agent_reply/step/command/check。非 check 事件的 check 为 null。公开 event ID 不含提交键。check DTO 为 `{name,status,output}`，status 为 passed/failed/not_run/unavailable，output 为 string 或 null。采集未观察到检查时数组为空。
 - `ResultDTO={runId,version:1,summary,checks,incrementalSha256,cumulativeSha256,createdAt}`。HTTP 仅白名单字段，追踪不包含原 DSH 事件、命令参数、未知原文输出、宿主地址、卷、token 或凭据。
 - name trim 后 1–120 字符，prompt 沿用 `runPrompt`；拒绝多余字段、重复 ID、无效路径/query。公开有正文限 64 KiB，私有创建 8 MiB。JSON/schema/query 非法为 400 invalid_input，K 缺失或非法为 400 invalid_key，Origin 失配沿用 400 invalid_origin，认证缺失为 401。404 not_found 统一处理路径遗漏、资源不存在、越权及绑定不符。409 白名单为 idempotency_conflict、task_not_ready、task_busy、run_not_cancellable、run_not_retryable、diff_unavailable、project_busy、owner_closed，retry 拒绝含 `error.reason`。正文或文件上限为 413 too_large，租户队列 429 tenant_queue_full，缺 space 且要求 snapshot 时 503 source_unavailable，代理异常 502 backend_error。旧本地 mock 对 Task 业务路由固定 503 tasks_unavailable，Web 据此保留原 mock 入口。沿用 `{error:{code,message}}`，仅发送固定公开文案。
+- 公开 `POST /tasks` 的空间快照选择整体校验。无效路径或 UTF-8 返回 `400 invalid_input`，附 `error.issues: {fileId,path,code}[]`，其中 code 为 `invalid_path` 或 `invalid_utf8`。选择最多 100 个文件、合计最多 1 MiB，超限返回 `413 too_large`。若单个文件已超过整组字节限制，issues 列出对应文件，code 为 `too_large`。仅合计或数量超限时显示选择级提示。校验失败不创建任务或删除原文件。
 
 #### 环境配置
 
