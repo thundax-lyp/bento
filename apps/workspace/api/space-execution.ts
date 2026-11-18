@@ -380,15 +380,29 @@ export function spaceExecution(
         if (selected.some((file) => !file || fileDeletionPending(file.fileId)))
             throw notFound();
         const input = selected as Input[];
-        if (
-            input.length > maxSnapshotFiles ||
-            input.reduce((sum, file) => sum + file.size, 0) > maxSnapshotBytes
-        )
+        if (input.length > maxSnapshotFiles)
             throw new RequestError(
                 413,
                 'too_large',
-                '所选文件超出任务快照限制。',
+                '任务快照最多 100 个文件。',
             );
+        if (
+            input.reduce((sum, file) => sum + file.size, 0) > maxSnapshotBytes
+        ) {
+            const oversized = input
+                .filter(({ size }) => size > maxSnapshotBytes)
+                .map(({ fileId, path }) => ({
+                    fileId,
+                    path,
+                    code: 'too_large',
+                }));
+            throw new RequestError(
+                413,
+                'too_large',
+                '任务快照的文本总量不能超过 1 MiB。',
+                oversized.length ? oversized : undefined,
+            );
+        }
         return input;
     }
 
@@ -442,15 +456,14 @@ export function spaceExecution(
             row.spaceId,
             JSON.parse(row.fileIds) as string[],
         );
+        const issues: Issue[] = [];
         const inputFiles: ProjectInput['files'] = [];
         const inputManifest: FrozenTaskInput['inputManifest'] = [];
         for (const { fileId, path, size, manifest } of selected) {
-            if (!snapshotPathParts(path))
-                throw new RequestError(
-                    400,
-                    'invalid_input',
-                    '所选文件路径无法用于任务。',
-                );
+            if (!snapshotPathParts(path)) {
+                issues.push({ fileId, path, code: 'invalid_path' });
+                continue;
+            }
             const bytes = await readFile(spaceObjectKey(fileId), size);
             const digest = createHash('sha256').update(bytes);
             if (
@@ -467,11 +480,8 @@ export function spaceExecution(
                     ignoreBOM: true,
                 }).decode(bytes);
             } catch {
-                throw new RequestError(
-                    400,
-                    'invalid_input',
-                    '所选文件无法按 UTF-8 读取。',
-                );
+                issues.push({ fileId, path, code: 'invalid_utf8' });
+                continue;
             }
             inputFiles.push({ path, text });
             inputManifest.push({
@@ -481,6 +491,13 @@ export function spaceExecution(
                 sha256: digest.digest('hex'),
             });
         }
+        if (issues.length)
+            throw new RequestError(
+                400,
+                'invalid_input',
+                '请调整所选文件后重试。',
+                issues,
+            );
         const normalized = projectInput({ name: row.name, files: inputFiles });
         normalized.files.sort((a, b) =>
             a.path < b.path ? -1 : a.path === b.path ? 0 : 1,

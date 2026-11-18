@@ -3107,6 +3107,9 @@ test(
         const selected = randomUUID();
         const unrelated = randomUUID();
         const invalid = randomUUID();
+        const invalidPath = randomUUID();
+        const limit = randomUUID();
+        const oversized = randomUUID();
         const db = new DatabaseSync(dbPath);
         db.prepare("INSERT INTO space_projects VALUES (?,?,'Source')").run(
             sourceId,
@@ -3131,6 +3134,9 @@ test(
         seed(selected, 'README.md', Buffer.from('frozen\n'));
         seed(unrelated, 'unrelated.txt', Buffer.from('unrelated'));
         seed(invalid, 'invalid.txt', Buffer.from([0xff]));
+        seed(invalidPath, '../invalid-path.txt', Buffer.from('invalid path'));
+        seed(limit, 'limit.txt', Buffer.alloc(1024 * 1024, 97));
+        seed(oversized, 'oversized.txt', Buffer.alloc(1024 * 1024 + 1, 97));
         seed(checkingFile, 'checking.txt', Buffer.from('deletion in progress'));
         db.close();
         const deleting = call('/api/space/files/' + checkingFile, 'DELETE');
@@ -3165,10 +3171,71 @@ test(
         const failed = await call(
             '/api/tasks',
             'POST',
-            { name: 'Invalid', source: { ...source, fileIds: [invalid] } },
+            {
+                name: 'Invalid',
+                source: {
+                    ...source,
+                    fileIds: [selected, invalid, invalidPath],
+                },
+            },
             randomUUID(),
         );
         assert.equal(failed.status, 400, failed.text);
+        const issues: NonNullable<RequestError['issues']> =
+            failed.json().error.issues;
+        assert.deepEqual(
+            issues.sort((a, b) => a.path.localeCompare(b.path)),
+            [
+                {
+                    fileId: invalidPath,
+                    path: '../invalid-path.txt',
+                    code: 'invalid_path',
+                },
+                { fileId: invalid, path: 'invalid.txt', code: 'invalid_utf8' },
+            ],
+        );
+        for (const [fileIds, issues] of [
+            [[selected, limit], undefined],
+            [
+                [selected, oversized],
+                [
+                    {
+                        fileId: oversized,
+                        path: 'oversized.txt',
+                        code: 'too_large',
+                    },
+                ],
+            ],
+        ] as const) {
+            const reply = await call(
+                '/api/tasks',
+                'POST',
+                { name: 'Too large', source: { ...source, fileIds } },
+                randomUUID(),
+            );
+            assert.equal(reply.status, 413, reply.text);
+            assert.match(reply.json().error.message, /1 MiB/);
+            assert.deepEqual(reply.json().error.issues, issues);
+        }
+        const tooMany = await call(
+            '/api/tasks',
+            'POST',
+            {
+                name: 'Too many',
+                source: {
+                    ...source,
+                    fileIds: Array.from({ length: 101 }, () => randomUUID()),
+                },
+            },
+            randomUUID(),
+        );
+        assert.equal(tooMany.status, 413, tooMany.text);
+        assert.match(tooMany.json().error.message, /100/);
+        for (const id of [selected, invalid, limit, oversized])
+            assert.equal(
+                (await call('/api/space/files/' + id + '/download')).status,
+                302,
+            );
         assert.equal((await call('/api/tasks')).json().items.length, 0);
         assert.equal(
             (await call('/api/tasks', 'POST', input, key)).status,

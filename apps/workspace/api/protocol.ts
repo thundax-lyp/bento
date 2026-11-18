@@ -524,10 +524,11 @@ export function createTaskInput(value: unknown): CreateTaskInput {
         selection.kind !== 'space_snapshot' ||
         Object.keys(selection).length !== 3 ||
         !Array.isArray(selection.fileIds) ||
-        selection.fileIds.length < 1 ||
-        selection.fileIds.length > maxSnapshotFiles
+        selection.fileIds.length < 1
     )
         throw taskInputError();
+    if (selection.fileIds.length > maxSnapshotFiles)
+        throw new RequestError(413, 'too_large', '任务快照最多 100 个文件。');
     const fileIds = selection.fileIds.map(resourceId).sort();
     if (new Set(fileIds).size !== fileIds.length) throw taskInputError();
     return {
