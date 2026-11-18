@@ -50,7 +50,7 @@
 
 ### `40-readiness`
 
-- 使用一份 [Readiness](../40-readiness/CURRENT-READINESS.md) 维护需求树。需求节点链接正式需求，每个需求下用表格列出场景编号、状态、证据基线和剩余项。
+- 使用一份 [Readiness](../40-readiness/CURRENT-READINESS.md) 维护需求树。需求节点链接正式需求，每个需求下用表格列出场景编号、所属一级需求标题、状态、证据基线和剩余项。
 - 证据必须记录日期、验证范围、环境或 commit 边界、执行方式、结果和 `Not Covered`。
 - “进程已启动”“端口正在监听”或单次命令成功不能自动证明业务就绪。
 
