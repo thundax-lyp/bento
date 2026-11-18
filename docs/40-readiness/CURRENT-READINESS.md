@@ -20,7 +20,7 @@
 | [WEB-03 空间额度与文件生命周期](../10-requirements/WEB-REQUIREMENTS.md#web-03-空间额度与文件生命周期)          | 已实现   | WEB-A03 实栈额度闭环、WEB-A04 恢复和 WEB-A05 删除门禁通过。见[上传规格与验证基线](#上传规格与验证基线)。                                                                                                                                                                                                                                                               |
 | [WEB-04 项目与 Agent 输入](../10-requirements/WEB-REQUIREMENTS.md#web-04-项目与-agent-输入)                    | 已实现   | 复用 #52 的 B 独占实栈（`484dcc7`，Chromium 1/1），WEB-A07 真实存储、冻结与轮换、同项目隔离及凭据扫描通过。#49 原文件下载摘要一致。本轮本地（`ec7cd62`）API 25/25、Chromium 5/5，验证逐文件提示、整体拒绝、快照限额与原文件可下载。未重跑实栈。                                                                                                                        |
 | [WEB-05 执行环境](../10-requirements/WEB-REQUIREMENTS.md#web-05-执行环境)                                      | 已实现   | 2026-11-17，B 独占 Compose、Chromium 与 OpenShell 实机（Web 候选 `484dcc7`）1/1 通过。真实邀请、关页找回、原址重准备、两次上传、健康后轮换、冻结快照、续写与独立读取均通过。五次 Run 各一次派发和结果回执，凭据扫描零匹配。应用及浏览器已停，STS 已撤销。两条历史待核对 Run 及证据保留。多账号并发与换宿主恢复待验。                                                   |
-| [WEB-06 任务提交与结果](../10-requirements/WEB-REQUIREMENTS.md#web-06-任务提交与结果)                          | 部分实现 | 本地 Chromium 与回环 mock（`058a272`，18 项通过）验证查找、重连与待核对隐藏补丁。WEB-A08/A11 已覆盖单账号关页后交付及两浏览器回读。待验真实三账号执行、事件去重、续做与隔离，待实现可信运维结案。                                                                                                                                                                      |
+| [WEB-06 任务提交与结果](../10-requirements/WEB-REQUIREMENTS.md#web-06-任务提交与结果)                          | 部分实现 | 本地 Chromium 与回环 mock（`058a272`，18 项通过）验证查找、重连与待核对隐藏补丁，WEB-A11 覆盖两浏览器回读。[WEB-A08 实栈证据](#web-a08-实栈证据)覆盖顺序三账号关页推进、找回、交付和读取隔离。待验多账号并发、事件去重、续做与执行隔离，可信运维结案仍待完成。                                                                                                         |
 | [WEB-07 连续对话与任务控制](../10-requirements/WEB-REQUIREMENTS.md#web-07-连续对话与任务控制)                  | 部分实现 | 2026-11-16 本地 Orchestrator、Chromium（`b616304`）通过 WEB-A11/A12 的续聊、重连、撤权、双检查点和崩溃回读。本地 HTTP（`025c879`）验证 DSH 检查点缺失或损坏时新 retry 回 409，未建 attempt、未恢复卷。受理后、恢复前失效则阻断，卷不变。同键重放原回执。真实 OpenShell 安全重试未覆盖。两项可选 Temporal 场景跳过。                                                    |
 | [WEB-08 结果审阅与交付](../10-requirements/WEB-REQUIREMENTS.md#web-08-结果审阅与交付)                          | 已实现   | 2026-11-17 B 独占实机（`36ab687`＋私有 Worker）WEB-A13 1/1，三次 Run、同 Session 两次写入、只读与补丁字节对账通过。独立私有标记负例通过，收口 `pnpm check` 与两项 Chromium 回归通过。七服务、两沙箱与传输已停，临时凭据回收；原桶卷及结果保留。B 受控租约保留 `web-a13/full-stack/a13-auth/a13-output.*` 和 `web-a13/orchestrator-state/{business,authority}.sqlite`。 |
 
@@ -32,6 +32,12 @@
 - 三个 owner 通过真实 HTTPS 上传嵌套项目并读取自己的预览、Task 与补丁。三组跨租户项目、文件和传输请求与不存在资源一致，补丁下载另有两条跨租户对照。B/C 经服务重启及重新登录仍能回读原项目、文件和补丁。私有 S3 拒绝匿名对象请求和错误键、分块号、方法；原签名到期返回 403。
 - A 错身份注销返回 401，正确身份回跳 303，两个旧会话和新签发请求均为 401，已提交 Run 在注销后继续完成。另一 Run 经可信退出与错代拒绝后结案，随后清理 A 的 Task、Run、diff、S3 对象和工作区，保留最小审计、IdP 主体及 MySQL 关闭标记。独立 D 对照在注销后、签发期内重启，原 multipart 保留且可继续使用原签名；到期后自动清理。
 - 模型续轮单独验证两次 HTTP 200、同 ID 工具、公开检查和持久 Session。正式浏览器用非模型 fixture 产生 SDK 补丁。未覆盖 WEB-A10 完整多账号并发验收。现有 Chromium 回归 20 项通过。正式服务已撤下，原 A 环境健康，旧 `needs_review` 指纹一致。
+
+## WEB-A08 实栈证据
+
+2026-11-18，B 独占 Compose 候选 `ff15b38` 使用真实 DeepSeek 和 OpenShell。[Chromium 验收配置](../../apps/workspace/web/playwright.web-a08.config.ts)随 `d062a90` 提交，在隔离 Chromium 容器运行 `node node_modules/@playwright/test/cli.js test --config playwright.web-a08.config.ts --reporter=line --output=/tmp/web-a08`，1/1 通过。
+
+三位受邀用户顺序从 Web 上传各自的文本项目并提交。三次原 Run 均在关页时仍处于排队状态，随后在后台成功。重新登录后，三人各自从任务列表找回同一 Run，补丁预览与下载字节一致，应用到各自原文件后与预期内容一致。六个有向跨账号组合读取任务、Run、结果和补丁均返回 404。1 MiB + 1 字节的文本可保存并按原字节下载，选作任务输入时返回 413，页面显示 1 MiB 限制。
 
 ## 开发环境
 
