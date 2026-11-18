@@ -32,6 +32,7 @@ export class ApiError extends Error {
         message: string,
         readonly code?: string,
         readonly reason?: string,
+        readonly issues?: { path: string; code: string }[],
     ) {
         super(message);
     }
@@ -48,13 +49,19 @@ export async function request(path: string, init?: RequestInit) {
     const response = await fetch(path, { credentials: 'same-origin', ...init });
     if (!response.ok) {
         const body: {
-            error?: { message?: string; code?: string; reason?: string };
+            error?: {
+                message?: string;
+                code?: string;
+                reason?: string;
+                issues?: ApiError['issues'];
+            };
         } | null = await response.json().catch(() => null);
         throw new ApiError(
             response.status,
             body?.error?.message ?? '请求失败，请稍后重试。',
             body?.error?.code,
             body?.error?.reason,
+            body?.error?.issues,
         );
     }
     return response;

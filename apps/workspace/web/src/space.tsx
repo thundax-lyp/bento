@@ -24,6 +24,26 @@ function message(error: unknown) {
     return error instanceof Error ? error.message : '操作失败，请稍后重试。';
 }
 
+const fileIssueMessages = new Map([
+    ['invalid_utf8', '不是有效的 UTF-8 文本'],
+    ['invalid_path', '文件路径不适用于执行'],
+    ['too_large', '单个文件已超过快照的 1 MiB 总量限制'],
+]);
+
+function FileIssues({ issues }: { issues?: ApiError['issues'] }) {
+    return issues?.map(({ path, code }) => {
+        const reason = fileIssueMessages.get(code);
+        return (
+            reason && (
+                <Notice
+                    key={JSON.stringify([path, code])}
+                    message={path + ' · ' + reason}
+                />
+            )
+        );
+    });
+}
+
 export function SpaceList() {
     const account = useOutletContext<string>();
     const query = useQuery(spaceQuery(account));
@@ -1014,18 +1034,10 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                 {snapshotTask.error && (
                     <Notice message={message(snapshotTask.error)} />
                 )}
-                {execution.issues?.map((issue, index) => (
-                    <Notice
-                        key={index}
-                        message={
-                            issue.path +
-                            ' · ' +
-                            (issue.code === 'invalid_utf8'
-                                ? '不是有效的 UTF-8 文本'
-                                : '文件路径不适用于执行')
-                        }
-                    />
-                ))}
+                {snapshotTask.error instanceof ApiError && (
+                    <FileIssues issues={snapshotTask.error.issues} />
+                )}
+                <FileIssues issues={execution.issues} />
                 {execution.state === 'ready' && execution.projectId && (
                     <Button asChild primary>
                         <Link
