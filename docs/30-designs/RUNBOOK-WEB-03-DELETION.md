@@ -178,25 +178,7 @@ node apps/workspace/web/scripts/observe-web-a05.mjs --self-test
 
 PASS：自检使用私有临时目录与受控响应，涵盖 HEAD 404 与 403 区别、精确键与前缀相似键、分页、第一块、已清理、租约错配拒绝、SQLite 只读和原绑定查无。实栈前仍需以新租约现场探针确认身份及 API 权限。STOP：需新增生产依赖、共享实现或额外写权限，或运行侧缺可信只读观察。存储及执行命令通过租约受控 wrapper 绑定给下节两个检查器输入。
 
-### T2 — 独立浏览器验收夹具
-
-前置状态：T0 通过、T1 检查器可用且 MASTER 另授权实现。本夹具只允许新增 `apps/workspace/web/playwright.web-a05.config.ts` 和 `apps/workspace/web/acceptance/web-a05.spec.ts`。项目与 Run 权威实现无改动。配置沿用 A13 的严格 HTTPS、单 Chromium worker、零重试、trace/video/screenshot 关闭，测试选择仅 `web-a05.spec.ts`，超时 20 分钟。
-
-夹具输入由 B 租约工具静默加载。必需输入 `BENTO_WEB_A05_URL`、`BENTO_WEB_A05_STORAGE_STATE`、`BENTO_WEB_A05_STORAGE_CHECK`、`BENTO_WEB_A05_RUNTIME_CHECK`、`BENTO_WEB_A05_RECOVERY_FILE`，后四项为绝对路径。只读检查器无 shell 解释，调用超时 15 秒，退出 0 表示断言成立、1 表示尚不成立、其他退出码立即 STOP。固定参数：
-
-- 存储检查器 `head-saved space/{uploadId} bytes` 检查精确键存活和长度，`head-absent space/{uploadId}` 检查真实 NotFound，403 和网络失败必须报错。
-- 存储检查器 `part-one space/{uploadId} 16777216` 查 exact key，断言唯一 multipart 会话仅有编号 1 的 16 MiB 分块，且无已提交对象。`multipart-absent space/{uploadId}` 检查此精确键不存在开放会话，使用分页列举和 ListParts，禁止通过泛前缀空响应推断。
-- 执行检查器 `capture {taskId}` 在同租约中只读核对该 Task 的独占 Workspace、Session 归属，将绑定保存到受限的外部状态。`absent {taskId}` 按原绑定确认资源清理。只使用不包含身份信息的退出状态。
-- 恢复文件为租约内权限 0600 的 JSON，原子保留 `{projectId,sourceFileId,keepFileId,multipartUploadId,taskId,runId,stage}`。未创建的 ID 为 null。变更操作前落当前阶段，拿到 ID 即落盘。成功撤场后删除。禁止写 cookie、账号、URL 或下载内容。
-
-固定一个串行测试 `WEB-A05 B isolated deletion and quota reclamation`，用三个 Playwright step 记录 T3 单文件、T4 multipart 和 T5 整项目各自结果。已有文件夹具的 UI 交互、A13 的真实 snapshot 和补丁读取为引用入口，A02 提供分块和存储检查器范式。测试代码就绪后验证：
-
-```sh
-cd /Volumes/storage/workspace/bento-b
-pnpm --filter @bento/web exec playwright test --config playwright.web-a05.config.ts --workers=1
-```
-
-PASS：独立断言均通过，三步均有结果。STOP：测试失败保留原 ID，以同一会话和已批准租约入口回读。中途只恢复清理，避免启动新轮次覆盖原证据。仍在 uploading 或 cleaning 的上传先按原 ID 取消并回读，待真实存储确认后才继续项目删除。删除返回 202 时重复原 ID 回读，按最终状态核对对象、Task、Run 和用量；超过截止交 MASTER，保留租约。
+T2 本地门禁已通过。验收配置 `apps/workspace/web/playwright.web-a05.config.ts` 和 `apps/workspace/web/acceptance/web-a05.spec.ts` 已定型，typecheck 与定向 ESLint 通过，`--list` 唯一发现 `WEB-A05 B isolated deletion and quota reclamation`。T3–T5 依次由该测试的三个步骤运行，使用本轮私有观察入口及 0600 恢复文件。运行命令为 `pnpm --filter @bento/web exec playwright test --config playwright.web-a05.config.ts --workers=1`，实际环境、证据与清理按 T0 和各步骤执行。失败时保持同一恢复记录，按原 ID 清理，达到截止保留现场交 MASTER。
 
 ### T3 — WEB-03-02 / WEB-A05 单文件
 
