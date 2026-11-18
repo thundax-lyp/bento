@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { expect, test, type Page, type Response } from '@playwright/test';
 import type {
     Session,
@@ -208,6 +208,60 @@ async function verifyContinuationLedger(
     expect(await invalid.json()).toEqual({
         error: { code: 'invalid_input', message: '任务请求内容无效。' },
     });
+}
+
+function observeContinuation(taskId: string, runId: string) {
+    const root = process.env.BENTO_WEB_A11_ROOT;
+    if (!root || !isAbsolute(root))
+        throw new Error('WEB-A11 requires its isolated observer root');
+    let observation: {
+        taskId: string;
+        runId: string;
+        sessionDigest: string;
+        workspaceDigest: string;
+        bindingDigest: string;
+    };
+    try {
+        observation = JSON.parse(
+            execFileSync(
+                'docker',
+                [
+                    'compose',
+                    '-p',
+                    'bento-a-web-a11',
+                    '--env-file',
+                    'compose.env',
+                    '-f',
+                    'compose.yaml',
+                    '-f',
+                    'web-core.yaml',
+                    '-f',
+                    'execution.yaml',
+                    'exec',
+                    '-T',
+                    'orchestrator',
+                    'node',
+                    join(root, 'private/observe-web-a11.mjs'),
+                    taskId,
+                    runId,
+                ],
+                {
+                    cwd: join(root, 'private/foundation'),
+                    encoding: 'utf8',
+                    timeout: 10_000,
+                    stdio: ['ignore', 'pipe', 'pipe'],
+                },
+            ),
+        ) as typeof observation;
+    } catch {
+        throw new Error('WEB-A11 observation rejected');
+    }
+    const { sessionDigest, workspaceDigest, bindingDigest } = observation;
+    expect(observation.taskId).toBe(taskId);
+    expect(observation.runId).toBe(runId);
+    for (const digest of [sessionDigest, workspaceDigest, bindingDigest])
+        expect(digest).toMatch(/^[a-f0-9]{64}$/);
+    return { sessionDigest, workspaceDigest, bindingDigest };
 }
 
 async function deleteContinuationSource(
@@ -468,13 +522,18 @@ test('WEB-A13 real DSH result delivery', async ({
             secondBytes,
         );
 
-        if (continuation)
+        if (continuation) {
             await verifyContinuationLedger(
                 active,
                 task.ready.id,
                 first,
                 second,
             );
+            const firstBinding = observeContinuation(task.ready.id, first.id);
+            expect(observeContinuation(task.ready.id, second.id)).toEqual(
+                firstBinding,
+            );
+        }
 
         await active.getByLabel('执行轮次').selectOption(first.id);
         const old = await readResult(active, first);

@@ -60,7 +60,7 @@ docker compose -p bento-a-web-a11 --env-file compose.env \
 test -s "$r/evidence/production-admission.json"
 ```
 
-`smoke-readback` 只在本轮私有探针读取已登记的 Run。T2 交付脚本仅支持 Task ID 和 Run ID 两个固定参数。
+`smoke-readback` 只在本轮私有探针读取已登记的 Run。验收交付脚本仅支持 Task ID 和 Run ID 两个固定参数。
 
 ### 进入实施前的门禁
 
@@ -70,39 +70,9 @@ test -s "$r/evidence/production-admission.json"
 - T0 采用本地私有 `debug-workspace/web-a11-t0` 的 SSH、构建、基础设施、Host/Worker、浏览器和回收脚本。下一窗口需重新登记并新建空状态、专用账号和新凭据，再跑 TLS、S3、Gateway 和 Worker 阳性。前一轮运行状态及已失效的账号、私钥、会话文件不可复用。仅已验证的构建产物和源码模板可带入。T1/T2 的本地代码验证可在审定和分支下发后执行，T3 依赖新独占窗口。
 - 故障安全门禁：无授权窗口、旧资源重叠、实栈模块需扩大共享权限、未确认资源登记、只读受信查找失配或撤场未核实均 STOP。保留脱敏证据，禁止修改旧 A 或 B。
 
-## T2：按 Run 只读核对派发绑定
-
-前置状态：`web-a13.spec.ts` 已有 A11 opt-in 续聊、重投和 Space 回收断言，`playwright.web-a13.config.ts` 已有对应浏览器配置。已核对 baseline T0 的只读 SQLite 探针。
-
-允许修改：新增 `deploy/orchestrator/observe-web-a11.mjs`、`apps/workspace/web/acceptance/web-a13.spec.ts` 及 RUNBOOK。禁止修改生产 HTTP、运行适配器及数据库 schema。
-
-执行：
-
-1. 实现 `node /app/private/observe-web-a11.mjs <taskId> <runId>`。两个位置参数均须匹配 `/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/`，拒绝多余参数。使用 Node 的 `DatabaseSync(file,{readOnly:true})` 打开 Orchestrator 容器 `/data/business.sqlite`，只执行参数化查询。按 `r.id=? AND p.id=?` 从 `runs r JOIN projects p ON p.id=r.projectId` 选取 `r.sessionId,r.status,r.taskSequence,r.admittedGeneration,r.admittedBindingDigest,p.owner,p.id,p.sessionId AS boundSession,p.sandbox,p.volume`；要求恰一行、`status==='succeeded'`、taskSequence 是正整数、admittedGeneration 为非负整数，两个 Session ID 相等。另以 `WHERE runId=? AND generation=?` 查询 `task_projection_ends` 计数恰为 1。该证据来自 `service.ts::worker` 调用 `host.worker` 前按实际入参写入的 admission，以及同一运行代的真实 Worker 投影完成 ack。它与页面成功结果和已应用的补丁共同验证实际执行链。
-2. 用 UTF-8 SHA-256 对固定键序 `{tenant:p.owner,project:p.id,session:p.boundSession,sandbox:p.sandbox,volume:p.volume}` 的 JSON 摘要与 `admittedBindingDigest` 比对。成功只写一行 `{taskId:string,runId:string,sessionDigest:string,workspaceDigest:string,bindingDigest:string}`，sessionDigest 对 Session ID，workspaceDigest 对键序 `{sandbox,volume}` 的 JSON，bindingDigest 为已核对的 admission 摘要。失败只输出固定 stderr `WEB-A11 observation rejected`，退 1。必须在 finally 关闭 DB。观察器无写入或监听能力；阈值为业务 Run 数，projection 证据只证明相同代次完成 ack，无法据此统计宿主进程总启动次数。
-3. 部署固定版本的脚本作为本轮私有只读挂载 `$BENTO_WEB_A11_ROOT/private/observe-web-a11.mjs`。测试运行在同一 Linux 的本轮源码目录。新增 `observeContinuation(taskId:string,runId:string)`，读取绝对路径 `BENTO_WEB_A11_ROOT`，由 Node `execFileSync('docker', args, {encoding:'utf8',cwd:join(root,'private/foundation'),timeout:10000,stdio:['ignore','pipe','pipe']})` 依次执行以下命令的固定参数，位置 ID 分别取两个正常 Run。调用失败时只报固定字符串，不能转发整条命令或 child stderr。
-
-```sh
-docker compose -p bento-a-web-a11 --env-file compose.env \
-  -f compose.yaml -f web-core.yaml -f execution.yaml \
-  exec -T orchestrator node "$BENTO_WEB_A11_ROOT/private/observe-web-a11.mjs"
-```
-
-在上述固定 argv 末尾追加 `taskId,runId`。解析每轮 stdout，校验对应 ID 与所有摘要均匹配 64 位小写 hex。两个 Run 的 Session、workspace 和 admission binding 摘要分别相等。记录脱敏断言，脚本与证据读回随本轮挂载和卷一起清理。
-
-验证，从仓库根目录：
-
-```sh
-node --check deploy/orchestrator/observe-web-a11.mjs
-pnpm check
-git diff --check
-```
-
-PASS：语法与仓库检查通过，观察器只读取指定账本和对应 Run；真正绑定证据等 T3。STOP：生产需新增接口、写权限或部署包才能读回时交 MASTER。无远端写入需要回滚。提交边界：获准后一次 `Test(execution-service): 按续聊轮次核对真实派发绑定`，包含新观察器、spec 调用和 RUNBOOK 步骤变化。
-
 ## T3：实栈、撤场及证据归档
 
-前置状态：T0 与 T2 已完成，A11 页面与幂等断言已提交，已重新登记并读回当前独占窗口的完整装配和按资源 ID 撤场入口。旧窗口的证据只证明准备路径可行。
+前置状态：A11 页面、幂等及只读绑定断言已提交，并已通过本地检查，已重新登记并读回当前独占窗口的完整装配和按资源 ID 撤场入口。旧窗口的证据只证明准备路径可行。
 
 允许修改：Readiness 与本 RUNBOOK；运行只触及 T0 登记的资源。
 
