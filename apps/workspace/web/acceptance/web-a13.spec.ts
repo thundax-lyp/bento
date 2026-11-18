@@ -8,10 +8,14 @@ import type {
     Session,
     Task,
     TaskCheck,
+    TaskEvent,
     TaskResult,
     TaskRun,
 } from '../src/api.ts';
 
+const continuation = process.env.BENTO_WEB_A11 === '1';
+const uuidV4 =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const file = 'web-a13.txt';
 const original = Buffer.from('base\n');
 const firstBytes = Buffer.from('base\none\n');
@@ -77,6 +81,7 @@ async function sendRound(
     taskPath: string,
     sequence: number,
     prompt: string,
+    replay = false,
 ) {
     const path = '/api' + taskPath + '/runs';
     const accepting = page.waitForResponse(accepts(path));
@@ -88,10 +93,152 @@ async function sendRound(
     expect(response.status()).toBe(202);
     const { run } = (await response.json()) as { run: TaskRun };
     expect(run.sequence).toBe(sequence);
+    if (replay) {
+        const originalRequest = response.request();
+        const bytes = originalRequest.postDataBuffer();
+        const contentType = await originalRequest.headerValue('content-type');
+        const key = await originalRequest.headerValue('idempotency-key');
+        if (!bytes || !contentType || !key || !uuidV4.test(key))
+            throw new Error('WEB-A11 continuation request metadata missing');
+        const [replayed, conflict] = await page.evaluate(
+            async ({ path, bytes, contentType, key }) => {
+                const headers = {
+                    'content-type': contentType,
+                    'idempotency-key': key,
+                };
+                async function send(body: Uint8Array<ArrayBuffer> | string) {
+                    const response = await fetch(path, {
+                        method: 'POST',
+                        headers,
+                        body,
+                        credentials: 'same-origin',
+                        redirect: 'error',
+                        signal: AbortSignal.timeout(10_000),
+                    });
+                    return {
+                        status: response.status,
+                        body: await response.json(),
+                    };
+                }
+                return [
+                    await send(new Uint8Array(bytes)),
+                    await send(
+                        JSON.stringify({ prompt: 'WEB-A11 changed payload' }),
+                    ),
+                ];
+            },
+            { path, bytes: [...bytes], contentType, key },
+        );
+        expect(replayed.status).toBe(200);
+        expect(run.retryOf).toBeNull();
+        expect(replayed.body).toMatchObject({
+            run: {
+                id: run.id,
+                taskId: run.taskId,
+                sequence: 2,
+                prompt: run.prompt,
+                retryOf: null,
+            },
+        });
+        expect(conflict).toEqual({
+            status: 409,
+            body: {
+                error: {
+                    code: 'idempotency_conflict',
+                    message: '当前请求无法执行。',
+                },
+            },
+        });
+    }
     return { id: run.id, path: path + '/' + encodeURIComponent(run.id) };
 }
 
 type Round = Awaited<ReturnType<typeof sendRound>>;
+
+async function verifyContinuationLedger(
+    page: Page,
+    taskId: string,
+    first: Round,
+    second: Round,
+): Promise<void> {
+    const path = '/api/tasks/' + encodeURIComponent(taskId);
+    const { items: runs } = await json<{ items: TaskRun[] }>(
+        page,
+        path + '/runs',
+    );
+    expect(first.id).not.toBe(second.id);
+    expect(runs).toMatchObject(
+        [first, second].map(({ id }, index) => ({
+            id,
+            taskId,
+            sequence: index + 1,
+            status: 'succeeded',
+            resultVersion: 1,
+        })),
+    );
+    const eventsPath = path + '/events?after=';
+    const pageOne = await json<{ items: TaskEvent[] }>(page, eventsPath + '0');
+    expect(Object.keys(pageOne)).toEqual(['items']);
+    expect(pageOne.items.length).toBeGreaterThan(0);
+    let cursor = 0;
+    const eventIds = new Set<string>();
+    for (const event of pageOne.items) {
+        expect(Number.isSafeInteger(event.sequence)).toBe(true);
+        expect(event.sequence).toBeGreaterThan(cursor);
+        expect(event.id.length).toBeGreaterThan(0);
+        expect(eventIds.has(event.id)).toBe(false);
+        expect([first.id, second.id]).toContain(event.runId);
+        eventIds.add(event.id);
+        cursor = event.sequence;
+    }
+    expect(await json(page, eventsPath + cursor)).toEqual({ items: [] });
+    for (const run of runs) {
+        expect(
+            pageOne.items.filter(
+                (event) =>
+                    event.runId === run.id && event.kind === 'user_message',
+            ),
+        ).toMatchObject([{ text: run.prompt, check: null }]);
+    }
+    const invalid = await page.request.get(eventsPath + '-1', {
+        timeout: 10_000,
+        maxRedirects: 0,
+    });
+    expect(invalid.status()).toBe(400);
+    expect(await invalid.json()).toEqual({
+        error: { code: 'invalid_input', message: '任务请求内容无效。' },
+    });
+}
+
+async function deleteContinuationSource(
+    page: Page,
+    source: string,
+    rounds: Round[],
+) {
+    await page.goto(source);
+    await page.getByRole('button', { name: '删除项目', exact: true }).click();
+    await page.getByRole('button', { name: '确认删除', exact: true }).click();
+    const paths = [
+        '/api/space/projects/' + source.split('/').at(-1),
+        ...rounds.map((round) => round.path + '/results'),
+    ];
+    await expect
+        .poll(
+            async () =>
+                Promise.all(
+                    paths.map(async (path) =>
+                        (
+                            await page.request.get(path, {
+                                timeout: 10_000,
+                                maxRedirects: 0,
+                            })
+                        ).status(),
+                    ),
+                ),
+            { timeout: 120_000 },
+        )
+        .toEqual(paths.map(() => 404));
+}
 
 async function awaitResult(page: Page, round: Round) {
     let status: TaskRun['status'] | undefined;
@@ -309,6 +456,7 @@ test('WEB-A13 real DSH result delivery', async ({
             task.path,
             2,
             '先读取 web-a13.txt，确认并保留第一轮的 one 行。只追加 two 和换行。保存后按顺序各调用一次 bento_workspace_check，path 均为 web-a13.txt，expected 依次为 "base\\none\\n" 和 "base\\none\\ntwo\\n"。第一次预期失败，继续完成第二次检查，再给出简短公开结论。',
+            continuation,
         );
         await awaitResult(active, second);
         const savedSecond = await readResult(active, second);
@@ -319,6 +467,14 @@ test('WEB-A13 real DSH result delivery', async ({
             firstBytes,
             secondBytes,
         );
+
+        if (continuation)
+            await verifyContinuationLedger(
+                active,
+                task.ready.id,
+                first,
+                second,
+            );
 
         await active.getByLabel('执行轮次').selectOption(first.id);
         const old = await readResult(active, first);
@@ -336,6 +492,9 @@ test('WEB-A13 real DSH result delivery', async ({
                 'first-round patch still matches',
             ).toBe(true);
         }
+
+        if (continuation)
+            await verifyPage(active, old, [passed], original, firstBytes);
 
         const readOnly = await createSnapshot(active, source);
         expect(readOnly.ready.id).not.toBe(task.ready.id);
@@ -359,6 +518,12 @@ test('WEB-A13 real DSH result delivery', async ({
             expect(patch.bytes.length).toBe(0);
             expect(patch.hash).toBe(sha256(Buffer.alloc(0)));
         }
+        if (continuation)
+            await deleteContinuationSource(active, source, [
+                first,
+                second,
+                readRound,
+            ]);
         console.log(
             'WEB-A13 delivery checks passed',
             [...savedFirst.patches, ...savedSecond.patches].map(

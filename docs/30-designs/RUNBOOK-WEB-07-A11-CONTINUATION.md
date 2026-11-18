@@ -70,33 +70,9 @@ test -s "$r/evidence/production-admission.json"
 - T0 采用本地私有 `debug-workspace/web-a11-t0` 的 SSH、构建、基础设施、Host/Worker、浏览器和回收脚本。下一窗口需重新登记并新建空状态、专用账号和新凭据，再跑 TLS、S3、Gateway 和 Worker 阳性。前一轮运行状态及已失效的账号、私钥、会话文件不可复用。仅已验证的构建产物和源码模板可带入。T1/T2 的本地代码验证可在审定和分支下发后执行，T3 依赖新独占窗口。
 - 故障安全门禁：无授权窗口、旧资源重叠、实栈模块需扩大共享权限、未确认资源登记、只读受信查找失配或撤场未核实均 STOP。保留脱敏证据，禁止修改旧 A 或 B。
 
-## T1：真实页面续聊与原请求重放
-
-前置状态：T0 PASS，使用审核确认的执行版本。`BENTO_WEB_A11=1` 只在 A 窗口启用本验收扩展，B 和既有 WEB-A13 默认运行路径沿用原断言。
-
-允许修改：`apps/workspace/web/acceptance/web-a13.spec.ts`、`apps/workspace/web/playwright.web-a13.config.ts` 与本 RUNBOOK。禁止修改生产源码、公开 API、部署资源、删除门禁和恢复代码。沿用 `playwright.web-a13.config.ts` 的单 Chromium、HTTPS、私有 storageState 与无 trace/video/screenshot/自动重试设置。 `BENTO_WEB_A11=1` 且实际执行时，在 Chromium launchOptions 加 `executablePath: "/usr/bin/google-chrome"` 和两个参数 `--no-proxy-server`、`--host-resolver-rules=MAP bento-a11.test 127.0.0.1,MAP s3.bento-a11.test 127.0.0.1,EXCLUDE localhost`。保留严格证书校验。
-
-执行：
-
-1. 在现有测试 `WEB-A13 real DSH result delivery` 内保留全部原路径、prompt 与旧结果断言。`sendRound(page:Page,taskPath:string,sequence:number,prompt:string,replay=false)` 仅在原 Task 第二轮调用传 `process.env.BENTO_WEB_A11 === '1'`。正常页面填写「后续要求」并点击「发送要求」。从首次真实 202 的 `response.request()` 取得原始 `postDataBuffer()`、content-type 和 Idempotency-Key，三者均须存在且 key 为小写 UUID v4。首次响应照常进入页面，确认 `run.sequence===2`。用同一登录页面的 `page.evaluate` 发 HTTPS 同源 `fetch`，URL 为 `'/api'+taskPath+'/runs'`，method POST，headers 使用捕获的 content-type 和 Idempotency-Key，body 用实际字节构造 Uint8Array，credentials 为 same-origin，redirect 为 error，signal 为 AbortSignal.timeout(10000)。验证 200 与 `{run:TaskRun}`，id、taskId、sequence、prompt、retryOf 与首次相同，retryOf 为 null。状态可随执行推进。两次 POST 均等待各自响应，任何异常直接失败，禁止自动重投。再用同键和 `JSON.stringify({prompt:'WEB-A11 changed payload'})` 做冲突请求，断言 HTTP 409 且 `error.code==='idempotency_conflict'`、`error.message==='当前请求无法执行。'`，不能返回新 Run。
-2. 新增 `verifyContinuationLedger(page:Page,taskId:string,first:Round,second:Round):Promise<void>`。两轮成功且结果已发布后进入此助手。通过现有 `json` 读回 `GET /api/tasks/{encodeURIComponent(taskId)}/runs`，无 query，仅一份 HTTP 200 `{items:TaskRun[]}`，无分页。TaskRun 必填 `id/taskId/prompt/createdAt/updatedAt:string`、`sequence:number`、`status:TaskRun['status']`、`retryOf/retryReason/summary:string|null`、`canContinue/canCancel:boolean`、`resultVersion:number|null`。断言 items 恰为首轮、次轮且按顺序排列。两个 id 不同、taskId 相同、sequence 为 1、2，两轮 status 均为 succeeded、resultVersion 均为 1。
-3. 同一助手对 `GET /api/tasks/{encodeURIComponent(taskId)}/events?after=0` 及后续 cursor 使用 `json<{items:TaskEvent[]}>`。每个 HTTP 200 响应仅含 `items`，没有 next 或 pageSize。Event 为 `id/runId/at/text:string,sequence:number,kind:'user_message'|'agent_reply'|'step'|'command'|'check',check:TaskCheck|null`；check 非空时为 `name:string,status:'passed'|'failed'|'not_run'|'unavailable',output:string|null`。主线一次返回所有匹配 sequence > after 的行，按 sequence 升序。首个 cursor=0，逐条要求安全整数且严格大于上一条的 sequence，id 非空，跨响应 id 不得重复，runId 必须属于该 Task 的两轮。处理每个非空响应后把 cursor 更新为最后一条 sequence；空 `items` 结束，本场景结果终态后最多允许 2 次 GET，首轮非空且第二轮必须为空。用按 runId 分组的原始响应计数，过滤 `kind==='user_message'` 后每个 Run 恰一条，text 等于 Run 列表该轮 prompt，check 为 null。Set 只用于拒绝重复 ID，禁止用它先折叠数据再计数。最后读 `events?after=-1`，期待 400、`error.code==='invalid_input'`、`error.message==='任务请求内容无效。'`。
-4. 在现有第二轮实栈结果检查后调用 `verifyContinuationLedger`。观察器调用由 T2 增加。保持两个补丁视图的原验证，使用本轮增量补丁从 `base\none\n` 变为 `base\none\ntwo\n`，检查状态按顺序为 failed、passed。选回旧轮次后校验原结果 JSON、两视图补丁字节及 hash 不变；启用 A 扩展时额外执行 `verifyPage(active,old,[passed],original,firstBytes)`。另建只读 Task 仍执行既有 WEB-A13 断言，作为原回归。做完既有只读断言后，启用 A 时从原 Space 页面点击「删除项目」并确认。等待项目详情和原两 Task 结果地址均为 404，按 T3 命令做后端物理清空读回。失败时保留本轮已登记的 Task/Run/source 和脱敏证据。
-
-验证，从仓库根目录：
-
-```sh
-BENTO_WEB_A13_LIST_ONLY=1 pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --list
-pnpm --filter @bento/web exec playwright test --config playwright.config.ts e2e/task.spec.ts
-pnpm check
-git diff --check
-```
-
-PASS：T0 已通过，发现仍为 1 个用例，所有本地回归命令退出 0。实栈证据等 T3。STOP：发现数量、测试入口、返回契约或固定预期不符；拒绝扩大测试或产品修改范围。提交边界：获准后一次 `Test(task-entry): 固定真实续聊的请求重放与事件验收`，只暂存该 spec、A13 Playwright config 与 RUNBOOK 步骤变化。T2 观察器实现前禁止引用未提交的模块，T2 添加调用及其回归。
-
 ## T2：按 Run 只读核对派发绑定
 
-前置状态：T1 PASS，仍为同一 T0 项目，部署可接受本节固定的只读 SQLite 观察器。
+前置状态：`web-a13.spec.ts` 已有 A11 opt-in 续聊、重投和 Space 回收断言，`playwright.web-a13.config.ts` 已有对应浏览器配置。已核对 baseline T0 的只读 SQLite 探针。
 
 允许修改：新增 `deploy/orchestrator/observe-web-a11.mjs`、`apps/workspace/web/acceptance/web-a13.spec.ts` 及 RUNBOOK。禁止修改生产 HTTP、运行适配器及数据库 schema。
 
@@ -126,7 +102,7 @@ PASS：语法与仓库检查通过，观察器只读取指定账本和对应 Run
 
 ## T3：实栈、撤场及证据归档
 
-前置状态：T0、T1、T2 全部 PASS，已重新登记并读回当前独占窗口的完整装配和按资源 ID 撤场入口。旧窗口的证据只证明准备路径可行。
+前置状态：T0 与 T2 已完成，A11 页面与幂等断言已提交，已重新登记并读回当前独占窗口的完整装配和按资源 ID 撤场入口。旧窗口的证据只证明准备路径可行。
 
 允许修改：Readiness 与本 RUNBOOK；运行只触及 T0 登记的资源。
 
@@ -148,10 +124,10 @@ BENTO_WEB_A11=1 "$BENTO_WEB_A11_ROOT/tools/node_modules/.bin/pnpm" \
   --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --workers=1
 ```
 
-2. 成功后用 `python3 "$BENTO_WEB_A11_ROOT/private/probe-foundation.py" --readback` 回读本轮专用桶对象和未完成 multipart 为空。使用独立 SDK 与 Docker 对 T1 记录的两个 Task 绑定核对 sandbox 与卷已回收，之后按 T0 的同一 Compose 项目和专属资源清单撤场，销毁本轮 realm 和凭据。若存在 pending/UNKNOWN，保留本轮 ID 与资源边界并冻结新增请求，禁止人工解除业务门禁。
+2. 成功后用 `python3 "$BENTO_WEB_A11_ROOT/private/probe-foundation.py" --readback` 回读本轮专用桶对象和未完成 multipart 为空。使用独立 SDK 与 Docker 对 本次验收记录的两个 Task 绑定核对 sandbox 与卷已回收，之后按 T0 的同一 Compose 项目和专属资源清单撤场，销毁本轮 realm 和凭据。若存在 pending/UNKNOWN，保留本轮 ID 与资源边界并冻结新增请求，禁止人工解除业务门禁。
 3. [Readiness](../40-readiness/CURRENT-READINESS.md#web-07-分项证据) 的 WEB-07-02 验收齐备后改为「已实现」。记录实际日期、已验 SHA、窗口类别、真实浏览器与 Worker 断言及撤场结果。WEB-07 汇总保持「部分实现」，-04 与 -05～-10 仍待。保留 WEB-A11 -01/-03 旧证据，核对与 B 对应行独立。删除 RUNBOOK，无临时引用。
 
-验证：实栈 1/1 且有 T1 和 T2 独立断言、T0 撤场完整结果，末尾 `git diff --check`、`pnpm format:check` 均退出 0。STOP：任一缺证，保留原步骤及实际证据。提交边界：获准后一次 `Docs(task-entry): 记录原任务真实续聊验收`，只含 Readiness 和 RUNBOOK 删除。发布遵从 [Commit Rules](../00-governance/COMMIT-RULES.md)、[PR Rules](../00-governance/PR-RULES.md)。
+验证：实栈 1/1 且具备页面、幂等、结果及只读绑定的独立断言、T0 撤场完整结果，末尾 `git diff --check`、`pnpm format:check` 均退出 0。STOP：任一缺证，保留原步骤及实际证据。提交边界：获准后一次 `Docs(task-entry): 记录原任务真实续聊验收`，只含 Readiness 和 RUNBOOK 删除。发布遵从 [Commit Rules](../00-governance/COMMIT-RULES.md)、[PR Rules](../00-governance/PR-RULES.md)。
 
 ## WEB-07-02 规模核算
 
