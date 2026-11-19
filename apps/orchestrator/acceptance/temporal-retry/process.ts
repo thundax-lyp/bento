@@ -505,3 +505,29 @@ export async function startControlTransport(
     }
     return { socketPath, process: owned, close };
 }
+
+export async function buildBinaries(
+    directory: string,
+    signal: AbortSignal,
+): Promise<{ control: string; probe: string }> {
+    const control = await buildControl(directory, signal);
+    const probe = join(directory, 'temporal-probe');
+    await runCommand(
+        'go',
+        [
+            'build',
+            '-mod=readonly',
+            '-o',
+            probe,
+            './acceptance/temporal-retry/probe',
+        ],
+        {
+            cwd: join(root, 'apps/orchestrator'),
+            env: process.env,
+            timeoutMs: 120000,
+            signal,
+            input: null,
+        },
+    );
+    return { control, probe };
+}

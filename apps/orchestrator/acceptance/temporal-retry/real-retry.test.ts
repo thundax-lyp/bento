@@ -12,6 +12,7 @@ import {
     startServer,
     root,
     buildControl,
+    buildBinaries,
     startControlTransport,
     atomicJson,
     readMarker,
@@ -316,4 +317,80 @@ test(
     'A6 cleanup: proxy shutdown reaps production control',
     { timeout: 120000 },
     async (t) => proxyCase(true, t.signal),
+);
+
+let binariesBuild: Promise<{ control: string; probe: string }> | undefined;
+function binaries(signal: AbortSignal) {
+    return (binariesBuild ??= buildBinaries(suite, signal));
+}
+
+test(
+    'A6 evidence: missing workflow is a hard failure',
+    { timeout: 120000 },
+    async (t) => {
+        const directory = await mkdtemp('/tmp/bento-a6-');
+        let server: Awaited<ReturnType<typeof startServer>> | undefined;
+        try {
+            const port = await freePort(),
+                namespace = 'bento-a6-' + randomUUID();
+            server = await startServer(
+                tool,
+                directory,
+                { port, namespace, createNamespace: true },
+                t.signal,
+            );
+            const probe = (await binaries(t.signal)).probe;
+            const history = join(directory, 'missing-history.json');
+            const owned = own(
+                probe,
+                [
+                    '--address',
+                    server.address,
+                    '--namespace',
+                    namespace,
+                    '--workflow',
+                    'bento-run-' + randomUUID(),
+                    '--execution',
+                    '',
+                    '--history-out',
+                    history,
+                ],
+                {
+                    cwd: root,
+                    env: process.env,
+                    log: join(directory, 'missing-probe.log'),
+                    ipc: false,
+                },
+            );
+            let stdout = '',
+                stderr = '';
+            owned.child.stdout!.on(
+                'data',
+                (bytes: Buffer) => (stdout += bytes.toString()),
+            );
+            owned.child.stderr!.on(
+                'data',
+                (bytes: Buffer) => (stderr += bytes.toString()),
+            );
+            const timer = setTimeout(() => {
+                void stopOwned(owned, 0).catch(() => {});
+            }, 10000);
+            try {
+                const result = await owned.closed;
+                assert.equal(result.code, 1);
+                assert.equal(stdout, '');
+                assert.match(
+                    stderr,
+                    /Temporal evidence probe failed: workflow_not_found/,
+                );
+            } finally {
+                clearTimeout(timer);
+                await stopOwned(owned, 100);
+            }
+            await assert.rejects(stat(history), { code: 'ENOENT' });
+        } finally {
+            if (server) await server.close();
+            await rm(directory, { recursive: true, force: true });
+        }
+    },
 );

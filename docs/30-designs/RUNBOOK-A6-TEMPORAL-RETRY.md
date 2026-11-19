@@ -3,7 +3,7 @@
 ## 状态与执行边界
 
 - 建立日期：2026-11-19。
-- 状态：`Executable / Implementing`；MASTER审核及计划提交已核对，显式Worker已开工。T1工具/生命周期与T2生产控制代理各2例PASS，剩余步骤如下。
+- 状态：`Executable / Implementing`；MASTER审核及计划提交已核对，显式Worker已开工。T1/T2各2例及T3真实history探针NotFound硬失败1例已PASS，剩余步骤如下。
 - checkout：仅 B；分支 `codex/a6-temporal-retry`，基线 `0f4327470885e32f56296a3afc0ad142d1054a08`，获审计划提交 `acf25388748dc2ac9aeca27af93965c0da5b3cf9`。
 - 授权：按MASTER显式Worker派工逐步实施/提交；生产文件保持只读，外部环境仅本任务隔离本地资源。
 
@@ -405,32 +405,9 @@ business.sqlite 固定查询：`SELECT * FROM runs WHERE id=?`（必须一行）
 
 下列命令 cwd 均为仓库根。各步只有获审 Worker 可执行；本作者回合不执行。验证使用 test-name-pattern 选择已创建的固定用例，允许 Node 对不匹配用例显示未选中，但所选 case 必须实际 PASS、不得 skip；T7/T8 全量运行九项，必须 skip=0。pnpm typecheck 运行时读取的依赖不等于专门人工核对文件预算，专门读文件已逐步穷举。
 
-### T3：真实 Temporal history 独立证据探针
-
-前置状态：工具/进程提交ac9c86e1e71e02b907422a656ea68e26238317c9已纳入；生产control构建与代理关闭/回收两例已实际2/2 PASS，源码和本步骤前置提交可回读。
-允许修改：本 RUNBOOK、probe/main.go、process.ts、real-retry.test.ts、public-files.json（5）；专门核对：apps/orchestrator/go.mod、apps/orchestrator/temporal.go（合计7）。禁止修改：生产Workflow/Activity、go.mod/sum、testsuite用例。
-
-执行：
-
-1. 按 TemporalEvidence Schema 实现 Go probe；SDK真实连接、Describe、全部history pages、payload decode、protojson原history SHA和输出；所有错误硬失败。
-2. 实现 buildBinaries，先调用 buildControl，再 `go build -mod=readonly -o <directory>/temporal-probe ./acceptance/temporal-retry/probe`，同cwd/120秒。构建结果只在私有temp、不入Git。
-3. 新增 `A6 evidence: missing workflow is a hard failure`，timeout=120000：在独立真实server的专属namespace查不存在 `bento-run-UUID`，probe退出非0、无partial TemporalEvidence，server正常关闭；不启动临时模拟Workflow。成功业务history结构由下一步正常Run验证。
-4. public.files精确添加 probe/main.go。
-
-验证：
-
-```bash
-BENTO_A6_TEMPORAL_ARCHIVE=/tmp/bento-b-temporal-author-aaOJQ2/release.tar.gz node --import ./register-paths.mjs --experimental-strip-types --test --test-concurrency=1 --test-timeout=1200000 --test-name-pattern='^A6 evidence:' apps/orchestrator/acceptance/temporal-retry/real-retry.test.ts
-pnpm --dir apps/orchestrator typecheck
-git diff --check
-```
-
-PASS：探针从真实server返回NotFound硬失败、构建/类型成功，无testsuite/no-op成功；删除步骤提交 `Test(execution-service): 提供真实 Temporal 历史证据探针`。
-STOP：API符号与Schema不符、需要新依赖或probe把错误当成功；交作者修订，不猜字段或放宽断言。
-
 ### T4：生产入口正常派发与原始副作用证据
 
-前置状态：工具/代理/probe均已提交PASS，可读取真实server。
+前置状态：工具ac9c86e、代理484b5ec已纳入；真实SDK probe构建及专属server的NotFound硬失败1/1已PASS、无成功JSON/history文件，当前前置提交可回读。
 允许修改：本 RUNBOOK、host.ts、evidence.ts、real-retry.test.ts、process.ts、public-files.json（6）；专门核对：service.ts、local.ts、store.ts、apps/worker/protocol.ts（均使用前文完整路径，合计10）。禁止修改：全部四份生产文件，A的服务重试/history与外部环境。
 
 执行：
