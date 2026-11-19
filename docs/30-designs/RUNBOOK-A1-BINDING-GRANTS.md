@@ -164,27 +164,9 @@ git diff --check
 PASS：只有本文未跟踪，基线相同，链接/格式通过；官方探针6项已实测，MASTER对同SHA评Executable并核对计划提交。当前尚缺最后审核/提交/worker调用。
 STOP：来源/基线/共享窗口变化或审核未通过；不能把本工具探针当业务PASS。
 
-## T2：真实当次授权 Happy Path
-
-前置状态：sdk.ts/sdk-probe.ts 已完成官方来源校验、正常构建与6项生产decoder探针；CLI退出0且工具目录清理，typecheck/lint通过（2026-11-19）；来源不变。
-允许修改：本文、fixture.ts、binding-grants.test.ts、public-files.json。专门读取single-host.ts、sdk-ingress.ts、worker-gate.ts、sdk.ts，共8文件。
-禁止修改：任何生产行为、原provider fixture。
-
-执行：新增唯一GrantFixture及suite before/after；fixture经bind/admit取得真实grant；实现H成功控制test，三个RPC各0/exit0、operation201，SQL独立RUNNING及绑定读回。登记新源。test精确命名 `A1-03 H current grant reaches production ingresses`。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='A1-03 H ' apps/orchestrator/openshell/binding-grants.test.ts
-pnpm --filter @bento/orchestrator typecheck
-```
-
-PASS：H执行1例通过、无目标test skip，upstream实际计数/SQL均符合；all cleanup通过。CLI筛选其余非目标test不构成scope通过。
-STOP：非法grant或fixture成功来自mock、无SQL/计数、任何清理失败。仅本例临时目录可清，不重置用户DB。
-
 ## T3：旧 capability 的新 stream 与重连
 
-前置状态：H稳定可复验。
+前置状态：binding-grants.test.ts 的 H 合法当次授权控制已执行1例PASS/skip0（2026-11-19，真实官方SDK、mTLS upstream三RPC、operation201及独立SQL），typecheck/lint通过。
 允许修改：本文、binding-grants.test.ts、fixture.ts。专门读取authority.ts、single-host.ts、sdk-ingress.ts、persistence-fence.ts、sdk.ts，共8文件。
 禁止修改：production/UNKNOWN对账/停止生命周期。
 

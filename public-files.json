@@ -179,7 +179,9 @@
         "apps/orchestrator/acceptance/temporal-retry/evidence.ts",
         "apps/orchestrator/acceptance/temporal-retry/check-package.mjs",
         "apps/orchestrator/openshell/binding-grants/sdk.ts",
-        "apps/orchestrator/openshell/binding-grants/sdk-probe.ts"
+        "apps/orchestrator/openshell/binding-grants/sdk-probe.ts",
+        "apps/orchestrator/openshell/binding-grants/fixture.ts",
+        "apps/orchestrator/openshell/binding-grants.test.ts"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",
