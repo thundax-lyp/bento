@@ -152,60 +152,13 @@ PASS：基线一致；端口可绑定；Go 指定测试实际 PASS；13项均通
 
 T1 已完成：两个独立fixture已落地；web typecheck、两个fixture eslint、计划空状态启动/close smoke和关闭后4363/4364 bind检查均PASS。观察3个distinct账号/owner与0 Task/Run/worker/队列；close内确认目录ENOENT。没有生产代码变更。对应提交为包含本记录的 `Test(task-entry): 建立租户队列独立验收宿主`，从该提交进入T2。
 
-## T2：三账号队列和上传在途完整验收
+## T2 已通过的执行前置事实
 
-前置状态：上述T1能力提交可回读且fixture可启动关闭。允许修改：新spec、新config、本 RUNBOOK；专门核对两个新fixture、pages.tsx、space-api.ts、web/src/space.tsx（合计8文件）。禁止页面retry/cancel变更与生产修复。
-
-执行：新 config 唯一内容为以下配置（导入 `defineConfig, devices` 自 `@playwright/test`）：
-
-```ts
-export default defineConfig({
-    testDir: './acceptance',
-    testMatch: '**/web-queue-isolation.spec.ts',
-    workers: 1,
-    retries: 0,
-    timeout: 120000,
-    projects: [{ name: 'chromium', use: devices['Desktop Chrome'] }],
-    use: {
-        baseURL: 'http://127.0.0.1:4364',
-        trace: 'off',
-        video: 'off',
-        screenshot: 'off',
-    },
-    webServer: {
-        command: 'pnpm dev --host 127.0.0.1 --port 4364 --strictPort',
-        url: 'http://127.0.0.1:4364',
-        env: { BENTO_API_TARGET: 'http://127.0.0.1:4363' },
-        reuseExistingServer: false,
-    },
-});
-```
-
-spec 只设一个完整有序测试 `WEB-A09: three authenticated tenants isolate queue capacity from physical multipart uploads`，beforeEach 启动 fixture，afterEach 始终 await close 并传播异常。创建三个 browser.newContext/page，依次为 A=demo、B=guest、C=registration-demo 注册登录；每个账号严格执行：`password=randomUUID()` 仅存在测试内存（36字符，符合15–128字符且不同于邀请码）；goto('/login') → 点击 link“使用邀请码注册” → 定位包含 heading“受邀注册”的 form → 依次填 label“账号”=该 account、“邀请码”=demo-invite、“新密码”=password → 点击该 form 中 exact button“注册” → 等 URL `/login(?:\?|$)` → 填 label“账号”与 exact label“密码”=同一 password → 点击 exact button“登录” → 等 label“任务名称”可见。三次顺序完成，不并行触发密码哈希限流；不打印密码/邀请码/hash/cookie。注册所用 fixture account/owner 映射只从 accounts 返回值取，不重新分配身份。不得 route mock 业务响应。请求上下文复用各自 cookie；API mutation 的 Origin 字面为 `http://127.0.0.1:4364`。
-
-T2 STOP/作者修订依据：2026-11-19 Chromium实际返回 `Cannot set buffer larger than 50Mb, please write it to a file and pass its path instead.`；原Buffer直接选择100MB不可执行。仅将选件方式改为先写真实100MB临时文件后传路径，保持六分块、字节数、HTTP/worker/SQLite/额度与下载摘要全部断言，待MASTER复审后继续。
-
-固定顺序与必须断言：
-
-1. 六个空白Task A0/A1/A2/A3/B0/C0 均从页面创建并等ready；账户列表互不可见，B/C GET A Task为404。此时Task/creationReceipts各为A4/B1/C1，Runs/events/retryAttempts为0，worker/occupied均0。
-2. A空间页面新建项目并选择真实100_000_000字节文件，测试先 mkdtemp 创建自有选择目录，将 big Buffer 的100_000_000字节写入 big.bin，再 setInputFiles(绝对文件路径)，不伪造元数据；该选择目录在spec finally关闭contexts后rm并assert ENOENT（失败也清理），fixture存储目录所有权不变；点击正常上传，等待storage.waitHeldPart。断言part1字节16_777_216、inFlight≥1、上传状态非saved、reserved100_000_000、saved0；业务表计数和occupied0/worker0与上传前一致。实际partsWritten可含其他并行块，不把“未回包”视为没有上传。
-3. 在同一A会话HTTP开始第二个100_000_000字节上传（同大小摘要列表，独立路径/id），只预占不PUT。reserved恰200_000_000；再开始独立1字节上传返回409 space_quota及固定文案，上传总数与reserved不增，存储调用不增，执行观察不变。A第二page刷新空间，选择1字节显示“账号可用额度不足。”，不触发上传POST；原上传page保持在途。
-4. 仍持有上传gate：A0页面发送noop，等实际worker进入且Store running，activeWorkers=occupied.length=1；A1/A2分别发送得到202且queued，A排队数2、总Run3，证明running未占排队名额。保存A1实际Idempotency-Key/body/receipt。捕获A3实际key/body；A3发送收到429 tenant_queue_full及固定队列文案；页面提示可见且与空间提示不等。比较拒绝前后同一owner业务表、enteredRuns完全不变，无Run/event/retryAttempt/receipt半写，A3 Task仍可读。任务要求文本保留、按钮恢复可操作。
-5. A满额时B0/C0各自页面发送，均202且各queued1，A queued仍2；未执行B/C并非拒收。各列表与SQLite owner一致，三个会话看到自己的Run且读别人的Run为404；worker仍只有A0，peak1。使用A1原key/body经A会话HTTP重放，返回200相同Run，所有计数不增。上传仍inFlight，reserved不变；此前每次上传观察不能让worker计数单独增长。
-6. 释放A0；等A1实际进入running（先提交先运行，B/C为后提交），A排队降1，固定用A3先前被拒绝的原key/body经A HTTP重试得到202，A排队恢复2，再刷新A3页面看到原Run；不要点击发送生成第二条Run。新Run只1个user_message与1次执行；之后原key重放200，异prompt同key409 idempotency_conflict无新增。所有请求均在原owner会话下。
-7. 执行worker gate保持不动，记录执行snapshot，releaseParts等待第一文件saved，下载100MB核对SHA256；完成前后执行snapshot逐字段相同（enteredRuns/active/occupied/queued/owners），saved100_000_000、reserved100_000_000（第二上传）。取消第二上传经API等待清理后reserved0，执行snapshot仍相同。原失败1字节上传ID可重新开始并完成，saved100_000_001，不产生Task/Run，显示额度恢复。上传调用本身不能改变执行槽。
-8. releaseAll，全部已受理Run最终succeeded；每Run entered恰一次，activeWorkers/occupied/queued均0、peak1、A3无额外Run、retryAttempts全0。console只输出脱敏owner别名A/B/C、阶段计数、HTTP状态/错误码及文件字节/摘要；不输出cookie/token/原始认证数据。关闭所有context，afterEach关闭fixture。失败也执行finally清理。
-
-```bash
-pnpm --filter @bento/web typecheck
-pnpm --filter @bento/web exec playwright test --config playwright.web-queue-isolation.config.ts
-```
-
-PASS：指定测试1 passed /0 skipped；上述阶段独立expect断言均成立，端口与临时文件清理。STOP：任何必要断言缺失、超时或失败；不得只保留429、缩小文件、合并身份或mock响应。恢复：保留代码，fixture清理后从完整场景重跑。提交 `Test(task-entry): 验证三账号队列和上传槽位隔离`。
+完整Chromium场景1 passed /0 skipped（6.9秒，命令8.0秒）；typecheck和focused eslint PASS。三独立cookie账号A/B/C正常注册登录；A运行1+排队2，A3的429无Run/event/receipt/attempt新增，B/C各202排队1；容量释放后原拒绝键可202并仅一次执行，重放200/异内容409。100MB物理文件选择、六分块HTTP上传、part1在途0槽；额度200MB+1字节409和页面区分；上传完成、取消预占、1字节复用前后执行snapshot完全一致，下载100MB SHA256=83d30385a4a11980275dc23de3fb49ff37b906cc841efa048a96c62d90ff3b5f。6个Run全succeeded/各进入一次，最终0worker/occupied/queued、peak1。物理选件目录及fixture目录finally清理；端口重新bind PASS。测试用expect.poll等待并行批次其余3块落盘后比较quota拒绝的存储计数，排除原传输继续写入造成的观测竞争，未降低断言。对应提交为包含本记录的 `Test(task-entry): 验证三账号队列和上传槽位隔离`。
 
 ## T3：专用验收纳入CI与公开边界
 
-前置状态：T2完整场景通过。允许修改：web/package.json、checks.yml、public-files.json、本RUNBOOK；专门核对新config/spec/两个fixture（合计8文件）。禁止根package.json files与依赖/锁文件变化。
+前置状态：上述T2完整场景能力提交可回读。允许修改：web/package.json、checks.yml、public-files.json、本RUNBOOK；专门核对新config/spec/两个fixture（合计8文件）。禁止根package.json files与依赖/锁文件变化。
 
 执行：web scripts新增 `test:queue-isolation` = `playwright test --config playwright.web-queue-isolation.config.ts`。现有 Web Chromium E2E job 在 test:space-integrity 后新增独立 run `pnpm --filter @bento/web test:queue-isolation`；沿用已有受影响路径选择和Chromium安装，不改job名/保护规则。public-files.json精确登记4个新文件（两个fixture、spec、config）；本临时RUNBOOK不属于产品公开文件，不登记，最终无RUNBOOK公开条目。不得添加目录通配。
 
