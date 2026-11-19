@@ -94,25 +94,9 @@ PASS：端口与本地依赖检查退出 0；基线与归属核对、正式需�
 STOP：内容/基线变化影响范围、正式依据冲突或本地依赖不能执行。无外部副作用，不回滚旧现场。
 提交边界：通过审核后独立 RUNBOOK 提交。
 
-### T1：锁定可信四状态与公开检查来源
-
-前置：T0 通过且获显式开工。
-允许修改：`apps/worker/task-bootstrap.test.ts`、本 RUNBOOK。
-专门只读：task-projection.ts、task-bootstrap.ts、protocol.ts、store.ts（均为上表完整路径）、`apps/worker/task-projection.test.ts`，合计 7 文件。
-执行：复用 task-projection.test.ts 已有四状态、重复/非法 proof 和私有字段负例，不新增镜像映射的测试。只在 task-bootstrap.test.ts 新增“四种可信 proof 经 bootstrap 到真实 POST”的子例：fixture 新 prompt `four-checks` 时返回四个真实 fixture 事件索引和 outcome pass/fail/skip/unavailable，eventCount 至少4；HTTP receiver 断言实际收到四状态及固定安全输出，合成原始诊断只存在 fixture 私有 event 字段，最终请求和错误不含该值。该测试补 bootstrap→protocol→HTTP 的接线缺口，不把 fixture 称为真实模型。
-验证：
-
-```bash
-node --import ./register-paths.mjs --experimental-strip-types --test apps/worker/task-projection.test.ts apps/worker/task-bootstrap.test.ts
-pnpm --filter @bento/worker typecheck
-```
-
-PASS：所有实际测试通过，四状态各有明确断言，无 skip。STOP：映射或可信 producer 不符，不改生产安全语义；报告符号和失败断言，交作者修订。无外部副作用。
-提交边界：`Test(execution-service): 锁定公开检查四种实际状态`，同次删除 T1。
-
 ### T2：锁定冻结结果与不可用接口
 
-前置：T1 已提交。
+前置：Worker bootstrap 四状态真实 POST 接线与投影单测 8/8、Worker typecheck 通过，见上一 STEP 提交中的 task-bootstrap.test.ts。
 允许修改：`apps/orchestrator/execution-service/service.test.ts`、本 RUNBOOK。
 专门只读：`apps/orchestrator/execution-service/http.ts`、`apps/orchestrator/execution-service/service.ts`、`apps/workspace/api/protocol.ts`，合计 5 文件。
 执行：在既有 Task event projection suite 的独立新增用例，使用 localHost fixture，经真实 HTTP 入库四状态，精确核对 results.checks 和 events.check；不得改变旧 suite 的重复/旧代负例。分别创建非空和空结果，比对两种 view 的预览/附件字节、metadata SHA、固定附件名。运行未完成时读取 results 与 diff 均为 409 diff_unavailable；越权均 404。重开服务后只读回查冻结结果一致。fixture 明确标记，不能称真实模型验收。
