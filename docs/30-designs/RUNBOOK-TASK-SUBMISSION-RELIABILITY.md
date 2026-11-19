@@ -73,35 +73,9 @@ ENVIRONMENTS.md 调查时不存在；本任务不连接外部受控服务，无�
 
 ## 机械步骤
 
-### T2：持久回执和各态新写门禁
-
-前置状态：src/task-submission.test.ts 已提交，Vitest 4/4 PASS；网络/5xx 原键、模块重载、成功/4xx 清除、账号/正文/Task 隔离和 snapshot 排序已核对。
-允许修改：新 `apps/orchestrator/execution-service/task-submission.test.ts`、`apps/orchestrator/package.json` test 脚本、RUNBOOK。专门核对 store.ts、http.ts、types.ts，共 6 文件。
-禁止修改：Store/HTTP/service 生产代码与 service.test.ts。
-
-执行：
-
-1. node:test 独立文件使用临时真实 SQLite Store。创建 blank/snapshot，importResult ready，enqueueTaskRun；close/reopen 同库，再 createTask 同键、enqueueTaskRun 同键，核对 replay=true、ID/冻结字段不变、Run/event 恰一。异正文同键均冲突，冲突前后 tasks/runs/events/creation receipts 行数不变；异 owner 不读原记录。
-2. 为五个 Run 状态各建独立 Task，Store.status 注入目标状态（仅状态门禁 fixture，不宣称状态转换已验），close/reopen 后提交新键新正文，均 409 task_busy；保留原状态、prompt、Run/event 全字段及计数。原键同正文仍能 replay。
-3. retry fixture 禁止直接 INSERT：每个状态单独建 Store(path,16)、owner=`retry-owner`，blank input={id:null,name:'Retry task',sourceSpaceId:null,inputFiles:[],inputManifest:[],inputDigest:SHA256('[]')}；version='sha256:'+'a'.repeat(64)。调用 createTask(owner,randomUUID(),input,version).task.id、importResult(taskId,'ready')、enqueueTaskRun(owner,taskId,randomUUID(),'Original').run；status(source.id,'failed','Synthetic failure')、recordStopProof(source.id,'{}')。这份 '{}' 是沿用旧 settled retry Store 单测的合成 stop receipt，只证明账本门禁，不证明真实停止或恢复。evidence 固定 `{oldGeneration:1,newGeneration:2,workspaceSha256:input.inputDigest,historySha256:input.inputDigest}`，`acceptTaskRetry(owner,taskId,source.id,randomUUID(),evidence).attempt` 构造同 Task/source 的合法 Store receipt。签名为 acceptTaskRetry(owner:string,taskId:string,sourceRunId:string,key:string,evidence:{oldGeneration:number,newGeneration:number,workspaceSha256:string,historySha256:string})；advanceTaskRetry(id:string,expected:'preparing'|'workspace_restored'|'history_restored',phase:'workspace_restored'|'history_restored'|'blocked'):boolean。
-    - preparing：accept 后不推进；workspace_restored：advance(id,'preparing','workspace_restored')；history_restored：依次前一步及 advance(id,'workspace_restored','history_restored')；blocked：advance(id,'preparing','blocked')。每次 advance 必须 true。close/reopen 后新键 enqueue 精确抛 `{status:409,code:'task_busy'}`，Run/event/attempt 全字段与计数不变。
-    - queued 正对照：推进至 history_restored，调用 finalizeTaskRetry(attempt.id,'history_restored')，返回 Run ID 必等于 attempt.newRunId、status=queued；新键 enqueue 必为 task_busy，无新记录。再 status(next.id,'succeeded','Synthetic success')，新键 enqueue 必成功 replay=false，恰新增一个 Run 和一个 user_message，证明 queued receipt 不独立持锁。不宣称该 synthetic success 有真实结果。
-    - closed 对照：新独立 fixture 的 preparing→blocked，closeBlockedTaskRetry(attempt.id,2,'a'.repeat(64)) 必非 null，回读 phase=closed、Task.closedReason=unconfirmed；close/reopen 后新键 enqueue 唯一预期为 `{status:409,code:'task_not_ready'}`，不是 task_busy；Run/event/attempt 不增。这里只调用既有 Store 结束 receipt 来验证门禁，不测试可信结案服务或其证据充分性。
-
-4. package.json test 显式加入 `execution-service/task-submission.test.ts`，确保 pnpm check 和 CI 真正运行新测试，不改已有匹配路径。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --experimental-strip-types --test apps/orchestrator/execution-service/task-submission.test.ts
-pnpm --filter @bento/orchestrator typecheck
-```
-
-PASS：每个状态/预留单独命名子用例通过，重开回执不增行，所有拒绝无半提交；类型检查退出 0。STOP：任何行为不符或 schema 不匹配，交作者修订。finally 关闭 Store 并删除本测试临时目录；不清理别的目录。
-
 ### T3：实际 HTTP 与浏览器丢回执验收入口
 
-前置状态：T2 持久回执与门禁测试已提交且 PASS。
+前置状态：execution-service/task-submission.test.ts 已提交，node:test 13/13 PASS；orchestrator typecheck PASS。覆盖 blank/snapshot 重开回执、五活跃态、四 retry 预留态、queued/closed 对照。
 允许修改：新 fixture、新 spec、新 config、RUNBOOK。专门核对 terminal-results-fixture.ts、space.ts、space-storage.ts、space-execution.ts、api/server.ts、web/src/space.tsx，共 10 文件。
 禁止修改：所有既有 fixture/验收、生产服务、页面；本步先复现页面缺口。
 
