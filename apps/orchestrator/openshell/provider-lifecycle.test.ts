@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { test } from 'node:test';
+import { SessionOwnershipLostError } from '@deepseek-ai/dsh-session-persistence';
 import { createProviderFixture } from './provider-lifecycle/fixture.ts';
 
 type Fixture = Awaited<ReturnType<typeof createProviderFixture>>;
@@ -140,3 +141,53 @@ test(
         });
     },
 );
+
+for (const method of ['append', 'flush', 'close'] as const) {
+    test(
+        `A2-02 stale ${method} is independently fenced`,
+        { timeout: 30_000 },
+        async () => {
+            await withFixture(async (fixture) => {
+                const runtime = await fixture.start(1);
+                const handle = await runtime.create();
+                await runtime.turn();
+                verifyStored(fixture);
+                assert(runtime.writer);
+                const writer = runtime.writer;
+                runtime.trace.length = 0;
+                await fixture.controller.takeover(fixture.session, 1);
+                const before = fixture.snapshot();
+                const authority = fixture.controller.inspect(fixture.session);
+                assert.equal(authority.state, 'READY');
+                assert.equal(authority.generation, 2);
+                const attempt =
+                    method === 'append'
+                        ? writer.append(
+                              handle.agent.session.snapshotEvents().slice(0, 1),
+                          )
+                        : method === 'flush'
+                          ? writer.flush()
+                          : writer.close();
+                await assert.rejects(attempt, SessionOwnershipLostError);
+                assert.deepEqual(
+                    runtime.trace.map((row) => ({
+                        method: row.method,
+                        status: row.status,
+                    })),
+                    [
+                        {
+                            method: method === 'append' ? 'stage' : method,
+                            status: 403,
+                        },
+                    ],
+                );
+                assert.deepEqual(fixture.snapshot(), before);
+                assert.deepEqual(
+                    fixture.controller.inspect(fixture.session),
+                    authority,
+                );
+                await runtime.expectRevokedDispose();
+            });
+        },
+    );
+}
