@@ -5,11 +5,14 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import type { TestContext } from 'node:test';
 import type { Grant, WorkerRequest } from '@/apps/worker/protocol.ts';
+
+const repositoryRoot = fileURLToPath(new URL('../../../../', import.meta.url));
 
 type Row = Record<string, SQLOutputValue>;
 type PersistedSnapshot = {
@@ -87,13 +90,14 @@ class Peer {
             process.execPath,
             [
                 '--import',
-                resolve('register-paths.mjs'),
+                resolve(repositoryRoot, 'register-paths.mjs'),
                 resolve(
+                    repositoryRoot,
                     'apps/orchestrator/openshell/provider-lifecycle/crash-child.ts',
                 ),
                 role,
             ],
-            { cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe', 'ipc'] },
+            { cwd: repositoryRoot, stdio: ['pipe', 'pipe', 'pipe', 'ipc'] },
         );
         this.exit = new Promise((resolve, reject) => {
             this.child.once('error', (error) => {

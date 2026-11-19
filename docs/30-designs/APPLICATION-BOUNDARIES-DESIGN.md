@@ -82,4 +82,10 @@ OpenShell Gateway interceptor 的固定源码白名单可以管理部分一元�
 
 写句柄只能经官方 `ctx.agents.create/resume` 获取，AgentLoop 保存 constructor/setup suffix，避免裸 prepare/enter 遗漏 seed marker。官方 checkpoint policy 在 pre-step/model dispatch 前调用 `ctx.sessions.flush`，经生产 RemoteSession→真实 HTTP persistenceIngress/WorkerGate→SessionHistory SQLite 完成 stage/append/reconcile/flush；正常轮末再显式等待 checkpoint，然后先处置 Agent 再关闭 root Context。两库同路径重开后官方 resume 保留原历史并允许合法新代续写。
 
-测试代理原样转发生产 ingress，只在上游 append 成功且独立 SQL 确认提交后丢一次下游响应，用原 Provider pending 批次验证原回执重投。三种旧代操作各用独立活句柄，分别观察真实授权拒绝；append 在 stage 入口已被拒，不将该结果描述为 backend append 分支已执行。数据库、HTTP 和官方生命周期为真实实现；模型与沙盒观察为受控 fixture。实际结果与未覆盖的事务强杀、自主发现及外部故障接管见 [A2 Readiness 证据](../40-readiness/CURRENT-READINESS.md#a2-官方-provider-本地验收)。
+测试代理原样转发生产 ingress，只在上游 append 成功且独立 SQL 确认提交后丢一次下游响应，用原 Provider pending 批次验证原回执重投。三种旧代操作各用独立活句柄，分别观察真实授权拒绝；append 在 stage 入口已被拒，不将该结果描述为 backend append 分支已执行。数据库、HTTP 和官方生命周期为真实实现；模型与沙盒观察为受控 fixture。实际结果及外部边界见 [A2 Readiness 证据](../40-readiness/CURRENT-READINESS.md#a2-官方-provider-本地验收)。
+
+[A2-04/05崩溃恢复验收](../../apps/orchestrator/openshell/provider-crash.test.ts)复用[共享官方runtime](../../apps/orchestrator/openshell/provider-lifecycle/runtime.ts)，由[独立子进程](../../apps/orchestrator/openshell/provider-lifecycle/crash-child.ts)运行真实持久化host与官方DSH caller。子进程入口及cwd从import.meta.url定位仓库根目录，根focused与Orchestrator聚合入口一致。COMMIT前后分别真实SIGKILL持久化进程；caller另在stage/append已提交、下游ACK尚未收到时SIGKILL。测试专用包装仅在子进程拦截公开DatabaseSync.exec边界，不增加生产debug endpoint或复制生产事务写SQL；独立readOnly的priorCommitted与事务自身transactionView分开，合法先提交批次逐项核对，重开四表无半批。
+
+正式恢复沿`runDshWorker`的prior分支，在交给官方AgentLoop前调用`reconcileSessionPersistence`；RemoteSession只用当前Session open(write)→无batch参数reconcile→close。控制面先通过takeover/admit撤旧句柄并授予新代，持久intent仍由SessionHistory自行读取；未提交时以新代提交，已提交时按intent.epoch找到并复用旧receipt，随后删除intent。父进程/旧caller不得向新Worker提供batch/events/receipt来协助发现。共享runtime唯一显式处置AgentHandle与root Context；测试bootstrap以小包装委托官方Agent，WeakMap映射回真实Session作flush identity校验，不伪造或过滤历史。snapshot局部类型适配只校验生产实际消费字段，保留官方header.reason字符串，不能当作完整SDK/生产窄shape兼容证明。
+
+四场景均要求同双库重开、SQL/Provider读回及合法新代正常轮，reconcile本身的seq/revision/receipt变化与之后官方resume后缀单独核对。模型、沙盒观察和bootstrap仍为fixture；本地强杀不等于真实外部OpenShell故障接管或独立停止证明，实际证据见[Readiness](../40-readiness/CURRENT-READINESS.md#a2-崩溃恢复本地验收)。
