@@ -5818,3 +5818,215 @@ test(
         assert.equal((await api(separate + '/events')).body.items.length, 4);
     },
 );
+
+test(
+    'Task terminal results preserve four checks, empty bytes and unavailable gates across reopen',
+    { timeout: 15_000 },
+    async (t) => {
+        const state = await mkdtemp(join(tmpdir(), 'bento-terminal-results-'));
+        const base = localHost(join(state, 'volume'));
+        const blocked = barrier();
+        const checks = [
+            { name: '通过检查', status: 'passed', output: '安全通过摘要' },
+            { name: '失败检查', status: 'failed', output: '安全失败摘要' },
+            { name: '未运行检查', status: 'not_run', output: null },
+            {
+                name: '无法运行检查',
+                status: 'unavailable',
+                output: '安全不可用摘要',
+            },
+        ];
+        const host: ExecutionHost = {
+            ...base,
+            async worker(request, signal, slot, exit) {
+                if (request.mode === 'execute') {
+                    if (request.prompt === 'blocked') await blocked.promise;
+                    assert(request.publicEventsUrl);
+                    const response = await fetch(request.publicEventsUrl, {
+                        method: 'POST',
+                        headers: {
+                            authorization: 'Bearer ' + request.grant.token,
+                            'content-type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            items: checks.map((check, offset) => ({
+                                offset,
+                                kind: 'check',
+                                ...check,
+                            })),
+                        }),
+                        signal: AbortSignal.timeout(3000),
+                    });
+                    assert.equal(response.status, 200);
+                    await response.body?.cancel();
+                }
+                return base.worker(
+                    request.prompt === 'blocked'
+                        ? { ...request, prompt: 'noop' }
+                        : request,
+                    signal,
+                    slot,
+                    exit,
+                );
+            },
+        };
+        let service = await start(state, host);
+        t.after(async () => {
+            blocked.resolve();
+            await service.close();
+            await rm(state, { recursive: true, force: true });
+        });
+        async function api(
+            path: string,
+            owner = 'account-a',
+            method = 'GET',
+            body?: unknown,
+        ) {
+            return fetch(service.url + '/v1' + path, {
+                method,
+                headers: {
+                    authorization: 'Bearer ' + testToken,
+                    'x-bento-owner-id': owner,
+                    ...(body === undefined
+                        ? {}
+                        : {
+                              'content-type': 'application/json',
+                              'idempotency-key': randomUUID(),
+                          }),
+                },
+                ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+                signal: AbortSignal.timeout(5000),
+            });
+        }
+        async function json(path: string) {
+            const response = await api(path);
+            assert.equal(response.status, 200);
+            return response.json();
+        }
+        async function create(prompt: string) {
+            const response = await api('/tasks', 'account-a', 'POST', {
+                id: null,
+                name: 'Terminal fixture',
+                sourceSpaceId: null,
+                inputFiles: [],
+                inputManifest: [],
+                inputDigest: snapshotSha256([]),
+            });
+            assert.equal(response.status, 202);
+            const task = (await response.json()).task.id as string;
+            const root = '/tasks/' + task;
+            await until(
+                () => json(root),
+                (value) => value.task.status === 'ready',
+                'terminal Task ready',
+            );
+            const run = await api(root + '/runs', 'account-a', 'POST', {
+                prompt,
+            });
+            assert.equal(run.status, 202);
+            return { root, path: root + '/runs/' + (await run.json()).run.id };
+        }
+        async function capture(path: string, empty: boolean) {
+            const { result } = await json(path + '/results');
+            assert.equal(result.version, 1);
+            assert.equal(result.runId, path.split('/').at(-1));
+            assert.deepEqual(result.checks, checks);
+            const patches: Record<string, string> = {};
+            for (const view of ['incremental', 'cumulative'] as const) {
+                const preview = await api(
+                    path + '/results/1/diff?view=' + view,
+                );
+                const download = await api(
+                    path + '/results/1/diff?view=' + view + '&download=1',
+                );
+                assert.equal(preview.status, 200);
+                assert.equal(download.status, 200);
+                assert.match(
+                    preview.headers.get('content-type') ?? '',
+                    /^text\/plain/,
+                );
+                assert.equal(
+                    download.headers.get('content-disposition'),
+                    'attachment; filename="changes.patch"',
+                );
+                const bytes = Buffer.from(await preview.arrayBuffer());
+                assert.deepEqual(
+                    bytes,
+                    Buffer.from(await download.arrayBuffer()),
+                );
+                assert.equal(bytes.length === 0, empty);
+                assert.equal(
+                    createHash('sha256').update(bytes).digest('hex'),
+                    result[view + 'Sha256'],
+                );
+                patches[view] = bytes.toString('utf8');
+                assert.equal(
+                    (
+                        await api(
+                            path + '/results/1/diff?view=' + view,
+                            'account-b',
+                        )
+                    ).status,
+                    404,
+                );
+            }
+            assert.equal(
+                (await api(path + '/results', 'account-b')).status,
+                404,
+            );
+            return { result, patches };
+        }
+        const empty = await create('noop');
+        await until(
+            () => json(empty.path),
+            (value) => value.run.status === 'succeeded',
+            'empty result published',
+        );
+        const beforeEmpty = await capture(empty.path, true);
+        const changed = await create('fixture change');
+        await until(
+            () => json(changed.path),
+            (value) => value.run.status === 'succeeded',
+            'nonempty result published',
+        );
+        const beforeChanged = await capture(changed.path, false);
+        for (const { root } of [empty, changed]) {
+            const { items } = await json(root + '/events');
+            assert.deepEqual(
+                items
+                    .filter((event: { kind: string }) => event.kind === 'check')
+                    .map((event: { check: unknown }) => event.check),
+                checks,
+            );
+        }
+        const pending = await create('blocked');
+        await until(
+            () => json(pending.path),
+            (value) => value.run.status === 'running',
+            'pending Run running',
+        );
+        assert.equal((await json(pending.path)).run.resultVersion, null);
+        for (const suffix of [
+            '/results',
+            '/results/1/diff?view=cumulative',
+            '/results/1/diff?view=incremental&download=1',
+        ]) {
+            const unavailable = await api(pending.path + suffix);
+            assert.equal(unavailable.status, 409);
+            assert.equal(
+                (await unavailable.json()).error.code,
+                'diff_unavailable',
+            );
+        }
+        blocked.resolve();
+        await until(
+            () => json(pending.path),
+            (value) => value.run.status === 'succeeded',
+            'barrier released',
+        );
+        await service.close();
+        service = await start(state, host);
+        assert.deepEqual(await capture(empty.path, true), beforeEmpty);
+        assert.deepEqual(await capture(changed.path, false), beforeChanged);
+    },
+);

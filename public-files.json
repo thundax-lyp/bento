@@ -143,7 +143,10 @@
         "apps/workspace/api/go/oidc.go",
         "apps/workspace/api/go/projects.go",
         "apps/workspace/api/go/space_storage.go",
-        "apps/workspace/api/go/space_storage_test.go"
+        "apps/workspace/api/go/space_storage_test.go",
+        "apps/workspace/web/acceptance/terminal-results-fixture.ts",
+        "apps/workspace/web/acceptance/web-terminal-results.spec.ts",
+        "apps/workspace/web/playwright.web-terminal-results.config.ts"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",

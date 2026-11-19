@@ -37,12 +37,15 @@ import assert from 'node:assert/strict';
 export let original;
 export let args;
 export const calls = [];
-const events = [
+const baseEvents = [
     {type:'tool/call',data:{name:'bento_workspace_check',arguments:'synthetic-secret'}},
     {type:'tool/result',data:{meta:{bentoWorkspaceCheck:{version:1,outcome:'pass'}}}},
     {type:'turn/end',data:{reason:{kind:'completed'}}},
 ];
 export default function create(request,effect) {
+    const events = request.prompt === 'four-checks'
+        ? [...baseEvents.slice(0, 2), {type:'tool/result',data:{privateDiagnostic:'synthetic-secret'}}, baseEvents[2]]
+        : baseEvents;
     calls.length = 0;
     args = [request,effect];
     let submitted = false;
@@ -80,7 +83,9 @@ export default function create(request,effect) {
         },
         trustedTaskChecks(input) {
             assert.equal(this,runtime); assert.deepEqual(input,events); calls.push('proofs');
-            return [];
+            return request.prompt === 'four-checks'
+                ? ['pass','fail','skip','unavailable'].map((outcome,offset)=>({version:1,offset,outcome}))
+                : [];
         },
     };
     if (request.prompt==='missing proof') delete runtime.trustedTaskChecks;
@@ -249,6 +254,53 @@ test('bootstrap resolves only a distinct absolute module and preserves the under
                 ]);
             }
             assert.equal(batches.length, 2);
+            batches.length = 0;
+            assert.equal(
+                await runDshWorker(
+                    { ...reachable, prompt: 'four-checks' },
+                    bootstrap,
+                ),
+                'completed',
+            );
+            assert.deepEqual(batches, [
+                {
+                    items: [
+                        {
+                            offset: 0,
+                            kind: 'check',
+                            name: '工作区内容检查',
+                            status: 'passed',
+                            output: '内容与预期一致',
+                        },
+                        {
+                            offset: 1,
+                            kind: 'check',
+                            name: '工作区内容检查',
+                            status: 'failed',
+                            output: '内容与预期不同',
+                        },
+                        {
+                            offset: 2,
+                            kind: 'check',
+                            name: '工作区内容检查',
+                            status: 'not_run',
+                            output: null,
+                        },
+                        {
+                            offset: 3,
+                            kind: 'check',
+                            name: '工作区内容检查',
+                            status: 'unavailable',
+                            output: '无法读取检查目标',
+                        },
+                    ],
+                },
+                { items: [] },
+            ]);
+            assert.equal(
+                JSON.stringify(batches).includes('synthetic-secret'),
+                false,
+            );
         },
     );
 });

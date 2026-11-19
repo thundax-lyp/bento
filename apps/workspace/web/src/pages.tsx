@@ -1515,7 +1515,7 @@ function TaskDetailsContent({ account, id }: { account: string; id: string }) {
                                     </Button>
                                 </div>
                             )}
-                            {selected.resultVersion !== null && (
+                            {selected.resultVersion !== null ? (
                                 <TaskRunResult
                                     key={
                                         selected.id +
@@ -1525,6 +1525,8 @@ function TaskDetailsContent({ account, id }: { account: string; id: string }) {
                                     account={account}
                                     run={selected}
                                 />
+                            ) : (
+                                <p role="status">结果尚不可用。</p>
                             )}
                         </>
                     )}
