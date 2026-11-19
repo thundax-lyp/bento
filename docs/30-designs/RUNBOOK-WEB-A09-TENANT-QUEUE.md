@@ -183,10 +183,12 @@ export default defineConfig({
 
 spec 只设一个完整有序测试 `WEB-A09: three authenticated tenants isolate queue capacity from physical multipart uploads`，beforeEach 启动 fixture，afterEach 始终 await close 并传播异常。创建三个 browser.newContext/page，依次为 A=demo、B=guest、C=registration-demo 注册登录；每个账号严格执行：`password=randomUUID()` 仅存在测试内存（36字符，符合15–128字符且不同于邀请码）；goto('/login') → 点击 link“使用邀请码注册” → 定位包含 heading“受邀注册”的 form → 依次填 label“账号”=该 account、“邀请码”=demo-invite、“新密码”=password → 点击该 form 中 exact button“注册” → 等 URL `/login(?:\?|$)` → 填 label“账号”与 exact label“密码”=同一 password → 点击 exact button“登录” → 等 label“任务名称”可见。三次顺序完成，不并行触发密码哈希限流；不打印密码/邀请码/hash/cookie。注册所用 fixture account/owner 映射只从 accounts 返回值取，不重新分配身份。不得 route mock 业务响应。请求上下文复用各自 cookie；API mutation 的 Origin 字面为 `http://127.0.0.1:4364`。
 
+T2 STOP/作者修订依据：2026-11-19 Chromium实际返回 `Cannot set buffer larger than 50Mb, please write it to a file and pass its path instead.`；原Buffer直接选择100MB不可执行。仅将选件方式改为先写真实100MB临时文件后传路径，保持六分块、字节数、HTTP/worker/SQLite/额度与下载摘要全部断言，待MASTER复审后继续。
+
 固定顺序与必须断言：
 
 1. 六个空白Task A0/A1/A2/A3/B0/C0 均从页面创建并等ready；账户列表互不可见，B/C GET A Task为404。此时Task/creationReceipts各为A4/B1/C1，Runs/events/retryAttempts为0，worker/occupied均0。
-2. A空间页面新建项目并选择真实100_000_000字节文件，用 setInputFiles 的Buffer，不伪造元数据；点击正常上传，等待storage.waitHeldPart。断言part1字节16_777_216、inFlight≥1、上传状态非saved、reserved100_000_000、saved0；业务表计数和occupied0/worker0与上传前一致。实际partsWritten可含其他并行块，不把“未回包”视为没有上传。
+2. A空间页面新建项目并选择真实100_000_000字节文件，测试先 mkdtemp 创建自有选择目录，将 big Buffer 的100_000_000字节写入 big.bin，再 setInputFiles(绝对文件路径)，不伪造元数据；该选择目录在spec finally关闭contexts后rm并assert ENOENT（失败也清理），fixture存储目录所有权不变；点击正常上传，等待storage.waitHeldPart。断言part1字节16_777_216、inFlight≥1、上传状态非saved、reserved100_000_000、saved0；业务表计数和occupied0/worker0与上传前一致。实际partsWritten可含其他并行块，不把“未回包”视为没有上传。
 3. 在同一A会话HTTP开始第二个100_000_000字节上传（同大小摘要列表，独立路径/id），只预占不PUT。reserved恰200_000_000；再开始独立1字节上传返回409 space_quota及固定文案，上传总数与reserved不增，存储调用不增，执行观察不变。A第二page刷新空间，选择1字节显示“账号可用额度不足。”，不触发上传POST；原上传page保持在途。
 4. 仍持有上传gate：A0页面发送noop，等实际worker进入且Store running，activeWorkers=occupied.length=1；A1/A2分别发送得到202且queued，A排队数2、总Run3，证明running未占排队名额。保存A1实际Idempotency-Key/body/receipt。捕获A3实际key/body；A3发送收到429 tenant_queue_full及固定队列文案；页面提示可见且与空间提示不等。比较拒绝前后同一owner业务表、enteredRuns完全不变，无Run/event/retryAttempt/receipt半写，A3 Task仍可读。任务要求文本保留、按钮恢复可操作。
 5. A满额时B0/C0各自页面发送，均202且各queued1，A queued仍2；未执行B/C并非拒收。各列表与SQLite owner一致，三个会话看到自己的Run且读别人的Run为404；worker仍只有A0，peak1。使用A1原key/body经A会话HTTP重放，返回200相同Run，所有计数不增。上传仍inFlight，reserved不变；此前每次上传观察不能让worker计数单独增长。
