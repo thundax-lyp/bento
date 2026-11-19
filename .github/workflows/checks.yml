@@ -143,3 +143,4 @@ jobs:
             - run: pnpm --filter @bento/web exec playwright install --with-deps --only-shell chromium
             - run: pnpm --filter @bento/web test:e2e
             - run: pnpm --filter @bento/web test:space-integrity
+            - run: pnpm --filter @bento/web test:queue-isolation

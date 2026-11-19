@@ -156,24 +156,13 @@ T1 已完成：两个独立fixture已落地；web typecheck、两个fixture esli
 
 完整Chromium场景1 passed /0 skipped（6.9秒，命令8.0秒）；typecheck和focused eslint PASS。三独立cookie账号A/B/C正常注册登录；A运行1+排队2，A3的429无Run/event/receipt/attempt新增，B/C各202排队1；容量释放后原拒绝键可202并仅一次执行，重放200/异内容409。100MB物理文件选择、六分块HTTP上传、part1在途0槽；额度200MB+1字节409和页面区分；上传完成、取消预占、1字节复用前后执行snapshot完全一致，下载100MB SHA256=83d30385a4a11980275dc23de3fb49ff37b906cc841efa048a96c62d90ff3b5f。6个Run全succeeded/各进入一次，最终0worker/occupied/queued、peak1。物理选件目录及fixture目录finally清理；端口重新bind PASS。测试用expect.poll等待并行批次其余3块落盘后比较quota拒绝的存储计数，排除原传输继续写入造成的观测竞争，未降低断言。对应提交为包含本记录的 `Test(task-entry): 验证三账号队列和上传槽位隔离`。
 
-## T3：专用验收纳入CI与公开边界
+## T3 已通过的执行前置事实
 
-前置状态：上述T2完整场景能力提交可回读。允许修改：web/package.json、checks.yml、public-files.json、本RUNBOOK；专门核对新config/spec/两个fixture（合计8文件）。禁止根package.json files与依赖/锁文件变化。
-
-执行：web scripts新增 `test:queue-isolation` = `playwright test --config playwright.web-queue-isolation.config.ts`。现有 Web Chromium E2E job 在 test:space-integrity 后新增独立 run `pnpm --filter @bento/web test:queue-isolation`；沿用已有受影响路径选择和Chromium安装，不改job名/保护规则。public-files.json精确登记4个新文件（两个fixture、spec、config）；本临时RUNBOOK不属于产品公开文件，不登记，最终无RUNBOOK公开条目。不得添加目录通配。
-
-```bash
-pnpm --filter @bento/web test:queue-isolation
-pnpm format:check
-npm pack --dry-run --json > /tmp/bento-b-web-a09-pack.json
-git diff --check
-```
-
-PASS：场景完整通过；格式/diff退出0；新文件均在公开精确白名单，npm files不变且包清单无fixture/临时状态/凭据。STOP：workflow遗漏、未触发检查被算成功、打包扩大或未知产物。测试副作用按fixture finally清理；不删除用户临时文件。提交 `CI(ci): 纳入租户队列独立验收`。
+web/package.json 的 test:queue-isolation、Web Chromium E2E job独立run及public-files四个精确路径已接线；专用命令完整1 passed/0skip（6.9秒，命令7.9秒），format:check、pack dry-run（110文件、无新fixture且根files不变）、diff --check PASS。对应提交为包含本记录的 `CI(ci): 纳入租户队列独立验收`。T4仍须固定完整验证及证据迁移，不能以该focused结果替代。
 
 ## T4：完整验证、证据迁移与RUNBOOK删除
 
-前置状态：T3提交；前面代码版本可回读；MASTER确认与A的合入顺序。允许修改：Readiness、本RUNBOOK、public-files.json（仅清除本RUNBOOK条目）；专门核对spec、checks.yml（合计5文件）。禁止修改其他Readiness场景、A6-04或A负责行。
+前置状态：上述T3接线提交可回读；前面代码版本可回读；MASTER确认与A的合入顺序。允许修改：Readiness、本RUNBOOK、public-files.json（仅清除本RUNBOOK条目）；专门核对spec、checks.yml（合计5文件）。禁止修改其他Readiness场景、A6-04或A负责行。
 
 ```bash
 pnpm check
