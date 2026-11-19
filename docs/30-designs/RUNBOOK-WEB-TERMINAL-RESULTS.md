@@ -65,62 +65,9 @@ Readiness 记载 2026-11-17 `36ab687` 加私有 Worker 的 WEB-A13 1/1：两轮�
 
 各步文件数包含本 RUNBOOK 与专门只读核对文件。执行期间通用工具加载不额外扩大该步业务核对清单。所有命令从仓库根执行。
 
-### T0：作者核对基线和复用边界（单列）
-
-允许修改：仅本 RUNBOOK。专门核对：WEB-REQUIREMENTS、WEB-INTERFACE、WEB-DESIGN、CURRENT-READINESS、ENVIRONMENTS.example.md、受控环境文件（合计 7）。
-执行：核对 Git 干净、main 与派工基线；同一内容获 MASTER Executable 后才开计划分支并独立提交 RUNBOOK。B 根 ENVIRONMENTS.md 缺失，已按派工受控读取主 checkout 环境文件，未复制值、未连接服务。检查原 A13 记录的适用代码差异；检查 T4 的 4333/4334 均可绑定、已安装的 Playwright/Chromium 和 SQLite 运行依赖可用。T4 启动前重复端口检查；占用时 STOP，不接管或停止已有服务。本任务不要求为每种展示状态跑真实模型。成功非空和只读完整实栈事实仅复用 Readiness 所引用原件，无法取得原件则记录未复用，仍以本轮完整本地链路证明当前结果展示，不把本地写成真实模型。
-验证：
-
-```bash
-git status --short --branch
-git rev-parse HEAD
-git diff 36ab687..HEAD -- apps/worker/task-projection.ts apps/orchestrator/execution-service/http.ts apps/orchestrator/execution-service/store.ts apps/workspace/web/src/pages.tsx
-git diff --check
-node --input-type=module <<'JS'
-import { createServer } from 'node:net';
-for (const port of [4333, 4334]) {
-    const server = createServer();
-    await new Promise((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(port, '127.0.0.1', resolve);
-    });
-    await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-}
-JS
-pnpm --filter @bento/web exec node --input-type=module -e "import { access } from 'node:fs/promises'; import { chromium } from '@playwright/test'; import { DatabaseSync } from 'node:sqlite'; await access(chromium.executablePath()); const db = new DatabaseSync(':memory:'); db.close();"
-```
-
-PASS：端口与本地依赖检查退出 0；基线与归属核对、正式需求没有逐状态强制实栈、MASTER 对最终稿 Executable；另显式 worker 开工。A 主线变化影响执行时只复审受影响步骤。
-STOP：内容/基线变化影响范围、正式依据冲突或本地依赖不能执行。无外部副作用，不回滚旧现场。
-提交边界：通过审核后独立 RUNBOOK 提交。
-
-### T4：独立实际 HTTP 与页面结果链验收
-
-前置：上一 STEP 已提交最小不可用提示及独立 mock 结果矩阵，Web typecheck 和完整 Chromium 22/22 通过。本地 fixture 不占 Docker/OpenShell/身份实栈窗口。
-允许修改：新 `apps/workspace/web/acceptance/web-terminal-results.spec.ts`、新 `apps/workspace/web/acceptance/terminal-results-fixture.ts`、新 `apps/workspace/web/playwright.web-terminal-results.config.ts`、`public-files.json`、本 RUNBOOK。
-专门只读：`apps/orchestrator/execution-service/local.ts`、`apps/workspace/api/server.ts`、`apps/workspace/api/auth.ts`、`apps/workspace/api/execution-service-http.ts`、`apps/workspace/api/account-store.ts`，合计 10 文件。
-执行：
-
-1. T4 启动前重复 T0 的端口检查命令，4333/4334 任一占用即 STOP。配置仅选择 web-terminal-results.spec.ts，Chromium workers=1/retries=0，timeout=120000；固定 `use: { baseURL: 'http://127.0.0.1:4334', trace: 'off', video: 'off', screenshot: 'off' }`，固定 `webServer: { command: 'pnpm dev --host 127.0.0.1 --port 4334 --strictPort', url: 'http://127.0.0.1:4334', env: { BENTO_API_TARGET: 'http://127.0.0.1:4333' }, reuseExistingServer: false }`。`--strictPort` 禁止端口自动漂移；配置中只启动 Vite，不启动 API。API 4333 仅由 spec 的 beforeAll 调用一次 helper 启动、afterAll 调用 close，helper 绑定失败即报错，不复用已有 API。不改原 web-a13 和默认配置。
-2. helper 导出 `startTerminalResultsFixture():Promise<{seedFailure(taskId:string):Promise<string>;close():Promise<void>}>`。创建 mkdtemp 私有目录，serveExecution 使用 localHost、固定合成 service bearer、retryMs=20、workerTimeoutMs=15000。taskEntryServer 使用端口4333、origin4334、sessionAuth(mockAccounts(demoAccounts()),false,false) 与 httpBackend(service.url,bearer,5000)，不带 OIDC/space。UI 走实际 API/server/DTO 映射，不用 page.route 伪造任务 JSON。注册 demoAccounts 中的 demo 账号（demo-invite、运行时 randomUUID 密码），再按既有登录表单登录，不输出密码。helper 保留该 demo.ownerId 以准备同 owner 样本；backend 使用可替换闭包，执行服务重启后重建 httpBackend 而保持公开 API 和登录会话。
-3. 仅 localHost.worker fixture 边界选择五个精确 prompt：`terminal-nonempty` 调用 base.worker 写该合成文本；`noop` 调用 base.worker 保持空白；`terminal-checks` 经 projectTaskChecks(4,[],四个 version=1/offset=0..3/outcome=pass,fail,skip,unavailable) 后用实际 grant POST publicEventsUrl，确认200，再以复制 request 且 prompt=noop 调用 base.worker；`terminal-unavailable` 等待 fixture barrier，供页面观察未完成状态；`terminal-failed` 是显式状态注入 fixture，不运行模型。失败样本从页面创建独立空白 task 并等待 ready，不向其发送 prompt；helper.seedFailure(taskId) 先 close 执行服务，new Store(join(state,'business.sqlite'),16)，调用 enqueueTaskRun(demo.ownerId,taskId,randomUUID(),'terminal-failed') 得到 {run}，再 Store.status(run.id,'failed','Run stopped before completion.')，Store.close()；重开 serveExecution 后更新 backend 闭包并返回 run.id。页面直接打开该 Task/Run 地址，由实际查询读取。这一摘要与 service.ts::settle 的公开固定失败摘要一致；注入的终态本身不是生产故障处理证据。注入必须在服务关闭、锁释放后进行，禁止在运行时直接 UPDATE 或更改生产状态机。failed fixture 精确准备的 Store 方法签名已核对；基线变化使签名不符则 STOP，交作者修订。
-4. 正常页面创建空白任务、发送上述要求、选择 Run，分别读取结果和点击下载。空任务各建独立 Task，避免跨轮累计补丁影响空结果。非空/空/四状态都从 Worker/Store 经实际私有 HTTP、httpBackend/public DTO 到页面，不只 mock 页面 JSON。尚不可用样本在 barrier 释放前 resultVersion=null，无下载；补充 GET results/diff 均409。测试 teardown 先释放 barrier，再 close 服务和 API，最后只删该 mkdtemp 目录。
-5. 两种 view 均比较 metadata SHA、预览响应和下载文件 Buffer，附件名 changes.patch。空结果必须 Buffer.length=0、页面无变更且无尚不可用。failed 固定公开原因且无下载。四状态 checks/events/页面标签和固定输出分别精确比对，不用“包含通过”代替逐项断言。私有金丝雀只放在被拒绝的额外字段或 fixture 私有诊断，不放进合法公开正文；检查公开 API/DOM/补丁无该值。不得声称对任意原始合法公开文本进行通用脱敏。
-6. 报告明确标记 synthetic Worker/身份/本地卷；真实执行的是生产投影、HTTP、SQLite、API mapper 和浏览器消费。真实模型、OpenShell、OIDC、S3 本轮 Not Covered，已有 A13 事实按适用版本另列。
-
-验证：
-
-```bash
-pnpm --filter @bento/web exec playwright test --config=playwright.web-terminal-results.config.ts --project=chromium
-```
-
-PASS：四种结果和四种检查全部逐项通过，无 skip；公开 API、结果与 DOM 一致，字节/SHA 一致，重开失败记录正确；没有真实模型或部署声明。
-STOP：本地端口已占用、fixture 无法经真实服务器启动、需绕过鉴权/版本/结果门禁、无法按现有 Store API 注入已关闭服务的独立失败样本。不自行换成页面 JSON mock。无共享资源副作用。
-提交边界：`Test(task-entry): 验收终态结果和非通过检查展示`，同次删除 T4。
-
 ### T5：完整复验与独立证据收口
 
-前置：T4 已提交、已采用证据的版本边界准确、已纳入 A 的最新 main 并经 MASTER 核对共享行为。若 A 尚未合入，在已提交 T4 的安全点等待并保留只剩 T5 的 RUNBOOK；不得把等待当作前置已满足，不执行 T5、不删除 RUNBOOK、不宣告收口。merge 不改写历史，冲突涉及 A 控制区先 STOP。
+前置：上一 STEP 已提交独立 HTTP/Store/DTO/Chromium 验收，1/1 通过、Web typecheck 和定向 ESLint 通过；已采用证据的版本边界准确、已纳入 A 的最新 main 并经 MASTER 核对共享行为。若 A 尚未合入，在已提交独立验收 STEP 的安全点等待并保留只剩 T5 的 RUNBOOK；不得把等待当作前置已满足，不执行 T5、不删除 RUNBOOK、不宣告收口。merge 不改写历史，冲突涉及 A 控制区先 STOP。
 允许修改：CURRENT-READINESS.md、本 RUNBOOK。
 专门只读：WEB-DESIGN.md、README.md、deploy/README.md（均为现有正式路径），合计 5。
 执行：记录日期、准确源码/Worker 版本、环境摘要、各用例结果、已有证据复用边界及未覆盖项。Readiness 仅改 WEB-06-02 和 WEB-08-04 行；父汇总变化交 MASTER 协调，不覆盖 A 内容。未改架构/启动/发布方式，核对三份入口文档后记录无需改写。将适中长度的分项证据直接写入这两行说明列，不新增独立证据文档；不含本机路径、真实身份或连接参数。
