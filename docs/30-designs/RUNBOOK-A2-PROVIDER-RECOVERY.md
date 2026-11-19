@@ -2,7 +2,7 @@
 
 ## 状态与工作边界
 
-- 状态：MASTER 已审核 Executable 并显式启动 worker；T1、T2、T3 已 PASS。
+- 状态：MASTER 已审核 Executable 并显式启动 worker；T1、T2、T3、T4 已 PASS。
 - 建立日期：2026-11-19。作者 checkout：`bento-b`；基线 `104be8f5139c1100e3e5949bf3478f66f175e274`，`main=origin/main`。
 - 本轮只新增本地验收 fixture/test、锁定其官方依赖、同步相关设计和 Readiness。生产代码只读。计划执行分支固定为 `codex/a2-provider-recovery`，顺序固定为：MASTER 审核为 Executable→MASTER 单独派发建立该分支并只提交本 RUNBOOK→回读计划 commit 与文件 SHA256→MASTER 显式调用 `$bento-runbook-worker` 开工。建分支和仅提交计划属于开工前独立阶段，不属于 T1；获审计划提交为 `4278b4fee05fef0d71c1e9a2d12881abe4fb9ecf`，当前已处于该分支。
 - MASTER 主 checkout 不属于 WORKER；A checkout、旧 Docker/OpenShell、远端环境、IdP、S3、外部模型均禁止写入。A 独占 `service.ts` 的 retryReason/advanceTaskRetry、既有 service retry suite、外部 checkpoint 验收窗口。
@@ -218,27 +218,9 @@ PASS：MASTER 独立审核本草稿为 Executable，且确认上述基线/T0 适
 
 ## 机械步骤
 
-### T4：提交 ACK 丢失后原批次重投
-
-前置状态：三项独立旧代拒绝已提交；A2-02 focused 3/3、typecheck通过。三个独立活 handle 首次操作分别观察 stage/flush/close HTTP403，SQL/authority不变，预定撤权dispose错误及清理断言全部通过。fixture 可观察完整真实转发。
-允许修改：fixture.ts、provider-lifecycle.test.ts、本 RUNBOOK。
-专门核对：以上 3 + remote-session.ts、session-history.ts、persistence-ingress.ts，共 6。
-禁止修改：生产 ingress/Provider、pending/buffer/seq、mock fetch/假回执。
-
-执行：新增 `A2-03 lost append ACK reuses durable batch and receipt`，timeout 30_000，新 fixture/start1/create。create 已成功后 dropNextAppendAck；followup 固定 userMessage，await whenIdle（允许官方 checkpoint fail-closed 结束该 turn），await waitForDroppedAck；此时 adapter 调用数不作 completed 要求。捕获唯一 dropped append 的原请求/原完整 200 receipt，SQL 独立确认 committed receipt/events，intents 可仍有该批。调用 `writer.flush()` 作为唯一显式重投；此时无其他新输入，后续自动 drain 若已经完成重投也应从 trace 取得同批两次 append 证据，flush 必须最终成功。断言 dropped 前上游已200；同 batch 原始 events 字节/重算 digest 不变；两次 append receipt deepEqual；批主键 receipt 恰1、events 对应 seq 每项恰1、首个 append 的 trace.after.sessions[0].revision 比 before 加1，重投 append 的 after.revision 与 before 相同（只在该次转发边界比较，不把其他官方批次算入）；reconcile 后 intents 空。close→takeover1→reopen→start2/resume，原批 events/receipt 不变；再一正常 turn/checkpoint 通过。finally 正常 close/dispose。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --test --test-name-pattern='A2-03 lost' apps/orchestrator/openshell/provider-lifecycle.test.ts
-pnpm --filter @bento/orchestrator typecheck
-```
-
-PASS：1 目标 case 通过；被丢响应实际发生，至少2次同批 append，原回执/单份历史/同库重开均断言。STOP：未发生故障、丢在提交前、事件/批次变更、人工重发 RPC、请求丢失未显式收敛或清理错误；不通过手改序号/重建事件恢复。
-
 ### T5：固定回归、迁移证据并删除计划
 
-前置状态：T2–T4 的五个 case 已逐步提交并全部通过。
+前置状态：T2正常恢复1/1、T3三项stale3/3、T4丢ACK1/1及各自typecheck已通过并逐步提交。丢ACK在真实append200+SQL事件/回执确认后触发；同批次请求/回执字节相同、重投不加revision、事件/receipt单份、reopen及新代正常轮均已断言。五个case准备进入固定全集。
 允许修改：APPLICATION-BOUNDARIES-DESIGN.md、CURRENT-READINESS.md、本 RUNBOOK（删除）。
 专门核对：以上 3 + APPLICATION-BOUNDARIES-REQUIREMENTS.md、provider-lifecycle.test.ts、fixture.ts、apps/orchestrator/package.json、public-files.json、.github/workflows/checks.yml、根 package.json，共 10。
 禁止修改：其他 Readiness 行/其他设计结论、父 A2 标已实现、根 files、远端设置。

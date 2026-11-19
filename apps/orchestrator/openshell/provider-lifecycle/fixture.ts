@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
@@ -243,7 +243,12 @@ export async function createProviderFixture(): Promise<ProviderFixture> {
                 if (dropped) {
                     const parsed = JSON.parse(result) as {
                         ok: boolean;
-                        value: { batch: string };
+                        value: {
+                            batch: string;
+                            digest: string;
+                            first: number;
+                            count: number;
+                        };
                     };
                     assert.equal(upstream.status, 200);
                     assert.equal(parsed.ok, true);
@@ -252,6 +257,24 @@ export async function createProviderFixture(): Promise<ProviderFixture> {
                             (row) => row.batch === parsed.value.batch,
                         ).length,
                         1,
+                    );
+                    const payload = JSON.parse(body) as {
+                        events: SessionEvent[];
+                    };
+                    const committed = after.events.slice(
+                        parsed.value.first,
+                        parsed.value.first + parsed.value.count,
+                    );
+                    assert.equal(committed.length, parsed.value.count);
+                    assert.deepEqual(
+                        committed.map((row) => JSON.parse(String(row.event))),
+                        payload.events,
+                    );
+                    assert.equal(
+                        createHash('sha256')
+                            .update(JSON.stringify(payload.events))
+                            .digest('hex'),
+                        parsed.value.digest,
                     );
                     drop = false;
                     response.destroy();

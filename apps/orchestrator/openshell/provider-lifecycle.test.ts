@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { test } from 'node:test';
+import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { SessionOwnershipLostError } from '@deepseek-ai/dsh-session-persistence';
 import { createProviderFixture } from './provider-lifecycle/fixture.ts';
 
@@ -191,3 +192,131 @@ for (const method of ['append', 'flush', 'close'] as const) {
         },
     );
 }
+
+test(
+    'A2-03 lost append ACK reuses durable batch and receipt',
+    { timeout: 30_000 },
+    async () => {
+        await withFixture(async (fixture) => {
+            const runtime = await fixture.start(1);
+            const handle = await runtime.create();
+            runtime.dropNextAppendAck();
+            handle.agent.followup(
+                createUserMessage({
+                    source: { kind: 'user' },
+                    content: [{ type: 'text', text: 'a2-local-input' }],
+                }),
+            );
+            await handle.agent.whenIdle();
+            assert.equal(runtime.trace.filter((row) => row.dropped).length, 1);
+            await runtime.waitForDroppedAck();
+            const dropped = runtime.trace.find((row) => row.dropped)!;
+            assert.equal(dropped.method, 'append');
+            assert.equal(dropped.status, 200);
+            const request = JSON.parse(dropped.request) as {
+                batch: string;
+                events: Array<{ seq: number }>;
+            };
+            const original = JSON.parse(dropped.response) as {
+                ok: boolean;
+                value: {
+                    epoch: number;
+                    batch: string;
+                    digest: string;
+                    first: number;
+                    count: number;
+                };
+            };
+            assert.equal(original.ok, true);
+            assert.equal(original.value.batch, request.batch);
+            assert.equal(original.value.epoch, 1);
+            assert.equal(original.value.first, request.events[0]?.seq);
+            assert.equal(original.value.count, request.events.length);
+            assert.equal(
+                original.value.digest,
+                createHash('sha256')
+                    .update(JSON.stringify(request.events))
+                    .digest('hex'),
+            );
+            assert.equal(
+                dropped.after.receipts.filter(
+                    (row) => row.batch === request.batch,
+                ).length,
+                1,
+            );
+            assert.equal(
+                Number(dropped.after.sessions[0]!.revision),
+                Number(dropped.before.sessions[0]!.revision) + 1,
+            );
+            assert(runtime.writer);
+            await runtime.writer.flush();
+            const attempts = runtime.trace.filter(
+                (row) =>
+                    row.method === 'append' &&
+                    (JSON.parse(row.request) as { batch: string }).batch ===
+                        request.batch,
+            );
+            assert.equal(attempts.length, 2);
+            const replay = attempts[1]!;
+            assert.equal(replay.status, 200);
+            assert.equal(replay.dropped, false);
+            assert.equal(replay.request, dropped.request);
+            assert.equal(replay.response, dropped.response);
+            assert.deepEqual(JSON.parse(replay.response), original);
+            assert.equal(
+                replay.after.sessions[0]!.revision,
+                replay.before.sessions[0]!.revision,
+            );
+            const state = verifyStored(fixture);
+            assert.equal(
+                state.receipts.filter(
+                    (row) => row.batch === request.batch && row.epoch === 1,
+                ).length,
+                1,
+            );
+            for (const event of request.events)
+                assert.equal(
+                    state.events.filter((row) => row.seq === event.seq).length,
+                    1,
+                );
+            assert.deepEqual(
+                state.events
+                    .slice(
+                        original.value.first,
+                        original.value.first + original.value.count,
+                    )
+                    .map((row) => JSON.parse(String(row.event))),
+                request.events,
+            );
+            await runtime.close();
+            await fixture.controller.takeover(fixture.session, 1);
+            await fixture.reopen();
+            const fresh = await fixture.start(2);
+            const resumed = await fresh.resume();
+            assert.deepEqual(
+                resumed.agent.session
+                    .snapshotEvents()
+                    .slice(
+                        original.value.first,
+                        original.value.first + original.value.count,
+                    ),
+                request.events,
+            );
+            assert.deepEqual(
+                fixture
+                    .snapshot()
+                    .receipts.filter((row) => row.batch === request.batch),
+                state.receipts.filter((row) => row.batch === request.batch),
+            );
+            await fresh.turn();
+            verifyStored(fixture);
+            assert.deepEqual(
+                fixture
+                    .snapshot()
+                    .receipts.filter((row) => row.batch === request.batch),
+                state.receipts.filter((row) => row.batch === request.batch),
+            );
+            await fresh.close();
+        });
+    },
+);
