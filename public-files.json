@@ -146,7 +146,12 @@
         "apps/workspace/api/go/space_storage_test.go",
         "apps/workspace/web/acceptance/terminal-results-fixture.ts",
         "apps/workspace/web/acceptance/web-terminal-results.spec.ts",
-        "apps/workspace/web/playwright.web-terminal-results.config.ts"
+        "apps/workspace/web/playwright.web-terminal-results.config.ts",
+        "apps/workspace/web/src/task-submission.test.ts",
+        "apps/orchestrator/execution-service/task-submission.test.ts",
+        "apps/workspace/web/acceptance/task-submission-fixture.ts",
+        "apps/workspace/web/acceptance/web-task-submission.spec.ts",
+        "apps/workspace/web/playwright.task-submission.config.ts"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",
