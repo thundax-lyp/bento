@@ -3,7 +3,7 @@
 ## 状态与执行边界
 
 - 建立日期：2026-11-19。
-- 状态：`Executable / Implementing`；MASTER审核及计划提交已核对，显式Worker已开工。T1～T5已PASS：真实Happy Path及丢包宿主重启均实际验证，剩余步骤如下。
+- 状态：`Executable / Implementing`；MASTER审核及计划提交已核对，显式Worker已开工。T1～T6已PASS：真实Happy Path、两种丢包重启及失败清理均实际验证，剩余步骤如下。
 - checkout：仅 B；分支 `codex/a6-temporal-retry`，基线 `0f4327470885e32f56296a3afc0ad142d1054a08`，获审计划提交 `acf25388748dc2ac9aeca27af93965c0da5b3cf9`。
 - 授权：按MASTER显式Worker派工逐步实施/提交；生产文件保持只读，外部环境仅本任务隔离本地资源。
 
@@ -407,31 +407,9 @@ business.sqlite 固定查询：`SELECT * FROM runs WHERE id=?`（必须一行）
 
 下列命令 cwd 均为仓库根。各步只有获审 Worker 可执行；本作者回合不执行。验证使用 test-name-pattern 选择已创建的固定用例，允许 Node 对不匹配用例显示未选中，但所选 case 必须实际 PASS、不得 skip；T7/T8 全量运行九项，必须 skip=0。pnpm typecheck 运行时读取的依赖不等于专门人工核对文件预算，专门读文件已逐步穷举。
 
-### T6：同一丢包边界的 server 持久重启与失败清理
-
-前置状态：真实Happy Path提交1b0b5f8c0a786a6774b0edaa6c5fa1408f0664bb已纳入；宿主重启case已实际PASS（原execution、Activity attempt2、一次worker/零recover、原SQL/receipt/文件保持一致且完整close），当前前置提交可回读。
-允许修改：本 RUNBOOK、real-retry.test.ts、process.ts、evidence.ts（4）；专门核对：control-proxy.mjs、host.ts（合计6）。禁止修改：生产重试/HeartbeatTimeout/Workflow参数、数据库Schema和原有测试。
-
-执行：
-
-1. 新增 `A6-02 lost reply reuses receipt across server and host restart`，timeout=240000；prompt=`a6-lost-server-host-`+UUID。完全复用T5 held/独立before/running attempt1/drop/第一host关闭链路；然后server正常SIGINT/close0，端口必须关闭；原server directory/DB保留，不启动第二server或改namespace。
-2. 用原DB/port、createNamespace=false重启，health与原namespace查询通过，再启动modepass第二host；用**原executionID** probe最多60秒等完成，并满足T5全部retry/receipt/SQL/文件断言。第二server/host正常close；最后才删原server DB/临时运行目录，输出case=lost-server-host。
-3. 新增 `A6 cleanup: failed case closes host control and server`，timeout=120000。新server+modepass host ready后，在外层测试体故意抛唯一 `Injected acceptance cleanup failure`，使用 assert.rejects 捕获内层scope原始错误；该内层scope finally必须host/control/proxy/server均close且端口/目录删除，随后才允许外层case PASS。此例不提交业务Run；不把其他异常也匹配成预期错误。验证 shutdown fallback 的直接case仍沿用T2。
-
-验证：
-
-```bash
-BENTO_A6_TEMPORAL_ARCHIVE=/tmp/bento-b-temporal-author-aaOJQ2/release.tar.gz node --import ./register-paths.mjs --experimental-strip-types --test --test-concurrency=1 --test-timeout=1200000 --test-name-pattern='^(A6-02 lost reply reuses receipt across server and host restart|A6 cleanup: failed case)' apps/orchestrator/acceptance/temporal-retry/real-retry.test.ts
-pnpm --dir apps/orchestrator typecheck
-git diff --check
-```
-
-PASS：所选2例均实际PASS，真实server原持久execution恢复并无重复副作用，故障清理例证实异常路径逐层close和目录删除。删除步骤提交 `Test(execution-service): 验证 Temporal 持久重启与验收失败回收`。
-STOP：server重启丢execution/namespace、不得不新建DB/Workflow、cleanup原始错误丢失或自有进程未close；不切memoryserver、不扩大恢复语义。
-
 ### T7：固定本地 CI 门禁与发布边界
 
-前置状态：上述9个固定测试已逐项PASS提交；完整suite尚未作为门禁接线。
+前置状态：工具/代理/probe/正常派发/宿主重启提交链已纳入（最后宿主重启706c7f0312d22fb67fd3432cec076f5d84b8f991）；原server DB重启及故意验收失败清理2/2已PASS，合计9固定case逐项通过，当前前置提交可回读；完整suite尚未作为门禁接线。
 允许修改：本 RUNBOOK、check-package.mjs、apps/orchestrator/package.json、.github/workflows/checks.yml、public-files.json（5）；专门核对：根package.json、real-retry.test.ts、tool.ts（合计8）。禁止修改：根files正向/负向项、依赖/lock、required check名称、外部保护配置。
 
 执行：

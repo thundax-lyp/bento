@@ -437,10 +437,6 @@ async function runScenario(
     kind: 'happy' | 'lost-host' | 'lost-server-host',
     t: TestContext,
 ): Promise<void> {
-    if (kind === 'lost-server-host')
-        throw new Error(
-            'Server restart scenario is not implemented in this step',
-        );
     const retried = kind !== 'happy';
     const directory = await mkdtemp('/tmp/bento-a6-');
     const state = join(directory, 'state'),
@@ -560,7 +556,12 @@ async function runScenario(
             15000,
             t.signal,
         );
-        const prompt = (retried ? 'a6-lost-host-' : 'a6-happy-') + randomUUID();
+        const prompt =
+            (kind === 'lost-server-host'
+                ? 'a6-lost-server-host-'
+                : retried
+                  ? 'a6-lost-host-'
+                  : 'a6-happy-') + randomUUID();
         const accepted = await api(
             '/tasks/' + taskId + '/runs',
             'POST',
@@ -668,6 +669,16 @@ async function runScenario(
             );
             assert.equal(dropped.status, 'running');
             assert.equal(dropped.completed.length, 0);
+            if (kind === 'lost-server-host') {
+                await server.close();
+                server = undefined;
+                server = await startServer(
+                    tool,
+                    join(directory, 'server'),
+                    { port, namespace, createNamespace: false },
+                    t.signal,
+                );
+            }
             host = await startHost(
                 {
                     schema: 1,
@@ -849,4 +860,91 @@ test(
     'A6-02 lost reply reuses receipt across host restart',
     { timeout: 180000 },
     async (t) => runScenario('lost-host', t),
+);
+
+test(
+    'A6-02 lost reply reuses receipt across server and host restart',
+    { timeout: 240000 },
+    async (t) => runScenario('lost-server-host', t),
+);
+
+test(
+    'A6 cleanup: failed case closes host control and server',
+    { timeout: 120000 },
+    async (t) => {
+        const directory = await mkdtemp('/tmp/bento-a6-');
+        let server: Awaited<ReturnType<typeof startServer>> | undefined;
+        let host: Awaited<ReturnType<typeof startHost>> | undefined;
+        let cleaning: Promise<void> | undefined;
+        const failures: unknown[] = [],
+            exits: (number | null)[] = [];
+        const cleanup = () =>
+            (cleaning ??= (async () => {
+                if (host)
+                    try {
+                        await host.close();
+                        exits.push(
+                            (await host.process.closed).code,
+                            (await host.control.process.closed).code,
+                        );
+                    } catch (error) {
+                        failures.push(error);
+                    }
+                if (server)
+                    try {
+                        await server.close();
+                        exits.push((await server.process.closed).code);
+                    } catch (error) {
+                        failures.push(error);
+                    }
+                if (!failures.length)
+                    await rm(directory, { recursive: true, force: true });
+            })());
+        t.after(cleanup);
+        const injected = new Error('Injected acceptance cleanup failure');
+        const inner = async () => {
+            let original: unknown;
+            try {
+                const built = await binaries(t.signal),
+                    port = await freePort(),
+                    namespace = 'bento-a6-' + randomUUID();
+                server = await startServer(
+                    tool,
+                    join(directory, 'server'),
+                    { port, namespace, createNamespace: true },
+                    t.signal,
+                );
+                host = await startHost(
+                    {
+                        schema: 1,
+                        state: join(directory, 'state'),
+                        volume: join(directory, 'volume'),
+                        proxyDirectory: join(directory, 'h1'),
+                        controlBinary: built.control,
+                        address: server.address,
+                        namespace,
+                        taskQueue:
+                            'bento_a6_' + randomUUID().replaceAll('-', ''),
+                        mode: 'pass',
+                    },
+                    t.signal,
+                );
+                throw injected;
+            } catch (error) {
+                original = error;
+            } finally {
+                await cleanup();
+            }
+            if (failures.length)
+                throw new AggregateError(
+                    [original, ...failures],
+                    'Injected case cleanup failed',
+                    { cause: original },
+                );
+            throw original;
+        };
+        await assert.rejects(inner(), (error) => error === injected);
+        assert.deepEqual(exits, [0, 0, 0]);
+        await assert.rejects(stat(directory), { code: 'ENOENT' });
+    },
 );
