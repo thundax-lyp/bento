@@ -1,0 +1,366 @@
+# Web 空间写入完整性与引用删除保护
+
+## 状态与执行者契约
+
+- 状态：Draft，待 MASTER 审核，未获准实施。建立日期：2026-11-19。
+- checkout：仅本任务绑定的 bento-b；基线 `801f087fc32f40cd52e93cab57922d5e4ba1fecf`。获审后分支固定为 `codex/web-space-integrity-deletion`。
+- 起草授权仅允许调查和本文件未提交修改。MASTER 判定同版本 `Executable` 后，先按指令建分支、单独提交本文件，再收到显式 `$bento-runbook-worker RUNBOOK-WEB-SPACE-INTEGRITY-DELETION.md` 才执行 T1。
+- 执行遵循 [RUNBOOK Rules](../00-governance/RUNBOOK-RULES.md)、[Document Rules](../00-governance/DOCUMENT-RULES.md)、[Commit Rules](../00-governance/COMMIT-RULES.md)、[PR Rules](../00-governance/PR-RULES.md)。每步 PASS 后删该步并提交本步产物及本文件，最后一步删除本文件。
+- 每步最多 10 文件，包含本文件和专门核对的文件。发现生产缺陷时 STOP：报告准确触发、源符号、实际结果和最小修复，修订本计划获审后才能修生产代码。本版本只新增验收，不预授权生产行为调整。
+- 不修改 `service.ts`、`service.test.ts`、OpenShell、Session、retry 算法或 WEB-A12。A 独占这些范围及外部窗口。本任务不操作 Docker、真实 IdP、S3 或其他已有进程；只清理本 fixture 创建的临时目录和子进程。
+- 当前全流程授权在开工后包括分步提交、push、一个 PR/Ready、显式调用 `$bento-codex-comment-fix`、当前 HEAD 的 CI 和 Codex 明确结论后普通 merge、同步和清理本任务分支。允许主动向 MASTER 报告。merge 前回读最新主线，后合入方复验受影响共享边界。
+
+## 目标、当前断点与范围
+
+共享链路：Web 选择 -> mySpace SQLite 预占 -> 受控对象分块 -> 保存/下载 -> 空间快照引用 -> Orchestrator 持久门禁 -> 删除或拒绝 -> 对象/额度回读。
+
+| 正式场景                                                                                            | 当前断点                                             | 本次交付与终点                                                                                                        |
+| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| [WEB-02-02](../10-requirements/WEB-REQUIREMENTS.md#web-02-02-bad-case-路径冲突) / WEB-A05           | 原门禁及部分测试存在，逐负例证据不足                 | 无效路径、重复目标、双向文件目录冲突分别 API 拒绝，Web 正常选择显示原因，原字节、摘要、上传和额度不变                 |
+| [WEB-02-08](../10-requirements/WEB-REQUIREMENTS.md#web-02-08-bad-case-分块或对象不完整) / WEB-A04   | 缺块/块大小/对象大小已有测试，独立 checksum 证据不足 | 四类各自断言，增加 checksum 错误与存储 Complete 拒绝；对象、树、上传、下载及清理/额度闭环                             |
+| [WEB-03-07](../10-requirements/WEB-REQUIREMENTS.md#web-03-07-bad-case-删除命中未结束任务) / WEB-A05 | 活跃 Run 曾验证，但未逐状态和 retry 预留分别对账     | 五种 pending Run 和四种 pending retry 各自经真实双 HTTP 拒绝项目/输入 DELETE；重开保持；终态及受信结案 fixture 后放行 |
+
+三者共同保护同一已保存来源及对象，复用同一 fixture 的存储/空间 API，逐场景独立报告。已保存 Happy Path、真实 multipart 清理、真实资源回收沿用旧证据，不重建外部栈。目标仅在每项规定断言通过后改「已实现」，父项按全部适用必需子项派生。
+
+Non-goals：新 API、迁移、公开调试路由、生产状态机、真实恢复/可信运维证据生成、外部存储故障注入、真实模型、A 的 retry 修复、重跑全产品外部验收。恶意供应商伪造同尺寸对象不在本受控 fixture 所证明范围；不把 ListParts checksum 拒绝等同于真实供应商数据损坏注入。
+
+## 正式依据、代码事实和复用证据
+
+- [架构](../00-governance/ARCHITECTURE.md)：空间元数据/额度由 Workspace API 所有，Run 与 retry 权威账本归 Orchestrator，Worker 独立。
+- [WEB-INTERFACE](../20-interfaces/WEB-INTERFACE.md)：空间上传和项目详情章节；Task 冻结、`task_input_refs`、`task_input_delete_holds`、source deletion 及 retry phase 章节。
+- [WEB-DESIGN](./WEB-DESIGN.md)：我的空间、上传状态、单文件删除/项目删除，以及 Task pin 与 retry 保留门禁章节。
+- [Readiness](../40-readiness/CURRENT-READINESS.md)：上述三行与「上传规格与验证基线」。父项当前均部分实现，其余子项当前均已实现。
+- 准确入口：`space.ts::reserve/prepare/parts/finish/clean/advanceProjectDeletion/deleteFile`；不存在 `beginUpload/completeUpload`，不得照派工示意名称实现。
+- `parts` 只保留编号、ETag、长度、SHA256 都匹配的块；`finish` 无有效全量块时回 uploading + 409。Complete 抛错时保留 completing，重试/清理使用原上传 ID；对象大小不符触发 failed 清理。
+- `finish` 对已存在对象使用 HEAD 大小对账，针对完成回执丢失；本计划不引入重新读取全对象或改写该契约。
+- `Store::projectDeletionBlockers/changeInputDeleteHold` 使用 SQL pending 五状态及 pendingRetries 四阶段；不是内存计数。
+
+| 已有 commit / 测试精确范围                                                                    | 适用断言                                                | 本次缺口                                 |
+| --------------------------------------------------------------------------------------------- | ------------------------------------------------------- | ---------------------------------------- |
+| `59ee918`，`space-files.test.ts` 的 `WEB-A04 missing multipart parts recover`，当前 1804–1830 | 缺块、块 Size-- 被筛掉、不调用 complete、补齐后保存     | 分离个案并补实际 bytes 及下载/树回读     |
+| `5adc18b`，`WEB-A04 wrong object size stays hidden`，当前 1872–1915                           | cleaning 保留预占、签名过期后 failed、对象删除/额度释放 | 独立 checksum/Complete 完整性错误        |
+| `247d3e3 / 62b1d0a / a05c9d4 / 0c2c28c`，A04 同名回执丢失/重开/竞争套件                       | 原 ID、一次保存记账、重开继续                           | 只复验受影响共享边界，不称为真实 S3 故障 |
+| `66d6165`，路径/Run 门禁；Readiness 的 2026-11-18 WEB-A05 基线 `6b8eefa` / fixture `e7a4cfb`  | 路径初步负例、活跃 Run、真实正常删除/对象与资源回收     | 逐类别、逐状态和持久账本对照             |
+
+这些是历史适用证据；本轮尚未运行任何 suite，不把历史通过当成本轮新通过。
+
+## 数据、所有权与不变量
+
+生产结构不变。`space.ts::Upload` 的 required 字段：`id/project/owner/path/manifest:string`，`size/expires/signedUntil:number`，`storageId:string|null`，`cleanup:'cancelled'|'expired'|'failed'|null`，state 为 preparing/uploading/completing/cleaning/saved/deleting/deleted/cancelled/expired/failed。manifest 是有序 Base64 SHA256 数组的 JSON。SQLite 是 canonical owner；公开映射仅 `{id,project,path,size,state,expires}`，GET upload 另附 `parts:number[]`，隐藏 owner/manifest/storageId/signedUntil/cleanup。
+
+调用者提供 UUID v4 的 space/upload ID；下载文件 ID 等于 upload ID，key 固定 `space/<id>`，用户路径不用于 key。服务端生成 expires=当前毫秒+24h、signedUntil 签名截止。quota=200000000、fileLimit=100000000、partSize=16777216。checksum/ID 重放不改，异输入 409 space_conflict。路径错误 400 invalid_space_input；重复路径/双向前缀冲突 409 space_conflict。无效输入不得新增预占、上传或存储写入。
+
+只有 saved 提供树和下载，saved/deleting 计已保存额度，preparing/uploading/completing/cleaning 计预占；清理中不提前释放。parts 返回结构来自存储 `{PartNumber,Size,ETag,ChecksumSHA256}`，错误块不能参与合并。Complete 失败不得登记 saved。签名存活时 cleaning 保留 multipart/对象与预占，失效后 abort -> size/remove 确认 -> failed/取消终态再释放。
+
+`spaceExecution::enrollTask/freezeTask/advanceTask`：快照先保存 `space_tasks` 与 `space_task_inputs(taskId,fileId,readPinned)`，冻结内容后经 httpBackend 私有 create 进入 Store。READY readPinned=0，引用行继续保留。Orchestrator `TaskInput` 精确为 `{id:string|null,name:string,sourceSpaceId:string|null,inputFiles:{path:string,text:string}[],inputManifest:{fileId:string,path:string,bytes:number,sha256:string}[],inputDigest:string}`，全部 required；snapshot ID/source 非 null。manifest 按 fileId 排序；bytes=UTF8 长度，sha256=文本十六进制 SHA256；inputDigest=排序后 inputFiles JSON 的十六进制 SHA256。`task_input_refs(taskId,fileId)` 随 create 事务生成，随 Task 清理删除。
+
+单文件：pin 检查 -> `space_file_deletions(fileId,operationId,executionProjectId,phase)` checking -> httpBackend acquire -> Store 同事务判门禁并保存 held/denied -> denied 撤 checking/409 project_busy；held 后 deleting -> 对象不可读 -> releasing -> 原 operationId release -> deleted。operationId API 随机生成，executionProjectId nullable，phase required。GET download 在拒绝前后均应正常 302，following fixture 对象 URL 回读原始 bytes。项目：影响预检 -> holding/commit/release/cleaning -> deleted；活跃 Run/retry 拒绝 409 project_busy，无对象副作用。文件 receipt/source receipt 均经 SQLite 持久化，重开不能丢门禁。
+
+Run pending 精确为 queued/running/recovering/cancelling/needs_review。retry pending 精确为 preparing/workspace_restored/history_restored/blocked；queued 由新 Run 承接，closed 不持门禁。retry required 字段来自 Store schema：id/taskId/sourceRunId/newRunId/key/hash/phase/lastConfirmedPhase/oldGeneration/newGeneration/workspaceSha256/historySha256/createdAt/updatedAt，error nullable。hash=SHA256(JSON.stringify({op:'retry',sourceRunId}))；UUID fixture 随机生成、时间 ISO8601、generation 1->2、摘要来自固定 fixture 字节。禁止通过公开 retry 调用改变 A 的测试链路。
+
+终态 fixture 只证明门禁消费：Run 状态采用 `Store.status` 写入；retry 仅按 T3 固定的 Store.recordStopProof/acceptTaskRetry/advanceTaskRetry/finalizeTaskRetry 构造，在无调度器 fixture 中操作，禁止直接 INSERT/UPDATE retry_attempts。blocked 放行使用 `Store.closeBlockedTaskRetry(id,2,evidenceDigest)`，evidenceDigest 固定为 T3 列出的 fixture JSON 的 SHA256，明确不证明 service 可信观察/结案算法。结案后回读 `task_retry_closure_audit` 和 closedReason=unconfirmed。不得以 SQL 直接删除 pending receipt 假装结案。
+
+Not Applicable：生产新增事件/outbox/Schema/迁移/部署配置；本任务没有这些改动。身份为 sessionAuth + mockAccounts、Worker/host 不执行、对象存储是物理临时文件 fixture，非 S3 实际服务。HTTP 路由、mySpace/httpBackend/Store 与 SQLite 均为生产实现。
+
+## 代码范围账本
+
+以下基线行段均为必须核对的既有实现/验收，单行去重，排除空白与纯注释；新增代码不用于凑门槛。原账本9文件1744有效LOC不变；为本次审核补入Store合法retry构造参考1文件150有效LOC，合计10文件、1894有效LOC。
+
+| 文件                                           | 符号与行段                                                                                                     | 有效 LOC | 关联                |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | -------: | ------------------- |
+| `apps/workspace/api/space.ts`                  | advanceProjectDeletion 276–430；reserve/prepare/parts/finish/clean 478–691；deleteFile 804–874；下载 1033–1061 |      459 | 三场景              |
+| `apps/workspace/api/space-storage.ts`          | read/create/signPart/parts/complete/empty/size 30–174                                                          |      143 | -08 的受控边界      |
+| `apps/workspace/api/space-execution.ts`        | hasTaskPin/taskFiles/enrollTask/freezeTask 361–518；advanceTask 539–632                                        |      246 | -07 来源 pin 与冻结 |
+| `apps/workspace/api/execution-service-http.ts` | taskForward/source forwarding 78–131；httpBackend 241–310                                                      |      123 | -07 双 HTTP         |
+| `apps/orchestrator/execution-service/store.ts` | projectDeletionBlockers 440–461；input hold/source deletion 1341–1546；source impact 1658–1706                 |      271 | -07 持久门禁        |
+| `apps/orchestrator/execution-service/http.ts`  | task-source 路由 193–273                                                                                       |       80 | -07 真实私有路由    |
+| `apps/workspace/web/src/space.tsx`             | hasReleasedPath/pathPrefixes/planUpload 174–255；选择表单 831–903                                              |      153 | -02 正常 UI         |
+| `apps/workspace/web/src/space-api.ts`          | transferFile 195–290                                                                                           |       79 | 上传入口与重试      |
+| `apps/workspace/api/space-files.test.ts`       | A04 缺块 1804–1830；错大小 1872–1915；Task 快照/hold fixture 2970–3090                                         |      190 | 旧证据与接线核对    |
+
+补入代码参考：`apps/orchestrator/execution-service/task-submission.test.ts`，173–323行的retryFixture、四阶段advance、queued finalize及closed审计消费，共150有效LOC；仅T3专门核对，不修改该文件。
+
+## T0：作者调查与开工前复核
+
+允许修改：本文件。专门核对：AGENTS、架构、RUNBOOK/DOCUMENT/COMMIT/PR Rules、ENVIRONMENTS.example、Readiness（含本文件共 10 文件）。代码审计见上账本，分步实施时只按各步专门核对清单加载。
+
+2026-11-19 已观察：`git status --short --branch` 为 main...origin/main，无改动；HEAD/origin/main 均为固定基线；4353/4354 无 LISTEN；node v22.23.2、pnpm 12.15.0；ENVIRONMENTS.md 不存在，纯本地 fixture 无配置依赖。未启动任何服务。
+
+开工前命令（仓库根）：
+
+```bash
+git status --short --branch
+git rev-parse HEAD origin/main
+lsof -nP -iTCP:4353 -iTCP:4354 -sTCP:LISTEN
+node --version
+pnpm --version
+git diff --check
+```
+
+PASS：获审 RUNBOOK 是唯一任务变更；基线一致；端口命令退出 1 且无 LISTEN；版本满足现有依赖。审稿 SHA 由 MASTER 保存，获审后单独提交本文件，回读提交内容与 SHA。STOP：归属不明改动、端口占用、基线漂移影响本计划、依赖缺失；不得停旧进程或安装新依赖绕过。
+
+## 机械步骤
+
+### T1：建立受控存储及真实 HTTP fixture
+
+前置状态：T0 PASS、审核提交与显式 worker 开工已收到。
+允许修改：新增 `apps/workspace/api/space-integrity-fixture.ts`、`apps/workspace/api/space-path-integrity.test.ts`、`public-files.json`、本文件。专门核对 `space.ts`、`space-storage.ts`、`server.ts`、`auth.ts`、`protocol.ts`、API package.json（合计 10）；mockAccounts 的已核实初始化按本文固定，不另专门加载account-store.ts。
+禁止修改：任何生产实现、根 package.json files。
+
+执行：
+
+1. 新文件导出下列唯一 fixture 契约。`Backend` 从 `./protocol.ts`、`spaceStorage` 从 `./space-storage.ts`、`SQLOutputValue` 从 `node:sqlite` 显式 type import；不新增生产 DTO，不使用 any。所有方法签名和故障设置在 T1 一次定义，T2/T3 不再改变入口。
+
+```ts
+type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+type Row = Record<string, SQLOutputValue>;
+type SpaceTable =
+    | 'space_projects'
+    | 'space_uploads'
+    | 'space_file_deletions'
+    | 'space_project_deletions'
+    | 'space_tasks'
+    | 'space_task_inputs';
+type Call = {
+    op:
+        | 'create'
+        | 'signPart'
+        | 'putPart'
+        | 'parts'
+        | 'complete'
+        | 'empty'
+        | 'size'
+        | 'read'
+        | 'remove'
+        | 'abort'
+        | 'download'
+        | 'preview';
+    key: string;
+    part: number | null;
+};
+type ObjectFile = { path: string; size: number; sha256: string };
+type PartFile = ObjectFile & {
+    number: number;
+    etag: string;
+    checksum: string;
+};
+type PartFault =
+    { kind: 'size'; delta: -1 } | { kind: 'checksum'; value: string };
+type CompleteFault = 'reject' | 'short';
+export type SpaceIntegrityFixture = {
+    readonly ownerId: string;
+    readonly account: 'demo';
+    readonly projectId: string;
+    readonly dbPath: string;
+    readonly apiOrigin: string;
+    readonly storage: ReturnType<typeof spaceStorage>;
+    readonly objects: ReadonlyMap<string, ObjectFile>;
+    readonly parts: ReadonlyMap<string, ReadonlyMap<number, PartFile>>;
+    readonly calls: readonly Call[];
+    request(
+        path: string,
+        method?: string,
+        body?: Json,
+        key?: string,
+    ): Promise<{ status: number; json: Json; location: string | null }>;
+    putPart(uploadId: string, number: number, bytes: Buffer): Promise<void>;
+    download(fileId: string): Promise<Buffer>;
+    readObject(uploadId: string): Promise<Buffer | null>;
+    readPart(uploadId: string, number: number): Promise<Buffer | null>;
+    setPartFault(
+        uploadId: string,
+        number: number,
+        fault: PartFault | null,
+    ): void;
+    setCompleteFault(uploadId: string, fault: CompleteFault | null): void;
+    setCleanupFault(uploadId: string, fault: 'remove-reject' | null): void;
+    rows(table: SpaceTable): Row[];
+    suspend(): Promise<void>;
+    reopen(): Promise<void>;
+    close(): Promise<void>;
+};
+export async function openSpaceIntegrityFixture(
+    options: { port?: number; origin?: string; backend?: Backend } = {},
+): Promise<SpaceIntegrityFixture>;
+```
+
+2. 初始化固定：一次 `demoAccounts()`，取 account=demo 的 ownerId；同一个 `mockAccounts(accounts)` 和 `sessionAuth(accountStore,false,false)` 在整个 fixture 生命周期保留。request 用 `auth.startSession({headers:{}} as Parameters<typeof auth.startSession>[0],demo)` 得 cookie（只在内存），每次 reopen 刷新 fixture request 的 session，浏览器注册/密码和既有 session 不清除。后端 `options.backend ?? mockBackend()` 创建一次并保留，默认 port=0、origin=`http://127.0.0.1:4354`；先建临时物理存储服务器（随机端口），以其origin调用 `spaceStorage(objectOrigin,'fixture','us-east-1')` 后逐方法替换（storage.origin必须等于对象服务器origin），再 `mySpace(dbPath,storage,backend)`，最后 `taskEntryServer({port,origin,auth,backend,space})`。projectId=randomUUID()，仅首次通过 request POST `/api/space/projects` 的 `{id:projectId,name:'Integrity fixture'}` 建项目；reopen 不新建项目。业务 server 与对象 server 是两个独立本地 HTTP 服务；T3 另加第三个私有 Orchestrator HTTP 服务。
+
+3. 对象 key 为 `space/<uploadId>`，Map 均以 key 索引；每个对象/分块单独文件落于 mkdtemp 目录，路径固定 `objects/<uploadId>` 与 `parts/<uploadId>/<number>`，所有uploadId均为API已验UUID；ObjectFile.sha256 是物理 bytes 的十六进制 SHA256，PartFile.checksum 是 Base64 SHA256，etag=`"part-<number>"`。storage.create 为 key 建唯一 multipart UUID；parts 仅在 multipart 活跃时从物理块计算原始观测再应用 PartFault，结束返回 null；complete 只接受传入有效清单，按 PartNumber 顺序拼接真实 bytes，结束 multipart；empty 写零字节对象。size/read/readPart/readObject 实际读文件，read 严格校验声明长度。remove 删除文件并回读缺失，abort 删除对应物理块并结束 multipart。objects/parts/calls 只用于观察，测试不得直接改 Map/数组绕过 helper。
+
+4. 三类 fault setter 均按 uploadId 存在 fixture 内存，null 清除该 ID 对应故障（PartFault 精确到块编号），reopen 保留故障直到显式清除或 close。PartFault 只修改 ListParts 观测，不改原块；CompleteFault=reject 在拼接前抛 `Error('Fixture integrity rejection')`，保留原块且无对象；short 拼接后实际删除最终一个字节再落盘，清空 multipart，ObjectFile 记录实际少1字节结果；CleanupFault=remove-reject 在实际删除前抛 `Error('Fixture cleanup rejection')`，对象保留。storage 各方法每次入口加入 `{op,key,part}`，非分块操作 part=null；fault 失败也记录，setters/观察 helpers 不记录存储调用。
+
+5. signPart 返回对象服务器限时 PUT `/parts/<uploadId>/<number>?token=<randomUUID>`，服务端内存签名表保存 `{key,upload,number,size,checksum,expires}`；expires=Date.now()+600000，PUT 验证 token/到期/活跃 multipart/Content-Length/`x-amz-checksum-sha256`/实际摘要全部一致后写块，否则403且无写入。CORS 仅允许 options.origin，OPTIONS 允许 PUT/GET 与 checksum/content-type 头。download/preview 返回 `/objects/<uploadId>?token=<randomUUID>`，内存 token 绑定 key、expires=Date.now()+300000；GET 验证后读物理对象，缺失404。token 是本 fixture 模拟签名，不冒称真实 S3 授权。
+
+6. putPart 先 POST `/api/space/uploads/<id>/part` 的 `{number}`，断言200，按返回 url/checksum 用实际 fetch PUT bytes，断言200/204；download 先 GET `/api/space/files/<id>/download`，断言302和 Location，再 fetch 对象 URL，断言200并返回 bytes。request 默认 GET、redirect=manual、JSON解析为空时null、Cookie/Origin固定，key存在时加Idempotency-Key；单次网络 timeout=AbortSignal.timeout(5000)。rows 用独立只读 DatabaseSync 对固定表 `SELECT * FROM <table> ORDER BY rowid` 读取后立即关闭，table 参数必须是上列白名单（实际表名在 T1 核对，不存在即STOP，不换名）。
+
+7. suspend 等待业务 server.close（连带 mySpace.close）完成，将业务 server 引用设为 undefined；保留身份、backend 引用、物理目录、对象服务器、Map、fault 和 calls。reopen 先 suspend，再用同 dbPath/storage/backend/auth 启动新 mySpace/业务 server，API 随机端口可变，用 apiOrigin getter 回读，不复用旧 URL。close 先 suspend，再关闭对象服务器和连接，删除自建临时目录；不关闭调用方提供 backend 的 Orchestrator。部分启动失败同样 finally 清理；调用方 T3 按 suspend -> 私有 HTTP close -> Store.close -> 新 Store/私有 HTTP -> 更新闭包 backend -> reopen 顺序重开。
+
+8. 在新测试中先完成 Buffer.from('abc') 的3字节 `nested/source.txt` 的真实登记/putPart/完成/download，核对 SHA256、saved=3/reserved=0、项目树和 SQLite manifest。新代码路径逐个加入 public-files.json；API check 的 `./*.test.ts` 自动发现新测试，CI Repository checks 调用 check:workspace，核对而不重复改脚本。
+
+验证：
+
+```bash
+node --import ./register-paths.mjs --test apps/workspace/api/space-path-integrity.test.ts
+pnpm --filter @bento/workspace-api typecheck
+git diff --check
+```
+
+PASS：Happy Path 下载 bytes 一致、单条 saved、仅一次额度转换、close 后临时目录与 fixture 监听均消失。STOP：任何实际网络访问外部服务、storage 只有 JSON 假对象、缺少清理。提交 `Test(task-entry): 建立空间完整性物理对象验收夹具`。
+
+### T2：路径拒绝与完整性逐负例
+
+前置状态：T1 已提交，fixture Happy Path 通过。
+允许修改：`space-integrity-fixture.ts`、`space-path-integrity.test.ts`、新增 `apps/workspace/api/space-object-integrity.test.ts`、`public-files.json`、本文件。专门核对 `space.ts`、`space-storage.ts`、`space-files.test.ts`（合计 8）。
+禁止修改：生产校验、原大测试套件、A 的范围。
+
+执行：
+
+1. 路径分别 test/subtest：`../x`、`/x`、`a//b`、`a/./b`、反斜杠、控制字符、长度1025；独立新 UUID 重复 `nested/source.txt`；先文件 `nested` 后 `nested/x`，及先 `nested/x` 后 `nested`，各用隔离项目。断言400 invalid_space_input或409 space_conflict；旧 bytes+SHA256、完整上传行、saved/reserved、存储写入调用计数不变，候选 ID 无行/对象。另验证 uploading 路径占用拒绝、相同 ID/同清单重放不重复预占。
+
+2. 完整性用 Buffer.alloc(16777216,1) + Buffer.alloc(3,2)，合计16777219 bytes。独立 test：只 putPart 第2块；两块写入后 `setPartFault(id,1,{kind:'size',delta:-1})`；两块写入后 `setPartFault(id,1,{kind:'checksum',value:createHash('sha256').update('wrong').digest('base64')})`；两块写入后 `setCompleteFault(id,'reject')`；两块写入后 `setCompleteFault(id,'short')`。缺块/错块/错摘要都409 space_conflict、state uploading、parts只[2]、不调用 storage.complete；存储拒绝500 server_error、state completing；错对象409 space_conflict、state cleaning/cleanup failed。
+
+3. 每项逐一 readPart/readObject、GET upload、GET project.files、GET space 和 GET `/api/space/files/<id>/download`。未保存 ID 的 download=404，files 不含半成品，saved=0/reserved=声明大小。错摘要及错块清除用 `setPartFault(id,1,null)`，先断言原物理块 SHA256 未变、parts 恢复[1,2]，再原 complete 成功；存储拒绝用 `setCompleteFault(id,null)` 后原 complete 成功且一次保存记账。错误对象不“修回”saved，必须保持清理直到failed。
+
+4. 在 `space-object-integrity.test.ts` 固定新增 `integrityClock(t:TestContext)`，仅错对象清理 case 使用。调用 `const clock=integrityClock(t)` 时、在建 fixture 前 `t.mock.timers.enable({apis:['Date','setInterval'],now:1800000000000})`，与既有 recoveryClock 的 mock API 和初值一致。helper 唯一返回签名为 `{sweep():Promise<void>; expireSignature(f:SpaceIntegrityFixture,uploadId:string):void}`；sweep 执行 `t.mock.timers.tick(30000)` 后 `await new Promise<void>(resolve=>setImmediate(resolve))`；expireSignature 从 `f.rows('space_uploads')` 找原id，assert signedUntil为number，`t.mock.timers.setTime(signedUntil+1)`。不mock setTimeout/setImmediate/performance/hrtime，不import原大test文件。
+
+5. 全部条件等待固定使用 `waitFor(check:()=>Promise<boolean>):Promise<void>`：以 `performance.now()` 起点循环，check严格true才成功；失败时仅在 `performance.now()-start>=5000` 抛错，间隔 `await delay(20)`，delay 从 node:timers/promises 导入。不能用 Date.now 作网络/状态deadline，不能把超时当成功。fake Date 跳跃只触发业务到期；AbortSignal.timeout(5000) 保留真实单次网络期限。sweep 后用 waitFor 等待可观察SQLite状态，不以一次setImmediate假定全部清理完成。
+
+6. 错对象 case：签名未失效先 sweep，断言 cleaning/reserved仍为声明大小，readObject实际少1字节、readPart缺失（short已完成multipart）；`setCleanupFault(id,'remove-reject')`，`clock.expireSignature(f,id)` 后sweep，仍cleaning/额度不释放/对象物理存在；`setCleanupFault(id,null)` 后再次sweep并waitFor state failed，断言对象及multipart块均缺失、reserved=0。`setCompleteFault(id,null)` 清除剩余故障，再reopen核对failed不变；下载404、重复complete409且额度不变。清理失败覆盖作为同一完整性闭环，不称为真实S3故障。
+
+验证：
+
+```bash
+node --import ./register-paths.mjs --test apps/workspace/api/space-path-integrity.test.ts apps/workspace/api/space-object-integrity.test.ts
+pnpm --filter @bento/workspace-api typecheck
+git diff --check
+```
+
+PASS：每类别有单独命名结果与上述所有保护断言。STOP：任何分支开放半成品、原对象改变、状态/错误码与计划不符。先报告再修订，不修改生产绕过。提交 `Test(task-entry): 分别验证路径拒绝和上传完整性门禁`。
+
+### T3：持久 Task 引用逐状态删除门禁
+
+前置状态：T2 已提交；A 未占用本 fixture 端口/目录。
+允许修改：新增 `apps/workspace/api/space-deletion-states.test.ts`、`space-integrity-fixture.ts`、`public-files.json`、本文件。专门核对 `space-execution.ts`、`execution-service-http.ts`、`store.ts`、`http.ts`、`apps/orchestrator/execution-service/task-submission.test.ts`（合计 9）。
+禁止修改：生产状态机、service.ts/service.test.ts、可信结案算法、公开调试路由。
+
+执行：
+
+1. 使用 T1 已固定的 backend 选项，不再修改核心签名。新测试文件定义 `const hexSHA256=(text:string)=>createHash('sha256').update(text).digest('hex')`；固定摘要不得改成随机值。测试私有账本目录为 mkdtemp 内 `business.sqlite`，`let store=new Store(path,16)`，token=`'fixture-space-deletion-'+randomUUID()`，以下调用固定；所有未用 callback 统一 `throw new Error('Unexpected fixture operation')`，不返回假公开 DTO。
+
+```ts
+const unexpected = (): never => {
+    throw new Error('Unexpected fixture operation');
+};
+const server = executionHttp(
+    store,
+    token,
+    () => {},
+    async () => unexpected(),
+    () => unexpected(),
+    async () => unexpected(),
+    {
+        environmentVersion: 'sha256:' + 'a'.repeat(64),
+        runView: () => unexpected(),
+        cancel: () => unexpected(),
+        retry: () => unexpected(),
+        async purgeSource(owner, spaceId, operationId) {
+            const bindings = store.taskSourceDeletionBindings(
+                owner,
+                spaceId,
+                operationId,
+            );
+            for (const binding of bindings) {
+                store.purgeProject(binding, operationId, spaceId);
+            }
+            return store.finishTaskSourceDeletion(owner, spaceId, operationId);
+        },
+    },
+);
+```
+
+server.listen(0,'127.0.0.1') 并等待 listening 后取实际 URL。`let upstream=httpBackend(url,token,5000)`；传 T1 `backend:(owner,operation)=>upstream(owner,operation)`。私有 source purge 只清理fixture持久账本，不创建/删除实际执行资源。只准调用 task create/replay/GET、source impact/delete、input hold/release 路由；不得调用 runs HTTP GET/POST、cancel/retry、legacy项目删除或owner purge，因此runView绝不调用，Store.enqueueTaskRun只在测试代码调用。若实际代码意外走未用路由而throw则STOP，不改callback掩盖。
+
+2. 经个人 API 保存3字节来源，POST `/api/tasks`，body=`{name:'fixture',source:{kind:'space_snapshot',spaceId:projectId,fileIds:[fileId]}}`，taskKey=randomUUID()，断言202且返回task.id。直接 fixture `store.importResult(taskId,'ready')`，再以相同body/taskKey重放 POST `/api/tasks`，断言200、同id/status ready；这一步触发 spaceExecution.verifyTaskReceipt 释放readPinned，不依赖GET触发reconcile。最后GET Task只核对公开结果。核对空间 `space_task_inputs` readPinned=0、Orchestrator task_input_refs、taskConfig.inputManifest、taskInitialFiles和inputDigest。READY为受控准备fixture，不运行scheduler/Worker。
+
+3. 五状态分别全新fixture：`source=store.enqueueTaskRun(ownerId,taskId,randomUUID(),'Original').run`，`store.status(source.id,status,'Synthetic active state')`，status仅取queued/running/recovering/cancelling/needs_review。先读预检blockers=[project_busy]；项目DELETE409 project_busy，文件DELETE409 project_busy，分别重复一次；download helper回读原bytes与摘要、树与saved=3/reserved=0不变。用只读DatabaseSync行快照检查冻结输入/refs不变、space_file_deletions无checking残留、私有task_input_delete_holds/task_source_deletions有对应denied receipt。reopen严格按T1第7项顺序关闭并重建两个业务HTTP与Store；对象server保持。再次验证全部门禁和账本。
+
+4. 三种终态分别新fixture：创建同上Run后 `store.status(source.id,terminal,'Synthetic terminal state')`，terminal取failed/cancelled/succeeded。文件DELETE首次202或204、waitFor最终204，来源download404且quota归零，Task冻结输入仍可读；再项目DELETE waitFor最终204、GET Task404。重复两个DELETE均204不重复释放。状态消费fixture不声明真实终态执行；旧真实Happy Path证据承担真实结果/补丁/资源回收。
+
+5. 四retry阶段分别新fixture，严格复用 `task-submission.test.ts::retryFixture` 构造：`source=store.enqueueTaskRun(ownerId,taskId,randomUUID(),'Original').run`；`store.status(source.id,'failed','Synthetic failure')`；`proof=store.recordStopProof(source.id,'{}')`，断言proof.sha256等于hexSHA256('{}')；`evidence={oldGeneration:1,newGeneration:2,workspaceSha256:hexSHA256('[]'),historySha256:hexSHA256('[]')}`；`attempt=store.acceptTaskRetry(ownerId,taskId,source.id,randomUUID(),evidence).attempt`，断言phase/lastConfirmedPhase=preparing、sourceRunId/source.id一致、新Run尚不存在。'{}'和固定摘要只是Store门禁fixture，不是可信runtime stop/恢复证据。禁止直接INSERT/UPDATE/DELETE retry_attempts。
+
+6. 阶段构造唯一表：preparing不调用advance；workspace_restored仅 `advanceTaskRetry(id,'preparing','workspace_restored')`；history_restored依次 `advanceTaskRetry(id,'preparing','workspace_restored')` 和 `advanceTaskRetry(id,'workspace_restored','history_restored')`；blocked仅 `advanceTaskRetry(id,'preparing','blocked')`。所有调用断言true；前三者lastConfirmedPhase等于phase/error=null，blocked的lastConfirmedPhase=preparing/error=restore_conflict。每阶段重复第3项的双DELETE、download、持久reopen；源Run仍failed、newRun不存在、SQL pending Run count=0/pending retry count=1。
+
+7. 每阶段拒绝证据完成后：若尚未blocked，调用 `advanceTaskRetry(id,currentPhase,'blocked')` 并断言true；blocked不重复advance。closureCanonical=`JSON.stringify({kind:'fixture-only-closure',attemptId:attempt.id,generation:2})`，closureDigest=hexSHA256(closureCanonical)；`audit=store.closeBlockedTaskRetry(id,2,closureDigest)`，断言非null、attemptId=id、authorityGeneration=2、evidenceDigest=closureDigest、closedAt有效ISO字符串；重复同参深等于audit。store.taskRetry.phase=closed、task.closedReason=unconfirmed、pending计数均0；重开回读审计相同，然后按第4项删除放行。此处只消费受信结案fixture，不验证service的可信观察/证据算法。
+
+8. queued承接独立fixture：按第5项建preparing，依次advance至workspace_restored/history_restored（均true），`next=store.finalizeTaskRetry(id,'history_restored')`，断言next.id=attempt.newRunId/next.status=queued、attempt.phase=queued、pending retry count=0/pending Run count=1。双DELETE仍409；再 `store.status(next.id,'succeeded','Synthetic success')`，重开后count均0、旧attempt仍queued；按第4项删除放行。禁止手动添加newRun或修改receipt phase。
+
+上述只读私有账本观察 helper 固定 `(sql:string,...values:SQLInputValue[])=>Record<string,SQLOutputValue>[]`，仅测试文件内部定义，打开readOnly DatabaseSync、prepare/all后finally close；SQL仅写死在测试内，不形成公开/fixture调试路由。pending计数固定按 `runs WHERE projectId=? AND status IN ('queued','running','recovering','cancelling','needs_review')` 和 `retry_attempts WHERE taskId=? AND phase IN ('preparing','workspace_restored','history_restored','blocked')` 各count(*)。全部等待使用 T2 的 performance.now/真实delay helper，禁用 Date deadline。
+
+验证：
+
+```bash
+node --import ./register-paths.mjs --test apps/workspace/api/space-deletion-states.test.ts
+pnpm --filter @bento/workspace-api typecheck
+git diff --check
+```
+
+PASS：5种pending Run、4种retry阶段、queued承接及3种Run终态分别有单独命名断言；实际双HTTP和两个SQLite、对象均对账。STOP：门禁拒绝结果与状态不符、需要修改A范围、closed receipt仍占额度；保留失败现场并向MASTER回报。提交 `Test(task-entry): 逐状态验证空间来源删除保护`。
+
+### T4：正常 Web 选择入口拒收原因
+
+前置状态：T3已提交。
+允许修改：新增 `apps/workspace/web/acceptance/space-integrity-fixture.ts`、`apps/workspace/web/acceptance/web-space-integrity.spec.ts`、`apps/workspace/web/playwright.web-space-integrity.config.ts`；`apps/workspace/web/package.json`、`.github/workflows/checks.yml`、`public-files.json`、本文件。专门核对 `space.tsx`、`space-api.ts`、API fixture（合计10）；登录步骤已由作者核实并写死，执行不另加载旧 spec。
+禁止修改：生产UI、根package files、其他验收配置、现有端口服务。
+
+执行：
+
+1. 浏览器fixture复用API fixture（跨层用根别名显式.ts），port4353/origin4354；配置Vite4354严格端口/reuseExistingServer=false，workers1/retries0，关闭trace/video/screenshot。由spec beforeAll/afterAll启动关闭fixture；身份保留T1创建的同一accounts/auth，spec用beforeAll/afterAll且只注册一次。密码只存spec局部变量，不输出、不写证据。在 /login 点击「使用邀请码注册」，账号 demo、邀请码 demo-invite、新密码 randomUUID()，注册后用同账号密码登录（复用 web-task-submission.spec.ts::login 的已核实顺序）取得身份，不通过route.fulfill替代业务。
+
+2. 从文件选择真实临时目录/文件和setInputFiles进入清单：两个不同目录同basename以文件选择产生重复目标；已保存同名文件显示「目标路径已被占用」；目录选择生成与既有文件的前缀冲突、以及既有目录被文件占用，逐项显示原因、确认上传不可受理这些项，API无新增上传/预占/PUT，下载原字节摘要保持。正常一个无冲突3bytes控制项仍可上传保存。
+
+3. 不构造浏览器非法系统路径。无效路径只由T2 API完整覆盖；复用现有上传清单测试证明UI invalid path guard，记录浏览器正常选择无法产生穿越路径的分层边界，不宣称真实选择到非法路径。
+
+4. package新增 `test:space-integrity` 精确命令 `playwright test --config playwright.web-space-integrity.config.ts`；CI browser job在原test:e2e后独立执行该script。新路径全部进public白名单；不改已有默认e2e的mock证据。API所有新test由T1的自动发现接入check/CI。
+
+验证：
+
+```bash
+pnpm --filter @bento/web test:space-integrity
+pnpm --filter @bento/web check
+git diff --check
+```
+
+PASS：实际Chromium正常选择、真实mySpace/SQLite/物理对象，无page.route业务替身；退出4353/4354无监听。STOP：端口占用、fixture登录不能复用、必须伪造系统路径才能满足断言。提交 `Test(task-entry): 验证真实空间接口下的上传拒收清单`。
+
+### T5：共享边界复验与验收证据迁移
+
+前置状态：T4已提交，MASTER确认与A合入顺序；有新主线时先在安全提交点普通merge，禁止rebase。
+允许修改：`docs/40-readiness/CURRENT-READINESS.md`、本文件。专门核对 `WEB-REQUIREMENTS.md`、`WEB-INTERFACE.md`、`WEB-DESIGN.md`、README、API package.json、Web package.json、checks.yml、public-files.json（合计10）。
+禁止修改：正式产品语义、无关文档与根npm files。
+
+执行：
+
+1. 在仓库根执行固定完整集合；T2/T3/T4已通过且代码未变的focused suite不无差别重复，pnpm check是规定整体门禁。主线合并涉及空间/任务/Store/HTTP时定向重跑本次三个API文件和Chromium script；只改文档不重跑应用套件。
+
+2. Readiness逐行记录日期、实际基线/步骤提交、方法、case结果与Not Covered。三行均满足才标已实现；父WEB-02/03逐必需子项汇总（当前其余全已实现），不得借本地状态fixture声称真实恢复/结案/外部故障注入。
+
+3. 检查README/架构/启动/发布：本任务只新增测试入口，生产入口/目录/部署未变，无需改生产启动说明。公开白名单逐文件覆盖；npm pack保留原根files，确认无凭据或原始trace入包。持久证据写入Readiness后删除本文件，删除仅指向它的引用。
+
+验证：
+
+```bash
+pnpm check
+pnpm --filter @bento/web test:space-integrity
+npm pack --dry-run --json
+git diff --check
+rg -n 'RUNBOOK-WEB-SPACE-INTEGRITY-DELETION' docs README.md
+```
+
+PASS：所有规定check退出0，无skip替代必需断言；pack文件范围符合原files与公开边界；末条删除后退出1且无残留；所有本任务fixture目录/子进程回收。STOP：任何CI入口漏测、新主线影响证据而未定向复验、生产缺陷或文档冲突。最终提交 `Test(task-entry): 收口空间完整性与逐状态删除验收`，包含Readiness和本文件删除。
+
+## PR、Review 和完成定义
+
+一份RUNBOOK一个PR，按模板写具体行为、真实验证与限制。推送并开Draft，核对完整diff后Ready。显式启动 `$bento-codex-comment-fix` 处理本PR findings；不扩展到A的review。按当前HEAD等待所有必需CI和明确Codex结论，无结论/额度不足不得当通过；约60秒观察，有意义变化才报告。
+
+merge前实时回读ruleset、目标main、HEAD、required checks、review线程和Codex结论。普通merge保留分步提交。新主线后合入者复验上述共享边界，更新证据适用基线。合并后确认merge SHA进入origin/main，快进本checkout，核对任务tip已合入后清理本任务分支及fixture。向MASTER回报PR、merge SHA、Readiness三子项/父汇总、CI/Codex、清理状态及Not Covered。没有审查结果或合入证据时不得宣告已交付。
