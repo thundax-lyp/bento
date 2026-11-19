@@ -75,3 +75,11 @@
 | 运行隔离与资源治理   | 容器/OS 身份、OpenShell policy、现成资源控制                      | 明确信任边界、读写/网络/secret/CPU/内存/PID/磁盘/输出约束        |
 
 OpenShell Gateway interceptor 的固定源码白名单可以管理部分一元控制面 RPC，但不能绑定 ExecSandbox/ExecSandboxInteractive 流式执行。当前可行组合是原生 mTLS 保护后端、平台服务端入口检查业务 generation/READY；入口是新增平台代码，并非已有插件零配置提供。可信管理证书不可下发 worker。
+
+## A2 Provider 验收接线
+
+[A2-01/02/03](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a2-持久会话) 的本地联合验收使用 [固定测试入口](../../apps/orchestrator/openshell/provider-lifecycle.test.ts) 和 [独立 fixture](../../apps/orchestrator/openshell/provider-lifecycle/fixture.ts)，由既有 Orchestrator `openshell/*.test.ts` 纳入 `pnpm check`。Orchestrator 测试依赖将官方 AgentRegistry、AgentLoop、SessionStore、session-projection、LLM、system-prompt、tools、scope、session-checkpoint-policy 固定为 `0.2.1-rc.4`，沿用 SessionPersistence `0.2.1-rc.4` 与 Cordis `4.0.5`；不改变生产 worker 装配。
+
+写句柄只能经官方 `ctx.agents.create/resume` 获取，AgentLoop 保存 constructor/setup suffix，避免裸 prepare/enter 遗漏 seed marker。官方 checkpoint policy 在 pre-step/model dispatch 前调用 `ctx.sessions.flush`，经生产 RemoteSession→真实 HTTP persistenceIngress/WorkerGate→SessionHistory SQLite 完成 stage/append/reconcile/flush；正常轮末再显式等待 checkpoint，然后先处置 Agent 再关闭 root Context。两库同路径重开后官方 resume 保留原历史并允许合法新代续写。
+
+测试代理原样转发生产 ingress，只在上游 append 成功且独立 SQL 确认提交后丢一次下游响应，用原 Provider pending 批次验证原回执重投。三种旧代操作各用独立活句柄，分别观察真实授权拒绝；append 在 stage 入口已被拒，不将该结果描述为 backend append 分支已执行。数据库、HTTP 和官方生命周期为真实实现；模型与沙盒观察为受控 fixture。实际结果与未覆盖的事务强杀、自主发现及外部故障接管见 [A2 Readiness 证据](../40-readiness/CURRENT-READINESS.md#a2-官方-provider-本地验收)。
