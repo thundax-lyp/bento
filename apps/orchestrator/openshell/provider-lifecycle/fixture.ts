@@ -5,7 +5,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { performance } from 'node:perf_hooks';
 import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { Context } from '@deepseek-ai/cordis';
 import type { AgentHandle } from '@deepseek-ai/dsh-agent';
 import { createUserMessage, type GenerateOptions } from '@deepseek-ai/dsh-llm';
@@ -167,6 +169,102 @@ export async function createProviderFixture(): Promise<ProviderFixture> {
             beforeStream: (options) => beforeStream(options),
         });
         const { ctx, agentOptions } = shared;
+        let lastSessionEventAt = performance.now();
+        const inFlightFlushes = new Set<ReturnType<SessionHandle['flush']>>();
+        const observedFlushFailures: unknown[] = [];
+        const observedHandles = new WeakSet<SessionHandle>();
+        const restoreFlushes: Array<() => void> = [];
+        const removeObserver = ctx.on('session/event', (eventSession) => {
+            if (eventSession.id === session)
+                lastSessionEventAt = performance.now();
+        });
+        function observeFlush<T extends SessionHandle>(handle: T): T {
+            if (handle.access !== 'write' || observedHandles.has(handle))
+                return handle;
+            observedHandles.add(handle);
+            const original = handle.flush;
+            const descriptor = Object.getOwnPropertyDescriptor(handle, 'flush');
+            const observed = (...args: Parameters<SessionHandle['flush']>) => {
+                const pending = original.apply(handle, args);
+                inFlightFlushes.add(pending);
+                void pending.then(
+                    () => {
+                        inFlightFlushes.delete(pending);
+                    },
+                    (error: unknown) => {
+                        inFlightFlushes.delete(pending);
+                        observedFlushFailures.push(error);
+                    },
+                );
+                return pending;
+            };
+            handle.flush = observed;
+            restoreFlushes.push(() => {
+                if (handle.flush !== observed)
+                    throw new Error('A2 flush observer ownership changed');
+                if (descriptor)
+                    Object.defineProperty(handle, 'flush', descriptor);
+                else Reflect.deleteProperty(handle, 'flush');
+                observedHandles.delete(handle);
+            });
+            return handle;
+        }
+        async function waitForAutomaticFlush(
+            failureIndex: number,
+        ): Promise<void> {
+            const deadline = performance.now() + 10_000;
+            for (;;) {
+                let remaining = deadline - performance.now();
+                if (remaining <= 0)
+                    throw new Error('A2 automatic flush did not quiesce');
+                const observedAt = lastSessionEventAt;
+                // RemoteSession.Handle.enqueue arms a 200ms timer. Even a
+                // zero delay yields to that already-due timer before probing.
+                await delay(
+                    Math.min(
+                        remaining,
+                        Math.max(
+                            0,
+                            Math.ceil(observedAt + 200 - performance.now()),
+                        ),
+                    ),
+                );
+                remaining = deadline - performance.now();
+                if (remaining <= 0)
+                    throw new Error('A2 automatic flush did not quiesce');
+                let timer: NodeJS.Timeout | undefined;
+                try {
+                    await Promise.race([
+                        Promise.allSettled([...inFlightFlushes]),
+                        new Promise<never>((_, reject) => {
+                            timer = setTimeout(
+                                () =>
+                                    reject(
+                                        new Error(
+                                            'A2 automatic flush did not quiesce',
+                                        ),
+                                    ),
+                                remaining,
+                            );
+                        }),
+                    ]);
+                } finally {
+                    clearTimeout(timer);
+                }
+                if (performance.now() >= deadline)
+                    throw new Error('A2 automatic flush did not quiesce');
+                if (lastSessionEventAt !== observedAt || inFlightFlushes.size)
+                    continue;
+                const failures = observedFlushFailures.slice(failureIndex);
+                if (failures.length === 1) throw failures[0];
+                if (failures.length)
+                    throw new AggregateError(
+                        failures,
+                        'A2 automatic flush failed',
+                    );
+                return;
+            }
+        }
         const proxy = createServer(async (request, response) => {
             try {
                 if (request.method !== 'POST' || request.url !== '/rpc') {
@@ -256,6 +354,7 @@ export async function createProviderFixture(): Promise<ProviderFixture> {
         });
         function close(revoked: boolean): Promise<void> {
             closing ??= cleanup([
+                () => cleanup([removeObserver, ...restoreFlushes.splice(0)]),
                 () => shared.dispose({ revoked }),
                 () => closeHttpServer(proxy),
                 () => {
@@ -297,6 +396,7 @@ export async function createProviderFixture(): Promise<ProviderFixture> {
             },
             async turn() {
                 assert(runtime.agentHandle);
+                const failureIndex = observedFlushFailures.length;
                 const agent = runtime.agentHandle.agent;
                 const first = agent.session.snapshotEvents().length;
                 agent.followup(
@@ -307,6 +407,7 @@ export async function createProviderFixture(): Promise<ProviderFixture> {
                 );
                 await agent.whenIdle();
                 await runtime.checkpoint();
+                await waitForAutomaticFlush(failureIndex);
                 const events = agent.session.snapshotEvents();
                 const tail = events.slice(first);
                 assert.equal(
@@ -382,13 +483,13 @@ export async function createProviderFixture(): Promise<ProviderFixture> {
             const persistence = ctx.sessionPersistence;
             const create = persistence.create.bind(persistence);
             persistence.create = async (...args) => {
-                const writer = await create(...args);
+                const writer = observeFlush(await create(...args));
                 runtime.writer = writer;
                 return writer;
             };
             const open = persistence.open.bind(persistence);
             persistence.open = async (...args) => {
-                const handle = await open(...args);
+                const handle = observeFlush(await open(...args));
                 if (handle.access === 'write') runtime.writer = handle;
                 return handle;
             };
