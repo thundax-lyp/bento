@@ -73,27 +73,9 @@ ENVIRONMENTS.md 调查时不存在；本任务不连接外部受控服务，无�
 
 ## 机械步骤
 
-### T4：未知回执原正文重投入口
-
-前置状态：T3 专用验收四用例 PASS（blank/snapshot create、completed Run、reopen）；active Run 用例唯一失败为重试提交按钮 toBeVisible 找不到，前置实际 202/running/prepare=execute=Run=user_message=receipt=1 全通过。web typecheck PASS；新 fixture/spec/config 已提交。MASTER 已协调页面范围。
-允许修改：pages.tsx、web-task-submission.spec.ts、task-submission.test.ts、RUNBOOK。专门核对 api.ts，共 5 文件。
-禁止修改：retry/cancel mutation、安全重试/结果段、api.ts、其他生产代码。
-
-执行：严格落实前述 UI 数据与顺序：pendingSubmission、sending string 变量、onError 4xx 清除、未知保存、onSuccess 清除；正常发送禁 active，未知按钮固定原正文同键。同步修改 completed Run receipt 用例：T3 的 noop 已结束后原发送按钮重投，在 T4 改为点击新增“重试提交”；pendingSubmission 在未知回执后无论原 Run 活跃或已完成都保留，普通 canSend=false，成功或明确 4xx 才清除。该用例仍须真实上游受理后 abort、同键原正文 200 同 Run，host execute/Run/user_message 计数断言保持不变。补浏览器定向断言：未知后普通输入禁用；attempt 重投 200 清入口且导航原 Run；重投遇 409 清入口并保留正常 busy 门禁；5xx 继续保留原正文；点击期间重复操作禁用。4xx/5xx 的 UI 清除测试可在这一专门分支注入错误响应，但不能充当真实受理/幂等证据。实际受理用例仍由 T3 上游 fetch→abort 保证。成功后数据库 user_message=1，重复重投也仍为 1。
-
-验证：
-
-```bash
-pnpm --filter @bento/web exec vitest run src/task-submission.test.ts
-pnpm --filter @bento/web exec playwright test -c playwright.task-submission.config.ts
-pnpm --filter @bento/web typecheck
-```
-
-PASS：全部真实受理、UI 错误分支与原正文同键断言通过，无 expectedFailure/skip；旧 Run 未变、新键被拒。STOP：需改通用键或相邻 retry 语义则交 MASTER，不扩范围。
-
 ### T5：完整门禁、正式证据和收口
 
-前置状态：T4 已提交，所有 dedicated 验收 PASS。
+前置状态：pages.tsx 最小原正文重投入口已提交；Vitest 4/4、专用 Chromium 6/6、web typecheck 全 PASS。真实受理计数 prepare/execute/Run/user_message/receipt 各一；5xx 保留、4xx 清除与等待/取消文案已验证。
 允许修改：Readiness、WEB-DESIGN、public-files.json、本 RUNBOOK（最后删除）。专门核对 WEB-REQUIREMENTS、WEB-INTERFACE、package.json、README、deploy/README、ARCHITECTURE，共 10 文件。
 禁止修改：需求/接口语义、非本任务 Readiness 行、运行配置及架构边界。
 

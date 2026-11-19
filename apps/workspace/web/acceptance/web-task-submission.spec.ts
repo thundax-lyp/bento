@@ -15,11 +15,9 @@ async function login(page: Page) {
     const password = randomUUID();
     await page.goto('/login');
     await page.getByRole('link', { name: '使用邀请码注册' }).click();
-    const registration = page
-        .locator('form')
-        .filter({
-            has: page.getByRole('heading', { name: '受邀注册', exact: true }),
-        });
+    const registration = page.locator('form').filter({
+        has: page.getByRole('heading', { name: '受邀注册', exact: true }),
+    });
     await registration.getByLabel('账号').fill('demo');
     await registration.getByLabel('邀请码').fill('demo-invite');
     await registration.getByLabel('新密码').fill(password);
@@ -201,13 +199,16 @@ test('completed Run receipt: a lost response replays the original Run once', asy
     await waitSucceeded(page, task.id, first.value.run.id);
     await expect(
         page.getByRole('button', { name: '发送要求', exact: true }),
-    ).toBeEnabled();
-    await page.getByRole('button', { name: '发送要求', exact: true }).click();
+    ).toBeDisabled();
+    await page.getByRole('button', { name: '重试提交', exact: true }).click();
     await expect.poll(() => dropped.receipts.length).toBe(2);
     expect(dropped.receipts[1]!.status).toBe(200);
     expect(dropped.receipts[1]!.key).toBe(first.key);
     expect(dropped.receipts[1]!.body).toBe(first.body);
     expect(dropped.receipts[1]!.value.run.id).toBe(first.value.run.id);
+    await expect(
+        page.getByRole('button', { name: '重试提交', exact: true }),
+    ).toHaveCount(0);
     await counts(task.id);
 });
 
@@ -307,6 +308,10 @@ test('active Run receipt: the page can retry only the unknown original submissio
     await expect(
         other.getByRole('button', { name: '发送要求', exact: true }),
     ).toBeDisabled();
+    await expect(
+        other.getByText('任务已有执行，请等待完成或取消。', { exact: true }),
+    ).toBeVisible();
+    await expect(retry).toHaveCount(0);
     const before = await fixture.observe(task.id);
     for (const [key, prompt, code] of [
         [randomUUID(), 'New requirement', 'task_busy'],
@@ -328,4 +333,81 @@ test('active Run receipt: the page can retry only the unknown original submissio
     await waitSucceeded(page, task.id, first.value.run.id);
     await counts(task.id);
     await other.close();
+});
+
+test('unknown receipt UI: 5xx retains the exact submission and definite 4xx clears its temporary entry', async ({
+    page,
+}) => {
+    await login(page);
+    const task = await createBlank(page);
+    const path = `/api/tasks/${task.id}/runs`;
+    const dropped = await dropReceipt<{ run: TaskRun }>(page, path);
+    await page.getByLabel('任务要求').fill('hold-submission');
+    await page.getByRole('button', { name: '发送要求', exact: true }).click();
+    await dropped.lost;
+    const first = dropped.receipts[0]!;
+    await counts(task.id);
+    const retry = page.getByRole('button', { name: '重试提交', exact: true });
+    await expect(retry).toBeEnabled();
+    await expect(page.getByRole('textbox')).toBeDisabled();
+    let releaseResponse: () => void = () => {};
+    const waitingResponse = new Promise<void>((resolve) => {
+        releaseResponse = resolve;
+    });
+    const requests: { key: string; body: string }[] = [];
+    // Only these synthetic error responses test UI cleanup. Acceptance was real above.
+    await page.route(
+        (url) => url.pathname === path,
+        async (route) => {
+            if (route.request().method() !== 'POST') return route.continue();
+            requests.push({
+                key: route.request().headers()['idempotency-key']!,
+                body: route.request().postData()!,
+            });
+            if (requests.length === 1) await waitingResponse;
+            await route.fulfill({
+                status: requests.length === 1 ? 502 : 409,
+                json: {
+                    error: {
+                        code:
+                            requests.length === 1
+                                ? 'backend_error'
+                                : 'task_busy',
+                        message: 'Synthetic UI rejection',
+                    },
+                },
+            });
+        },
+    );
+    await retry.click();
+    await expect.poll(() => requests.length).toBe(1);
+    await expect(retry).toBeDisabled();
+    await expect(
+        page.getByRole('button', { name: '发送要求', exact: true }),
+    ).toBeDisabled();
+    releaseResponse();
+    await expect(retry).toBeEnabled();
+    expect(await page.evaluate(() => Object.values(sessionStorage))).toContain(
+        first.key,
+    );
+    expect(requests).toEqual([{ key: first.key, body: first.body }]);
+    await retry.click();
+    await expect(retry).toHaveCount(0);
+    expect(requests).toEqual([
+        { key: first.key, body: first.body },
+        { key: first.key, body: first.body },
+    ]);
+    expect(
+        await page.evaluate(() => Object.values(sessionStorage)),
+    ).not.toContain(first.key);
+    await expect(
+        page.getByRole('button', { name: '发送要求', exact: true }),
+    ).toBeDisabled();
+    await expect(
+        page.getByText('任务已有执行，请等待完成或取消。', { exact: true }),
+    ).toBeVisible();
+    await counts(task.id);
+    fixture.releaseRun(task.id);
+    await waitSucceeded(page, task.id, first.value.run.id);
+    await counts(task.id);
 });

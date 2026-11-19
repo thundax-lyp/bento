@@ -1129,6 +1129,9 @@ function TaskDetailsContent({ account, id }: { account: string; id: string }) {
     const navigate = useNavigate();
     const [params] = useSearchParams();
     const [prompt, setPrompt] = useState('');
+    const [pendingSubmission, setPendingSubmission] = useState<string | null>(
+        null,
+    );
     const [confirmRetry, setConfirmRetry] = useState<string | null>(null);
     const [confirmNewTask, setConfirmNewTask] = useState(false);
     const online = useSyncExternalStore(subscribeOnline, isOnline);
@@ -1166,13 +1169,24 @@ function TaskDetailsContent({ account, id }: { account: string; id: string }) {
         ]);
     }
     const sending = useMutation({
-        mutationFn: () => createTaskRun(account, id, prompt),
+        mutationFn: (submittedPrompt: string) =>
+            createTaskRun(account, id, submittedPrompt),
         async onSuccess(run) {
+            setPendingSubmission(null);
             setPrompt('');
             await refresh();
             await navigate(taskUrl(id, run.id));
         },
-        onError: refresh,
+        async onError(error, submittedPrompt) {
+            setPendingSubmission(
+                error instanceof ApiError &&
+                    error.status >= 400 &&
+                    error.status < 500
+                    ? null
+                    : submittedPrompt,
+            );
+            await refresh();
+        },
     });
     const prepare = useMutation({
         mutationFn: () => prepareTask(id),
@@ -1226,6 +1240,7 @@ function TaskDetailsContent({ account, id }: { account: string; id: string }) {
         online && !task.isError && runs.isSuccess && !events.isError;
     const canSend =
         mutable &&
+        pendingSubmission === null &&
         data.status === 'ready' &&
         !data.closedReason &&
         !data.reconciliation &&
@@ -1370,12 +1385,38 @@ function TaskDetailsContent({ account, id }: { account: string; id: string }) {
                             </li>
                         ))}
                     </ol>
+                    {last &&
+                        [
+                            'queued',
+                            'running',
+                            'recovering',
+                            'needs_review',
+                            'cancelling',
+                        ].includes(last.status) && (
+                            <p role="status">
+                                任务已有执行，请等待完成或取消。
+                            </p>
+                        )}
+                    {pendingSubmission !== null && (
+                        <div className="space-y-2">
+                            <p role="status">提交结果未确认，请重试原提交。</p>
+                            <Button
+                                type="button"
+                                disabled={!online || task.isError || pending}
+                                onClick={() =>
+                                    sending.mutate(pendingSubmission)
+                                }
+                            >
+                                重试提交
+                            </Button>
+                        </div>
+                    )}
                     <form
                         className="space-y-3"
                         onSubmit={(event) => {
                             event.preventDefault();
                             if (canSend && prompt.trim() && !pending)
-                                sending.mutate();
+                                sending.mutate(prompt.trim());
                         }}
                     >
                         <label>
