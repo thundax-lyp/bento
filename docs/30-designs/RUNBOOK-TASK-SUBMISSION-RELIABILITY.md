@@ -1,6 +1,6 @@
 # Task 提交可靠性闭环
 
-状态：Draft / 待 MASTER 审核；2026-11-19。只允许作者调查和修改本文件；不得据此实施。
+状态：Executable / 已获 MASTER 显式开工；2026-11-19。T0 已验证，T1 客户端请求键测试 4/4 PASS。
 
 工作边界：WORKER B，checkout `/Volumes/storage/workspace/bento-b`。调查基线 `231567dcf83e2d1a000db68f03dcb655a3d57cac`，当前 main 干净。获 Executable 后任务分支固定 `codex/task-submission-reliability`；只有 MASTER 单独发出 `$bento-runbook-worker RUNBOOK-TASK-SUBMISSION-RELIABILITY.md` 才开工。
 
@@ -73,51 +73,9 @@ ENVIRONMENTS.md 调查时不存在；本任务不连接外部受控服务，无�
 
 ## 机械步骤
 
-### T0：作者固定基线和执行入口
-
-前置状态：MASTER 审核本草稿为 Executable；单独计划提交与显式 worker 开工随后进行。
-允许修改：仅本 RUNBOOK。专门核对：上表 8 个生产文件和本文件，共 9 文件。
-禁止修改：所有生产和测试代码，不建分支、不提交直到 MASTER 发出相应阶段授权。
-
-执行：核对 HEAD/干净 main、上述符号与 LOC；确认本文件 SHA 与获审内容一致；检查端口。正式环境基线必须与此处相同，主线变化先交作者判定受影响范围。
-
-验证（仓库根）：
-
-```bash
-node --version
-pnpm --version
-pnpm --filter @bento/web exec playwright --version
-pnpm --filter @bento/web exec node --input-type=module -e 'import { chromium } from "@playwright/test"; const b = await chromium.launch({headless:true}); await b.close();'
-pnpm --filter @bento/workspace-api exec node --input-type=module -e 'await Promise.all([import("node:sqlite"),import("@deepseek-ai/cordis"),import("@aws-sdk/client-s3")]);'
-git rev-parse HEAD
-git status --short --branch
-node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='Task input, Run, and source deletion share a durable transaction boundary' apps/orchestrator/execution-service/service.test.ts
-lsof -nP -iTCP:4343 -iTCP:4344 -sTCP:LISTEN
-git diff --check
-```
-
-PASS：Node >=22、pnpm 为 packageManager 声明的 12.15.0；Playwright 可执行、Chromium 无网络访问启动并关闭成功、SQLite/两个运行依赖 import 成功；HEAD 等于固定基线；工作区仅本草稿；定向 1/1 PASS；lsof 无监听（此时退出 1 正常）；diff 无错误。调查定向 PASS 已取得；本轮作者已实测 Node v22.23.2、pnpm 12.15.0、Playwright 1.65.0、Chromium launch/close 与 runtime imports 全通过；端口和依赖需开工前再查。
-STOP：任一不符，或出现需外部配置的信息依赖；不得跳过或接管已有服务。
-
-### T1：锁定客户端请求键生命周期
-
-前置状态：计划已单独提交，获显式开工，T0 PASS。
-允许修改：新 `apps/workspace/web/src/task-submission.test.ts`、RUNBOOK。专门核对 api.ts，共 3 文件。
-禁止修改：api.ts 和安全 retry；不新增依赖。
-
-执行：Vitest/jsdom 测试公开 createTask/createTaskRun，vi.stubGlobal fetch 模拟 throw、502、200、409。捕获真实请求键及 body。分别断言网络/5xx 后相同账号/正文/范围用同键，sessionStorage 保存且同 tab 模拟模块重载后仍沿用；成功/明确 409 后键删除，下次新键；不同正文/账号/Task 隔离，snapshot fileIds 排序后同键。此步是客户端策略测试，不声明服务端受理。
-
-验证：
-
-```bash
-pnpm --filter @bento/web exec vitest run src/task-submission.test.ts
-```
-
-PASS：上述每项显式断言 PASS，无 skipped。STOP：策略不符，不改通用 taskMutation，报告 MASTER。
-
 ### T2：持久回执和各态新写门禁
 
-前置状态：T1 测试已提交并通过。
+前置状态：src/task-submission.test.ts 已提交，Vitest 4/4 PASS；网络/5xx 原键、模块重载、成功/4xx 清除、账号/正文/Task 隔离和 snapshot 排序已核对。
 允许修改：新 `apps/orchestrator/execution-service/task-submission.test.ts`、`apps/orchestrator/package.json` test 脚本、RUNBOOK。专门核对 store.ts、http.ts、types.ts，共 6 文件。
 禁止修改：Store/HTTP/service 生产代码与 service.test.ts。
 
