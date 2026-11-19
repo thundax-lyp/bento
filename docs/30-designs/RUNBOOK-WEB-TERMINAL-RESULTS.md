@@ -94,25 +94,9 @@ PASS：端口与本地依赖检查退出 0；基线与归属核对、正式需�
 STOP：内容/基线变化影响范围、正式依据冲突或本地依赖不能执行。无外部副作用，不回滚旧现场。
 提交边界：通过审核后独立 RUNBOOK 提交。
 
-### T3：明确页面尚不可用并覆盖四状态
-
-前置：上一 STEP 的 Task projection/terminal HTTP suites 2/2 及 Orchestrator typecheck 通过并提交；MASTER 已确认共享段许可。
-允许修改：`apps/workspace/web/src/pages.tsx`、`apps/workspace/web/e2e/task.spec.ts`、本 RUNBOOK。
-专门只读：`apps/workspace/web/src/api.ts`，合计 4 文件。
-执行：仅在 selected.resultVersion !== null 的现有 TaskRunResult 分支加 else `<p role="status">结果尚不可用。</p>`。不更动 selected.summary、needs_review 提示、retry/cancel 条件与 mutation，不改 TaskRunResult 的查询键和授权。新增独立 mock 路由用例覆盖 succeeded 非空、succeeded 零字节、failed 固定公开摘要、running/null；选择轮次后断言提示互斥，失败和不可用无下载。零字节仍可下载且显示无变更。四状态各项检查名称/标签/输出精确比对，null output 不产生假的通过文案。两种 view 均核对请求版本和字节。
-验证：
-
-```bash
-pnpm --filter @bento/web typecheck
-pnpm --filter @bento/web test:e2e -- --project=chromium
-```
-
-PASS：完整 Chromium e2e 通过，新用例四种结果/四种检查逐项断言执行。STOP：需修改 A 控制区、API 或共享状态，保留 diff 回报 MASTER。只使用本地 mock，不占实栈。
-提交边界：`Fix(task-entry): 明确区分未发布结果和空补丁`，同次删除 T3。
-
 ### T4：独立实际 HTTP 与页面结果链验收
 
-前置：T3 提交。本地 fixture 不占 Docker/OpenShell/身份实栈窗口。
+前置：上一 STEP 已提交最小不可用提示及独立 mock 结果矩阵，Web typecheck 和完整 Chromium 22/22 通过。本地 fixture 不占 Docker/OpenShell/身份实栈窗口。
 允许修改：新 `apps/workspace/web/acceptance/web-terminal-results.spec.ts`、新 `apps/workspace/web/acceptance/terminal-results-fixture.ts`、新 `apps/workspace/web/playwright.web-terminal-results.config.ts`、`public-files.json`、本 RUNBOOK。
 专门只读：`apps/orchestrator/execution-service/local.ts`、`apps/workspace/api/server.ts`、`apps/workspace/api/auth.ts`、`apps/workspace/api/execution-service-http.ts`、`apps/workspace/api/account-store.ts`，合计 10 文件。
 执行：

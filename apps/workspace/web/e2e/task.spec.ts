@@ -1062,3 +1062,164 @@ test('Task routes retain idempotency, history, and versioned results across brow
     expect(reopened.url()).toBe(snapshot);
     expect(tasks.size).toBe(2);
 });
+
+test('Task terminal result states distinguish empty patches, failures and four check labels', async ({
+    page,
+    context,
+}) => {
+    const taskId = randomUUID();
+    const at = new Date().toISOString();
+    const runs: import('../src/api.ts').TaskRun[] = [
+        'succeeded',
+        'succeeded',
+        'failed',
+        'running',
+    ].map((status, index) => ({
+        id: randomUUID(),
+        taskId,
+        sequence: index + 1,
+        prompt: '终态样例' + index,
+        status: status as import('../src/api.ts').TaskRun['status'],
+        retryOf: null,
+        canContinue: false,
+        canCancel: false,
+        retryReason: 'stop_unconfirmed',
+        resultVersion: index < 2 ? 1 : null,
+        summary: index === 2 ? 'Run stopped before completion.' : null,
+        createdAt: at,
+        updatedAt: at,
+    }));
+    const checks: import('../src/api.ts').TaskCheck[] = [
+        { name: '匹配', status: 'passed', output: '安全通过摘要' },
+        { name: '不匹配', status: 'failed', output: '安全失败摘要' },
+        { name: '跳过', status: 'not_run', output: null },
+        { name: '读取失败', status: 'unavailable', output: '安全不可用摘要' },
+    ];
+    const patch = '--- a/file.txt\n+++ b/file.txt\n@@ -0,0 +1 @@\n+公开内容\n';
+    const requested: string[] = [];
+    await context.route('**/api/**', async (route) => {
+        const url = new URL(route.request().url());
+        const path = url.pathname;
+        const send = (json: unknown) => route.fulfill({ json });
+        if (path === '/api/session')
+            return send({ account: 'terminal-fixture' });
+        if (path === '/api/tasks/' + taskId)
+            return send({
+                task: {
+                    id: taskId,
+                    name: '终态查询',
+                    sourceSpaceId: null,
+                    inputDigest: 'a'.repeat(64),
+                    environmentVersion: 'sha256:' + 'b'.repeat(64),
+                    status: 'ready',
+                    prepareError: null,
+                    closedReason: null,
+                    reconciliation: null,
+                    inputs: [],
+                    createdAt: at,
+                    updatedAt: at,
+                },
+            });
+        if (path.endsWith('/events')) return send({ items: [] });
+        if (path.endsWith('/runs')) return send({ items: runs });
+        const run = runs.find((item) => path.includes(item.id));
+        if (!run) return route.fulfill({ status: 404, json: {} });
+        if (path.endsWith('/results'))
+            return send({
+                result: {
+                    runId: run.id,
+                    version: 1,
+                    summary: '公开结论',
+                    checks,
+                    incrementalSha256: 'a'.repeat(64),
+                    cumulativeSha256: 'a'.repeat(64),
+                    createdAt: at,
+                },
+            });
+        if (path.endsWith('/diff')) {
+            expect(run.resultVersion).toBe(1);
+            expect(path).toContain('/results/1/diff');
+            requested.push(run.id + ':' + url.searchParams.get('view'));
+            return route.fulfill({
+                contentType: 'text/plain',
+                body: run.id === runs[0]!.id ? patch : '',
+                ...(url.searchParams.has('download')
+                    ? {
+                          headers: {
+                              'content-disposition':
+                                  'attachment; filename="changes.patch"',
+                          },
+                      }
+                    : {}),
+            });
+        }
+        return send({ run });
+    });
+    await page.goto('/tasks/' + taskId + '?run=' + runs[0]!.id);
+    const download = page.getByRole('link', { name: '下载 diff' });
+    for (const [index, run] of runs.entries()) {
+        if (index) await page.getByLabel('执行轮次').selectOption(run.id);
+        if (index >= 2) {
+            await expect(
+                page.getByText('结果尚不可用。', { exact: true }),
+            ).toBeVisible();
+            await expect(download).toHaveCount(0);
+            await expect(page.getByText('这次任务没有文件变更。')).toHaveCount(
+                0,
+            );
+            if (index === 2)
+                await expect(
+                    page.getByText('Run stopped before completion.', {
+                        exact: true,
+                    }),
+                ).toBeVisible();
+            continue;
+        }
+        await expect(download).toBeVisible();
+        await expect(
+            page.getByText('结果尚不可用。', { exact: true }),
+        ).toHaveCount(0);
+        for (const [name, label] of [
+            ['匹配', '通过'],
+            ['不匹配', '失败'],
+            ['跳过', '未运行'],
+            ['读取失败', '无法运行'],
+        ])
+            await expect(
+                page
+                    .getByRole('listitem')
+                    .filter({ hasText: name + ' · ' + label }),
+            ).toHaveCount(1);
+        for (const check of checks)
+            if (check.output)
+                await expect(
+                    page.getByText(check.output, { exact: true }),
+                ).toBeVisible();
+        for (const view of ['cumulative', 'incremental']) {
+            await page.getByLabel('补丁范围').selectOption(view);
+            await expect(download).toHaveAttribute(
+                'href',
+                new RegExp(
+                    '/' +
+                        run.id +
+                        '/results/1/diff\\?view=' +
+                        view +
+                        '&download=1$',
+                ),
+            );
+            if (index === 0)
+                await expect(page.getByLabel('逐行变更')).toHaveText(patch);
+            else
+                await expect(
+                    page.getByText('这次任务没有文件变更。'),
+                ).toBeVisible();
+            const pending = page.waitForEvent('download');
+            await download.click();
+            const file = await pending;
+            expect(await readFile(await file.path())).toEqual(
+                Buffer.from(index === 0 ? patch : ''),
+            );
+            expect(requested).toContain(run.id + ':' + view);
+        }
+    }
+});
