@@ -6,37 +6,15 @@ import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
-import { Context } from '@deepseek-ai/cordis';
-import {
-    AgentRegistry,
-    type AgentHandle,
-    type AgentOptions,
-} from '@deepseek-ai/dsh-agent';
-import { AgentLoop } from '@deepseek-ai/dsh-agent-loop';
-import {
-    LlmRuntime,
-    LlmAdapter,
-    createUserMessage,
-    type GenerateOptions,
-    type StreamChunk,
-} from '@deepseek-ai/dsh-llm';
-import {
-    SessionStore,
-    SessionId,
-    type SessionEvent,
-} from '@deepseek-ai/dsh-session';
-import { SessionProjectionRegistry } from '@deepseek-ai/dsh-session-projection';
-import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt';
-import { ToolRuntime } from '@deepseek-ai/dsh-tools';
-import * as checkpointPolicy from '@deepseek-ai/dsh-session-checkpoint-policy';
-import {
-    SessionOwnershipLostError,
-    type SessionHandle,
-} from '@deepseek-ai/dsh-session-persistence';
+import type { Context } from '@deepseek-ai/cordis';
+import type { AgentHandle } from '@deepseek-ai/dsh-agent';
+import { createUserMessage, type GenerateOptions } from '@deepseek-ai/dsh-llm';
+import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
+import type { SessionHandle } from '@deepseek-ai/dsh-session-persistence';
+import { createOfficialRuntime } from './runtime.ts';
 import { remoteSessionPersistence } from '@/apps/worker/remote-session.ts';
 import { SingleHostExecution } from '../single-host.ts';
 
-const agentOptions: AgentOptions = { provider: 'a2-local', model: 'fixture' };
 type Row = Record<string, SQLOutputValue>;
 type PersistedSnapshot = {
     sessions: Row[];
@@ -77,26 +55,6 @@ type ProviderFixture = {
     snapshot(): PersistedSnapshot;
     dispose(): Promise<void>;
 };
-
-class LocalTurnAdapter extends LlmAdapter {
-    private readonly beforeStream: (options: GenerateOptions) => void;
-    constructor(beforeStream: (options: GenerateOptions) => void) {
-        super();
-        this.beforeStream = beforeStream;
-    }
-    async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-        options.signal?.throwIfAborted();
-        this.beforeStream(options);
-        yield { type: 'block-start', index: 0, blockType: 'text' };
-        yield { type: 'text-delta', index: 0, text: 'a2-local-response' };
-        yield {
-            type: 'block-end',
-            index: 0,
-            block: { type: 'text', text: 'a2-local-response' },
-        };
-        yield { type: 'finish', reason: { kind: 'stop' } };
-    }
-}
 
 function closeHttpServer(server: Server): Promise<void> {
     if (!server.listening) return Promise.resolve();
@@ -201,9 +159,14 @@ export async function createProviderFixture(): Promise<ProviderFixture> {
         let drop = false;
         let droppedResolve: (() => void) | undefined;
         let droppedAck: Promise<void> | undefined;
-        let unregisterAdapter: (() => void) | undefined;
         let closing: Promise<void> | undefined;
-        const ctx = new Context();
+        let beforeStream: (options: GenerateOptions) => void;
+        const shared = await createOfficialRuntime({
+            workspaceRoot: folder,
+            sessionId: session,
+            beforeStream: (options) => beforeStream(options),
+        });
+        const { ctx, agentOptions } = shared;
         const proxy = createServer(async (request, response) => {
             try {
                 if (request.method !== 'POST' || request.url !== '/rpc') {
@@ -293,41 +256,7 @@ export async function createProviderFixture(): Promise<ProviderFixture> {
         });
         function close(revoked: boolean): Promise<void> {
             closing ??= cleanup([
-                async () => {
-                    if (!runtime.agentHandle) return;
-                    if (revoked)
-                        await assert.rejects(
-                            runtime.agentHandle.dispose(),
-                            SessionOwnershipLostError,
-                        );
-                    else await runtime.agentHandle.dispose();
-                },
-                async () => {
-                    if (!revoked) return;
-                    const persistence = ctx.sessionPersistence;
-                    assert(
-                        'dispose' in persistence &&
-                            typeof persistence.dispose === 'function',
-                    );
-                    await assert.rejects(
-                        persistence.dispose(),
-                        (error: unknown) => {
-                            assert(error instanceof AggregateError);
-                            assert.equal(
-                                error.message,
-                                'Session persistence close failed',
-                            );
-                            assert.equal(error.errors.length, 1);
-                            assert(
-                                error.errors[0] instanceof
-                                    SessionOwnershipLostError,
-                            );
-                            return true;
-                        },
-                    );
-                },
-                () => unregisterAdapter?.(),
-                () => ctx.fiber.dispose(),
+                () => shared.dispose({ revoked }),
                 () => closeHttpServer(proxy),
                 () => {
                     if (transportFailures.length)
@@ -422,15 +351,7 @@ export async function createProviderFixture(): Promise<ProviderFixture> {
                 url: proxyUrl,
                 token: grant.token,
             });
-            await ctx.plugin(AgentRegistry);
-            await ctx.plugin(SessionStore);
-            await ctx.plugin(SessionProjectionRegistry);
-            await ctx.plugin(LlmRuntime);
-            await ctx.plugin(SystemPrompt);
-            await ctx.plugin(ToolRuntime);
-            await ctx.plugin(AgentLoop);
-            await ctx.plugin(checkpointPolicy);
-            const beforeStream = (options: GenerateOptions) => {
+            beforeStream = (options: GenerateOptions) => {
                 assert.equal(options.sessionId, session);
                 assert(runtime.agentHandle);
                 const stored = snapshot();
@@ -457,10 +378,7 @@ export async function createProviderFixture(): Promise<ProviderFixture> {
                     );
                 }
             };
-            unregisterAdapter = ctx.llm.registerAdapter(
-                ['a2-local'],
-                new LocalTurnAdapter(beforeStream),
-            );
+            await shared.initialize();
             const persistence = ctx.sessionPersistence;
             const create = persistence.create.bind(persistence);
             persistence.create = async (...args) => {
