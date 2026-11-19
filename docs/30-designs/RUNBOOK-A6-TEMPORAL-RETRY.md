@@ -3,7 +3,7 @@
 ## 状态与执行边界
 
 - 建立日期：2026-11-19。
-- 状态：`Executable / Implementing`；MASTER审核及计划提交已核对，显式Worker已开工。T1/T2/T3与T4生产真实Happy Path已PASS，剩余步骤如下。
+- 状态：`Executable / Implementing`；MASTER审核及计划提交已核对，显式Worker已开工。T1～T5已PASS：真实Happy Path及丢包宿主重启均实际验证，剩余步骤如下。
 - checkout：仅 B；分支 `codex/a6-temporal-retry`，基线 `0f4327470885e32f56296a3afc0ad142d1054a08`，获审计划提交 `acf25388748dc2ac9aeca27af93965c0da5b3cf9`。
 - 授权：按MASTER显式Worker派工逐步实施/提交；生产文件保持只读，外部环境仅本任务隔离本地资源。
 
@@ -407,33 +407,9 @@ business.sqlite 固定查询：`SELECT * FROM runs WHERE id=?`（必须一行）
 
 下列命令 cwd 均为仓库根。各步只有获审 Worker 可执行；本作者回合不执行。验证使用 test-name-pattern 选择已创建的固定用例，允许 Node 对不匹配用例显示未选中，但所选 case 必须实际 PASS、不得 skip；T7/T8 全量运行九项，必须 skip=0。pnpm typecheck 运行时读取的依赖不等于专门人工核对文件预算，专门读文件已逐步穷举。
 
-### T5：成功回包丢失后的宿主与 Worker 重启
-
-前置状态：真实Happy Path已实际1/1 PASS、0skip；Task202、真实Workflow/Activity attempt1、同键原Run重放、独立SQL/文件/原receipt一致且完整正常close，源码与前置提交可回读。T4冻结快照sourceSpaceId修订已由MASTER按5e25161a293784cf61d01858e95184ef30cd6a1b1288067de8f207a646f7687c定向审核Executable。
-允许修改：本 RUNBOOK、real-retry.test.ts、evidence.ts、process.ts（4）；专门核对：host.ts、control-proxy.mjs、service.ts、temporal.ts（合计8）。禁止修改：全部生产代码、业务Task retry策略、初始fixture写回执规则。
-
-执行：
-
-1. 新增 `A6-02 lost reply reuses receipt across host restart`，timeout=180000；按T4正常创建新Task/Run，prompt=`a6-lost-host-`+UUID，首host mode=drop。等held.json最多30秒；此时worker/local文件写入、Run结果持久化已完成，Go仍存活heartbeat，成功帧尚未送到Activity。
-2. 先独立captureBusiness为before；真实probe要求status=running、workflowCompleted=0、completed.length=0、scheduled一个原Run，pending恰一项started=true、attempt=1；取得并固定executionRunId。before满足全部业务正常断言，Run已succeeded不能当作Workflow已完成。proxy events必须恰一advance、reply-held，零reply-forwarded。
-3. 父调用host.dropControl，等proxy确认discarded后KILL自己的Go句柄，等实际closed及control-closed/5秒、proxy-closed/5秒；必须Go signalSIGKILL reason=dropped。然后host.close/25秒，确认第一host实际close。再次probe若server仍running或已进入retry都不得出现completed；不发送第二次业务Run请求触发重试。
-4. 原state/volume/namespace/queue，**新proxy目录、modepass** 启动第二host；真实server靠原pending Activity自己重投。原execution probe最多60秒等completed；最终started末项attempt≥2，completed单项关联原Scheduled；原Workflow/execution、payload保持不变，pending为空，无continued/new execution。
-5. capture after，与before所有业务SQL/session/operation/结果/原receipt/退出记录/文件逐项相等；两host worker日志合并恰一execute零recover，proxy合计两次advance（各 incarnation 一次）、第二次成功帧已转发。POST原key再重放200原业务ID，GET结果原字节。清理全部自有资源后输出CaseReport(case=lost-host)，不得把重启controller失败预期日志当测试成功或掩盖其他错误。
-
-验证：
-
-```bash
-BENTO_A6_TEMPORAL_ARCHIVE=/tmp/bento-b-temporal-author-aaOJQ2/release.tar.gz node --import ./register-paths.mjs --experimental-strip-types --test --test-concurrency=1 --test-timeout=1200000 --test-name-pattern='^A6-02 lost reply reuses receipt across host restart$' apps/orchestrator/acceptance/temporal-retry/real-retry.test.ts
-pnpm --dir apps/orchestrator typecheck
-git diff --check
-```
-
-PASS：真实server原execution发生attempt≥2重投，两个生产Go/TS incarnation实际参与；原业务attempt/admission/receipt/SQL/文件均不变、一次实际副作用；只在注入点Go被故意KILL，其他正常close无forced。删除步骤提交 `Test(execution-service): 验证 Activity 丢包重投复用原尝试`。
-STOP：重试不是server驱动、callback或worker超过固定次数、原generation/结果变化、需要改service.ts或放宽断言；保留最后PASS版本，报告最小复现与原始证据。
-
 ### T6：同一丢包边界的 server 持久重启与失败清理
 
-前置状态：T5宿主重启case已提交PASS。
+前置状态：真实Happy Path提交1b0b5f8c0a786a6774b0edaa6c5fa1408f0664bb已纳入；宿主重启case已实际PASS（原execution、Activity attempt2、一次worker/零recover、原SQL/receipt/文件保持一致且完整close），当前前置提交可回读。
 允许修改：本 RUNBOOK、real-retry.test.ts、process.ts、evidence.ts（4）；专门核对：control-proxy.mjs、host.ts（合计6）。禁止修改：生产重试/HeartbeatTimeout/Workflow参数、数据库Schema和原有测试。
 
 执行：

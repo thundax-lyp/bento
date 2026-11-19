@@ -437,8 +437,11 @@ async function runScenario(
     kind: 'happy' | 'lost-host' | 'lost-server-host',
     t: TestContext,
 ): Promise<void> {
-    if (kind !== 'happy')
-        throw new Error('Fault scenario is not implemented in this step');
+    if (kind === 'lost-server-host')
+        throw new Error(
+            'Server restart scenario is not implemented in this step',
+        );
+    const retried = kind !== 'happy';
     const directory = await mkdtemp('/tmp/bento-a6-');
     const state = join(directory, 'state'),
         volume = join(directory, 'volume');
@@ -487,7 +490,7 @@ async function runScenario(
                 address: server.address,
                 namespace,
                 taskQueue: queue,
-                mode: 'pass',
+                mode: retried ? 'drop' : 'pass',
             },
             t.signal,
         );
@@ -557,7 +560,7 @@ async function runScenario(
             15000,
             t.signal,
         );
-        const prompt = 'a6-happy-' + randomUUID();
+        const prompt = (retried ? 'a6-lost-host-' : 'a6-happy-') + randomUUID();
         const accepted = await api(
             '/tasks/' + taskId + '/runs',
             'POST',
@@ -603,20 +606,96 @@ async function runScenario(
             );
             return JSON.parse(result.stdout) as TemporalEvidence;
         };
-        const first = await observe('', 'first-history.json');
+        let first: TemporalEvidence;
+        let before: Awaited<ReturnType<typeof captureBusiness>> | undefined;
+        if (retried) {
+            const held = await readMarker(
+                join(directory, 'h1'),
+                'held.json',
+                t.signal,
+                30000,
+            );
+            assert.equal(held.runId, runId);
+            before = await captureBusiness(state, volume, taskId, runId);
+            first = await observe('', 'first-history.json');
+            assert.equal(first.status, 'running');
+            assert.equal(first.workflowCompleted, 0);
+            assert.equal(first.completed.length, 0);
+            assert.equal(first.workflowStarted, 1);
+            assert.equal(first.workflowId, 'bento-run-' + runId);
+            assert.equal(first.workflowType, 'bentoRun');
+            assert.equal(first.taskQueue, queue);
+            assert.deepEqual(first.workflowInput, { count: 1, runId });
+            assert.equal(first.scheduled.length, 1);
+            assert.equal(first.scheduled[0]!.activityType, 'advanceRun');
+            assert.equal(first.scheduled[0]!.taskQueue, queue);
+            assert.deepEqual(first.scheduled[0]!.input, { count: 1, runId });
+            assert.equal(first.pending.length, 1);
+            assert.equal(first.pending[0]!.attempt, 1);
+            assert.equal(first.pending[0]!.started, true);
+            const initialEvents = (
+                await readFile(join(directory, 'h1', 'events.ndjson'), 'utf8')
+            )
+                .trim()
+                .split('\n')
+                .map((line) => JSON.parse(line) as Record<string, unknown>);
+            assert.equal(
+                initialEvents.filter((e) => e.event === 'advance').length,
+                1,
+            );
+            assert.equal(
+                initialEvents.filter((e) => e.event === 'reply-held').length,
+                1,
+            );
+            assert.equal(
+                initialEvents.filter((e) => e.event === 'reply-forwarded')
+                    .length,
+                0,
+            );
+            await host.dropControl();
+            const stopped = await readMarker(
+                join(directory, 'h1'),
+                'control-closed.json',
+                t.signal,
+            );
+            assert.equal(stopped.reason, 'dropped');
+            assert.equal(stopped.signal, 'SIGKILL');
+            await host.close();
+            host = undefined;
+            const dropped = await observe(
+                first.executionRunId,
+                'after-drop-history.json',
+            );
+            assert.equal(dropped.status, 'running');
+            assert.equal(dropped.completed.length, 0);
+            host = await startHost(
+                {
+                    schema: 1,
+                    state,
+                    volume,
+                    proxyDirectory: join(directory, 'h2'),
+                    controlBinary: built.control,
+                    address: server.address,
+                    namespace,
+                    taskQueue: queue,
+                    mode: 'pass',
+                },
+                t.signal,
+            );
+        } else first = await observe('', 'first-history.json');
         const final = await poll(
             () => observe(first.executionRunId, 'final-history.json'),
             (e) => e.status === 'completed',
-            30000,
+            retried ? 60000 : 30000,
             t.signal,
         );
         assertTemporal(final, {
             runId,
             queue,
             executionId: first.executionRunId,
-            retried: false,
+            retried,
         });
-        const before = await captureBusiness(state, volume, taskId, runId);
+        before ??= await captureBusiness(state, volume, taskId, runId);
         const result = JSON.parse(String(before.results[0]!.body)) as Record<
             string,
             unknown
@@ -644,19 +723,36 @@ async function runScenario(
             runId,
             queue,
             executionId: first.executionRunId,
-            retried: false,
+            retried,
         });
-        const events = (
-            await readFile(join(directory, 'h1', 'events.ndjson'), 'utf8')
-        )
-            .trim()
-            .split('\n')
-            .map((line) => JSON.parse(line) as Record<string, unknown>);
-        assert.equal(events.filter((e) => e.event === 'advance').length, 1);
+        const eventSets = await Promise.all(
+            (retried ? ['h1', 'h2'] : ['h1']).map(async (name) =>
+                (await readFile(join(directory, name, 'events.ndjson'), 'utf8'))
+                    .trim()
+                    .split('\n')
+                    .map((line) => JSON.parse(line) as Record<string, unknown>),
+            ),
+        );
+        const events = eventSets.flat();
+        assert.equal(
+            events.filter((e) => e.event === 'advance').length,
+            retried ? 2 : 1,
+        );
         assert.equal(
             events.filter((e) => e.event === 'reply-forwarded').length,
             1,
         );
+        if (retried) {
+            assert.equal(
+                eventSets[1]!.filter((e) => e.event === 'advance').length,
+                1,
+            );
+            assert.equal(
+                eventSets[1]!.filter((e) => e.event === 'reply-forwarded')
+                    .length,
+                1,
+            );
+        }
         const head = (
             await runCommand('git', ['rev-parse', 'HEAD'], {
                 cwd: root,
@@ -695,6 +791,8 @@ async function runScenario(
             for (const [name, value] of [
                 ['before.json', JSON.stringify(before)],
                 ['after.json', JSON.stringify(after)],
+                ['before-temporal.json', JSON.stringify(first)],
+                ['after-temporal.json', JSON.stringify(replayHistory)],
                 ['write-receipt.json', before.receiptBytes],
                 ['exit-receipt.json', before.exitBytes],
                 [
@@ -745,4 +843,10 @@ test(
     'A6-02 happy path uses real Temporal and one durable effect',
     { timeout: 180000 },
     async (t) => runScenario('happy', t),
+);
+
+test(
+    'A6-02 lost reply reuses receipt across host restart',
+    { timeout: 180000 },
+    async (t) => runScenario('lost-host', t),
 );
