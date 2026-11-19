@@ -167,27 +167,11 @@ PASS：5 tests、5 pass、0 fail、0 skip，包括正常 checkpoint/reopen、三
 
 所有命令工作目录为仓库根。每步验证失败必须 STOP，禁止删除失败用例/减少断言/替换已定入口。各步均禁止改上文 Non-goals。
 
-### T1：共享官方 runtime 装配
-
-前置状态：MASTER Executable、计划提交与显式 worker 启动均已核对，T0五项通过；若 HEAD 已变化，先由作者核对受影响基线。
-允许修改：runtime.ts（新增）、fixture.ts、public-files.json、本文件。
-专门读取：既有 provider-lifecycle.test.ts、apps/worker/dsh-worker.ts、apps/orchestrator/package.json、apps/worker/remote-session.ts。预算8文件。
-
-执行：按固定签名与唯一处置所有权抽取官方服务/模型/生命周期；原fixture.close仅委托shared.dispose({revoked})再关代理，两个拒绝判定迁移完整且不重复handle.dispose；原 fixture 通过 createOfficialRuntime 使用完全相同实例，保留 writer捕获、代理、beforeStream、五项全部断言。新增路径加入公开白名单精确项，保持排序风格，不加通配。只移动既有逻辑；不改变正常轮事件内容和旧代错误。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --test apps/orchestrator/openshell/provider-lifecycle.test.ts
-pnpm --filter @bento/orchestrator typecheck
-pnpm exec prettier --check apps/orchestrator/openshell/provider-lifecycle/runtime.ts apps/orchestrator/openshell/provider-lifecycle/fixture.ts public-files.json
-```
-
-PASS：5/5无skip、类型与格式退出0。STOP：共享类型不能满足 runDshWorker bootstrap 或原断言变化；回作者修订，不创建第二套 runtime。提交 `Refactor(openshell): 复用官方 Provider 验收运行时`，删T1并核对提交SHA/文件和剩余步骤。
+T1 已通过（2026-11-19）：共享runtime与原fixture唯一处置接线完成；原provider-lifecycle 5/5、0skip，Orchestrator typecheck、指定三文件prettier通过；五个原test文件无改动。实现提交由包含本记录的Git提交回读。
 
 ### T2：事务提交边界真实强杀
 
-前置状态：T1提交且原五项通过。
+前置状态：包含上述T1事实的提交已核对且原五项通过。
 允许修改：crash-child.ts、crash-fixture.ts、provider-crash.test.ts、public-files.json、本文件。
 专门读取：runtime.ts、session-history.ts、single-host.ts、persistence-fence.ts、worker-gate.ts。预算10文件。
 

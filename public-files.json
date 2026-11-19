@@ -164,6 +164,7 @@
         "apps/workspace/web/acceptance/web-queue-isolation.spec.ts",
         "apps/workspace/web/playwright.web-queue-isolation.config.ts",
         "apps/orchestrator/openshell/provider-lifecycle/fixture.ts",
+        "apps/orchestrator/openshell/provider-lifecycle/runtime.ts",
         "apps/orchestrator/openshell/provider-lifecycle.test.ts",
         "apps/workspace/api/go/accounts_lifecycle_test.go"
     ],
