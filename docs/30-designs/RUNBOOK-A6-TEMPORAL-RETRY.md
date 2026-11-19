@@ -3,7 +3,7 @@
 ## 状态与执行边界
 
 - 建立日期：2026-11-19。
-- 状态：`Executable / Implementing`；MASTER审核及计划提交已核对，显式Worker已开工。T1/T2各2例及T3真实history探针NotFound硬失败1例已PASS，剩余步骤如下。
+- 状态：`Executable / Implementing`；MASTER审核及计划提交已核对，显式Worker已开工。T1/T2/T3与T4生产真实Happy Path已PASS，剩余步骤如下。
 - checkout：仅 B；分支 `codex/a6-temporal-retry`，基线 `0f4327470885e32f56296a3afc0ad142d1054a08`，获审计划提交 `acf25388748dc2ac9aeca27af93965c0da5b3cf9`。
 - 授权：按MASTER显式Worker派工逐步实施/提交；生产文件保持只读，外部环境仅本任务隔离本地资源。
 
@@ -60,6 +60,8 @@
 ### Task 输入与结果
 
 内部 `POST /v1/tasks` 的 body 精确六字段：`id:UUIDv4|null`、`name:string`、`sourceSpaceId:UUIDv4|null`、`inputFiles:{path:string,text:string}[]`、`inputManifest:{fileId:UUIDv4,path:string,bytes:number,sha256:string}[]`、`inputDigest:string`。digest 使用 `snapshotSha256`，文件 sha256 对实际 UTF-8 字节求值。测试固定一个 `README.md`、`# Fixture\n`，每例新 UUID 和创建幂等 key；返回 202 `{task}`，准备完成 GET task.status 为 ready。
+
+冻结快照fixture按[Task生命周期契约](../20-interfaces/WEB-INTERFACE.md#task-生命周期--目标契约)区分blank/snapshot：本轮是非空snapshot，id、sourceSpaceId、manifest.fileId分别使用本例新UUIDv4；sourceSpaceId仅为本地fixture来源标识，不连接真实Space。blank的id/sourceSpaceId均为null、inputFiles/manifest均空，本轮不改该nullable类型或生产语义。逐项对照 `Store.createTask`（store.ts:737–774）及既有 `taskRetryTestInput`（service.test.ts:4151–4171）：六字段仍仅id、name、sourceSpaceId、inputFiles、inputManifest、inputDigest；name固定A6 Temporal Task，README及其原字节不变，manifest仍单条fileId/path/bytes/sha256，inputDigest仍由生产snapshotSha256(inputFiles)计算。T4只把原错误的snapshot sourceSpaceId=null改为randomUUID，不能改其余输入、生产校验或扩展调用链。
 
 `POST /v1/tasks/<taskId>/runs` body 仅 `{prompt:string}`，独立 UUIDv4 idempotency-key；返回 202 `{run}`。GET 同 Run 读取 succeeded；结果从 `/v1/tasks/<taskId>/runs/<runId>/results/1/diff?view=cumulative` 读取 text/plain。重放相同 POST 应为 200、原 Run ID。生产 service bearer 与 owner 仅使用固定无效外部权限的 fixture 值，不读取真实身份环境。
 
@@ -405,33 +407,9 @@ business.sqlite 固定查询：`SELECT * FROM runs WHERE id=?`（必须一行）
 
 下列命令 cwd 均为仓库根。各步只有获审 Worker 可执行；本作者回合不执行。验证使用 test-name-pattern 选择已创建的固定用例，允许 Node 对不匹配用例显示未选中，但所选 case 必须实际 PASS、不得 skip；T7/T8 全量运行九项，必须 skip=0。pnpm typecheck 运行时读取的依赖不等于专门人工核对文件预算，专门读文件已逐步穷举。
 
-### T4：生产入口正常派发与原始副作用证据
-
-前置状态：工具ac9c86e、代理484b5ec已纳入；真实SDK probe构建及专属server的NotFound硬失败1/1已PASS、无成功JSON/history文件，当前前置提交可回读。
-允许修改：本 RUNBOOK、host.ts、evidence.ts、real-retry.test.ts、process.ts、public-files.json（6）；专门核对：service.ts、local.ts、store.ts、apps/worker/protocol.ts（均使用前文完整路径，合计10）。禁止修改：全部四份生产文件，A的服务重试/history与外部环境。
-
-执行：
-
-1. 实现 host fixture、startHost/HostProcess=`{url:string;directory:string;process:OwnedProcess;control:ControlTransport;dropControl:()=>Promise<void>;close:()=>Promise<void>}`、上述IPC/全部参数/代理wrapper和worker日志。head用根 `git rev-parse HEAD`；临时状态由父mkdtemp生成，工具binary/probe本轮编译。
-2. 实现独立 BusinessEvidence、assertOriginal/Temporal；SQL/文件/原回执精确Schema照前文，不通过Store自证。all waits有t.signal和deadline：HTTP单次5秒、Task ready15秒、Run succeeded30秒、Workflow completed30秒、轮询50ms（Temporal probe每次最多10秒，不并发累积）。
-3. 新增 `A6-02 happy path uses real Temporal and one durable effect`，timeout=180000。新server namespace/queue→host modepass→POST Task六字段（id=randomUUID、name=`A6 Temporal Task`、sourceSpaceId=null、初始README、manifest单文件随机UUID、生产snapshotSha256）→GET ready→POST Run，prompt=`a6-happy-`+UUID。仅通过HTTP入账，不直接插Run。捕获202业务ID，workflowID从其稳定派生。
-4. 真实probe先获取executionID，再用显式executionID等完成；assertTemporal要求workflow type bentoRun、queue原queue、WorkflowInput/ScheduledInput各单一原业务Run ID、workflowStarted=1、workflowCompleted=1、workflowFailed=0、continuations=0；scheduled.length=1 typeadvanceRun，started末项attempt=1，completed.length=1且scheduled/started event关联，pending为空。
-5. 独立业务证据满足全部正常预期；GET两种diff与结果一致；原Run POST同key重放200原ID，再重复捕获snapshot、history确认无新Workflow/operation/结果（executionID不变）。关闭host/proxy/control/server且端口/目录清理，才输出CaseReport。public精确添加host.ts/evidence.ts。
-
-验证：
-
-```bash
-BENTO_A6_TEMPORAL_ARCHIVE=/tmp/bento-b-temporal-author-aaOJQ2/release.tar.gz node --import ./register-paths.mjs --experimental-strip-types --test --test-concurrency=1 --test-timeout=1200000 --test-name-pattern='^A6-02 happy path' apps/orchestrator/acceptance/temporal-retry/real-retry.test.ts
-pnpm --dir apps/orchestrator typecheck
-git diff --check
-```
-
-PASS：所选正常链路实际PASS，生产Go/TS与真实server全参与，独立SQL/文件/原回执/原execution和幂等重放一致，worker只execute一次、无recover，正常关闭无forced。删除步骤提交 `Test(execution-service): 验证真实 Temporal 正常派发与持久回执`。
-STOP：真实入口缺失/需要改service.ts、fixture只伪造成功、原始证据不符、probe history结构不符；保持A6-02部分实现，交MASTER安排生产修复顺序，不推进故障case。
-
 ### T5：成功回包丢失后的宿主与 Worker 重启
 
-前置状态：T4生产真实Happy Path已PASS提交。
+前置状态：真实Happy Path已实际1/1 PASS、0skip；Task202、真实Workflow/Activity attempt1、同键原Run重放、独立SQL/文件/原receipt一致且完整正常close，源码与前置提交可回读。T4冻结快照sourceSpaceId修订已由MASTER按5e25161a293784cf61d01858e95184ef30cd6a1b1288067de8f207a646f7687c定向审核Executable。
 允许修改：本 RUNBOOK、real-retry.test.ts、evidence.ts、process.ts（4）；专门核对：host.ts、control-proxy.mjs、service.ts、temporal.ts（合计8）。禁止修改：全部生产代码、业务Task retry策略、初始fixture写回执规则。
 
 执行：

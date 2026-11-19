@@ -1,3 +1,4 @@
+import type { HostConfig } from './host.ts';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { closeSync, openSync, writeSync } from 'node:fs';
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
@@ -530,4 +531,136 @@ export async function buildBinaries(
         },
     );
     return { control, probe };
+}
+
+export type HostProcess = {
+    url: string;
+    directory: string;
+    process: OwnedProcess;
+    control: ControlTransport;
+    dropControl: () => Promise<void>;
+    close: () => Promise<void>;
+};
+export async function startHost(
+    config: HostConfig,
+    signal: AbortSignal,
+): Promise<HostProcess> {
+    const control = await startControlTransport(
+        config.controlBinary,
+        config.proxyDirectory,
+        signal,
+    );
+    const configPath = join(config.proxyDirectory, 'host-config.json');
+    await atomicJson(configPath, config);
+    const owned = own(
+        process.execPath,
+        [
+            '--import',
+            join(root, 'register-paths.mjs'),
+            '--experimental-strip-types',
+            join(root, 'apps/orchestrator/acceptance/temporal-retry/host.ts'),
+            configPath,
+        ],
+        {
+            cwd: root,
+            env: { ...process.env },
+            log: join(config.proxyDirectory, 'host.log'),
+            ipc: true,
+        },
+    );
+    let closing: Promise<void> | undefined;
+    const close = () =>
+        (closing ??= (async () => {
+            let failed = false;
+            if (!closed.has(owned.child) && owned.child.connected)
+                owned.child.send({ type: 'close' });
+            let exit = await within(owned.closed, 25000);
+            if (!exit) {
+                failed = true;
+                await control.close();
+                await within(owned.closed, 5000);
+                const stopped = await stopOwned(owned, 0);
+                exit = stopped;
+            }
+            await control.close();
+            if (failed || exit.code !== 0)
+                throw new Error('Acceptance host did not close normally');
+            await readMarker(
+                config.proxyDirectory,
+                'proxy-closed.json',
+                AbortSignal.timeout(5000),
+            );
+        })());
+    try {
+        const url = await new Promise<string>((resolve, reject) => {
+            const timer = setTimeout(
+                () => reject(new Error('Acceptance host readiness timeout')),
+                25000,
+            );
+            const message = (value: unknown) => {
+                const m = value as { type?: string; url?: string };
+                if (m.type === 'ready' && typeof m.url === 'string') {
+                    clearTimeout(timer);
+                    owned.child.off('message', message);
+                    resolve(m.url);
+                } else if (m.type === 'error') {
+                    clearTimeout(timer);
+                    owned.child.off('message', message);
+                    reject(new Error('Acceptance host failed to start'));
+                }
+            };
+            owned.child.on('message', message);
+            void owned.closed.then(() => {
+                clearTimeout(timer);
+                owned.child.off('message', message);
+                reject(new Error('Acceptance host closed before readiness'));
+            });
+        });
+        return {
+            url,
+            directory: config.proxyDirectory,
+            process: owned,
+            control,
+            close,
+            async dropControl() {
+                await atomicJson(join(config.proxyDirectory, 'command.json'), {
+                    schema: 1,
+                    command: 'drop',
+                });
+                const ready = await readMarker(
+                    config.proxyDirectory,
+                    'drop-ready.json',
+                    signal,
+                );
+                if (ready.discarded !== true)
+                    throw new Error('Proxy did not discard held response');
+                if (!control.process.child.kill('SIGKILL'))
+                    throw new Error('Could not inject owned Go control death');
+                const exit = await within(control.process.closed, 5000);
+                if (!exit || exit.signal !== 'SIGKILL')
+                    throw new Error('Dropped control death not observed');
+                await readMarker(
+                    config.proxyDirectory,
+                    'control-closed.json',
+                    signal,
+                );
+                await readMarker(
+                    config.proxyDirectory,
+                    'proxy-closed.json',
+                    signal,
+                );
+            },
+        };
+    } catch (error) {
+        try {
+            await close();
+        } catch (cleanup) {
+            throw new AggregateError(
+                [error, cleanup],
+                'Host startup and cleanup failed',
+                { cause: cleanup },
+            );
+        }
+        throw error;
+    }
 }
