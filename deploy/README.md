@@ -173,6 +173,22 @@ Temporal UI 位于宿主回环 `18233`，Mailpit 位于 `18494`。Temporal 开�
 
 诊断时按 Workflow ID 查询 `advanceRun` 历史，与 Bento Run 状态核对。停用 Temporal 前先排空执行宿主，再停止并清除三项 Temporal 配置。完成状况见[需求完成状况](../docs/40-readiness/CURRENT-READINESS.md)。
 
+## 独立本地 Temporal Activity 重投验收
+
+在仓库根运行固定入口；已安装工作树依赖，使用 Node 22、仓库 Go 版本，以及 curl/tar：
+
+```sh
+pnpm --dir apps/orchestrator test:temporal-retry
+```
+
+该入口校验官方 Temporal CLI 1.5.1 archive 并提取工具，运行独立真实 Server 1.29.1。支持平台固定为 Darwin arm64 和 Linux x64，其他平台直接失败。下载来自固定官方 release asset，大小/SHA-256 按[工具锁定](../apps/orchestrator/acceptance/temporal-retry/tool.ts)验证；HTTP/1.1 Range 最多 8 分钟/12 次请求，签名 URL 只在内存使用，网络/完整性或任一测试失败均返回非零，不静默 skip。
+
+本机可设置 `BENTO_A6_TEMPORAL_ARCHIVE` 为仓库外、本平台已取得的官方 archive 绝对路径，每次仍完整核验大小/SHA 并提取版本。CI 默认按官方来源获取。`BENTO_A6_EVIDENCE_DIR` 可指定仓库外私有目录保存脱敏 CaseReport、SQL/文件回执及真实 history；不设置时输出摘要并清理运行状态。
+
+测试自己创建 loopback 临时端口、专属 namespace/taskQueue、Temporal DB 和执行宿主 SQLite；不读取部署 Temporal 配置。先完成内部 HTTP→生产 Go Workflow/Activity→生产 TS 宿主→真实文件/回执的正常路径，再注入成功回包丢失、宿主/Worker 重启与原 Temporal DB 重启。执行 host 明确为本地 fixture，不需 Docker、真实模型、OpenShell、IdP 或对象存储。全九项测试通过、三例业务输出 passed 且 cleanup 全 true 才是成功，实际副作用一次、原 receipt/Run/execution/结果保持一致。
+
+结束或失败时按持有的 ChildProcess 关闭 host/proxy/Go/server，等待 close 后才删运行目录；正常 close 有界，失败升级只针对本任务准确句柄。不能确认停止时保留该例私有现场并硬失败，修复后从相同固定入口复跑。工具/binary/DB/log/evidence 保持仓库外，发布检查以实际已安装依赖树执行 npm pack 正负断言。该入口已纳入 `pnpm check`；范围及未覆盖项见[A6-02证据](../docs/40-readiness/CURRENT-READINESS.md#a6-02-真实-temporal-重投)。
+
 ## 空间上传实栈验收
 
 在同一独立开发栈独占测试账号，确认 Web 和私有对象存储均可从 Chromium 访问。使用空测试空间，服务端应返回 100,000,000 字节单文件上限、200,000,000 字节账号额度及 16 MiB 分块。按顺序运行：

@@ -169,7 +169,15 @@
         "apps/workspace/api/go/accounts_lifecycle_test.go",
         "apps/orchestrator/openshell/provider-lifecycle/crash-child.ts",
         "apps/orchestrator/openshell/provider-lifecycle/crash-fixture.ts",
-        "apps/orchestrator/openshell/provider-crash.test.ts"
+        "apps/orchestrator/openshell/provider-crash.test.ts",
+        "apps/orchestrator/acceptance/temporal-retry/tool.ts",
+        "apps/orchestrator/acceptance/temporal-retry/process.ts",
+        "apps/orchestrator/acceptance/temporal-retry/real-retry.test.ts",
+        "apps/orchestrator/acceptance/temporal-retry/control-proxy.mjs",
+        "apps/orchestrator/acceptance/temporal-retry/probe/main.go",
+        "apps/orchestrator/acceptance/temporal-retry/host.ts",
+        "apps/orchestrator/acceptance/temporal-retry/evidence.ts",
+        "apps/orchestrator/acceptance/temporal-retry/check-package.mjs"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",
