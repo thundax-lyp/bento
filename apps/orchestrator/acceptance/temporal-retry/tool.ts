@@ -148,8 +148,73 @@ export async function acquireTemporal(
                     release.id,
                 null,
             );
-            if (redirect.status !== 302 || !redirect.headers.has('location'))
-                throw new Error('Official Temporal asset redirect unavailable');
+            if (redirect.status !== 302 || !redirect.headers.has('location')) {
+                const rawType = redirect.headers.get('content-type') ?? '';
+                const contentType =
+                    rawType.length <= 128 &&
+                    /^(?:application\/(?:json|octet-stream)|text\/(?:html|plain))(?:;\s*charset=(?:utf-8|us-ascii))?$/i.test(
+                        rawType,
+                    )
+                        ? rawType.toLowerCase()
+                        : 'unknown';
+                const remaining =
+                    redirect.headers.get('x-ratelimit-remaining') ?? '';
+                let apiError = 'non_json';
+                const body = await open(part, 'r');
+                try {
+                    if ((await body.stat()).size <= 4096) {
+                        const bytes = Buffer.alloc(4096);
+                        const { bytesRead } = await body.read(
+                            bytes,
+                            0,
+                            4096,
+                            0,
+                        );
+                        try {
+                            const parsed: unknown = JSON.parse(
+                                bytes.subarray(0, bytesRead).toString('utf8'),
+                            );
+                            apiError = 'other_json';
+                            const message =
+                                parsed !== null &&
+                                typeof parsed === 'object' &&
+                                'message' in parsed &&
+                                typeof parsed.message === 'string'
+                                    ? parsed.message.toLowerCase()
+                                    : '';
+                            if (message.includes('rate limit'))
+                                apiError = 'rate_limit';
+                            else if (message === 'not found')
+                                apiError = 'not_found';
+                            else if (message === 'bad credentials')
+                                apiError = 'unauthorized';
+                            else if (message.includes('forbidden'))
+                                apiError = 'forbidden';
+                        } catch {
+                            apiError = 'non_json';
+                        }
+                    }
+                } finally {
+                    await body.close();
+                }
+                throw new Error(
+                    'Official Temporal asset redirect unavailable ' +
+                        JSON.stringify({
+                            status: Number.isFinite(redirect.status)
+                                ? redirect.status
+                                : null,
+                            contentType,
+                            hasLocation: redirect.headers.has('location'),
+                            rateLimit:
+                                remaining === '0'
+                                    ? 'exhausted'
+                                    : /^[1-9]\d*$/.test(remaining)
+                                      ? 'available'
+                                      : 'unknown',
+                            apiError,
+                        }),
+                );
+            }
             const url = new URL(redirect.headers.get('location')!);
             if (
                 url.protocol !== 'https:' ||
