@@ -176,7 +176,8 @@
         "apps/orchestrator/acceptance/temporal-retry/control-proxy.mjs",
         "apps/orchestrator/acceptance/temporal-retry/probe/main.go",
         "apps/orchestrator/acceptance/temporal-retry/host.ts",
-        "apps/orchestrator/acceptance/temporal-retry/evidence.ts"
+        "apps/orchestrator/acceptance/temporal-retry/evidence.ts",
+        "apps/orchestrator/acceptance/temporal-retry/check-package.mjs"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",

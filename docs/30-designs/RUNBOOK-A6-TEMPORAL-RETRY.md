@@ -3,7 +3,7 @@
 ## 状态与执行边界
 
 - 建立日期：2026-11-19。
-- 状态：`Executable / Implementing`；MASTER审核及计划提交已核对，显式Worker已开工。T1～T6已PASS：真实Happy Path、两种丢包重启及失败清理均实际验证，剩余步骤如下。
+- 状态：`Executable / Implementing`；MASTER审核及计划提交已核对，显式Worker已开工。T1～T7已PASS：全量9/9零skip、CI硬入口与121文件pack正负检查已通过，仅剩完整验证与证据迁移/删除。
 - checkout：仅 B；分支 `codex/a6-temporal-retry`，基线 `0f4327470885e32f56296a3afc0ad142d1054a08`，获审计划提交 `acf25388748dc2ac9aeca27af93965c0da5b3cf9`。
 - 授权：按MASTER显式Worker派工逐步实施/提交；生产文件保持只读，外部环境仅本任务隔离本地资源。
 
@@ -407,35 +407,9 @@ business.sqlite 固定查询：`SELECT * FROM runs WHERE id=?`（必须一行）
 
 下列命令 cwd 均为仓库根。各步只有获审 Worker 可执行；本作者回合不执行。验证使用 test-name-pattern 选择已创建的固定用例，允许 Node 对不匹配用例显示未选中，但所选 case 必须实际 PASS、不得 skip；T7/T8 全量运行九项，必须 skip=0。pnpm typecheck 运行时读取的依赖不等于专门人工核对文件预算，专门读文件已逐步穷举。
 
-### T7：固定本地 CI 门禁与发布边界
-
-前置状态：工具/代理/probe/正常派发/宿主重启提交链已纳入（最后宿主重启706c7f0312d22fb67fd3432cec076f5d84b8f991）；原server DB重启及故意验收失败清理2/2已PASS，合计9固定case逐项通过，当前前置提交可回读；完整suite尚未作为门禁接线。
-允许修改：本 RUNBOOK、check-package.mjs、apps/orchestrator/package.json、.github/workflows/checks.yml、public-files.json（5）；专门核对：根package.json、real-retry.test.ts、tool.ts（合计8）。禁止修改：根files正向/负向项、依赖/lock、required check名称、外部保护配置。
-
-执行：
-
-1. Orchestrator scripts新增 `test:temporal-retry` 精确值 `node --import ../../register-paths.mjs --experimental-strip-types --test --test-concurrency=1 --test-timeout=1200000 acceptance/temporal-retry/real-retry.test.ts`；原 `check` 末尾追加 `&& pnpm test:temporal-retry && node acceptance/temporal-retry/check-package.mjs`。普通 `test` 不增加该suite以免重复；pnpm check和CI check:orchestrator将实际执行全部9项，缺工具/网络为FAIL，不设置skip/continue-on-error。
-2. `.github/workflows/checks.yml` 仅将 Repository checks 的 timeout-minutes 从15改为30，为8分钟有界获取、生产构建与实际case留足时间；保留现有路径检测、job名、conditions及所有其余步骤。不增加新required check或改保护；Orchestrator目录变更已触发该job。
-3. check-package.mjs 精确登记自己到public.files；验证新增8源均在public.files显式出现且无重复、patterns与T0的三条原pattern完全相同。校验 `npm pack --dry-run --json` 的实际文件清单（120秒，cwd根，当前已安装依赖树，不删除node_modules），五个固定正向为 package.json、register-paths.mjs、apps/orchestrator/temporal.go、apps/orchestrator/go.mod、apps/orchestrator/execution-service/service.ts，加全部8个新增源；所有必须在包内恰一次。
-4. 负向拒绝任意路径node_modules、运行时DB（.sqlite及-wal/-shm、.db）、.log/.tgz/.tar.gz、fixture生成的control/temporal/bento-orchestrator/temporal-probe无后缀binary、debug-workspace或本地证据目录。原根files数组JSON必须与T0完整值相等，不能扩大/缩小打包范围来让case过；比对固定值写在checker内。解析JSON需仅一个package、files各有path，不接受npm失败/空数组成功。成功输出 `{schema:1,publicSources:8,packageFiles:number,positive:true,negative:true}`。
-
-验证：
-
-```bash
-BENTO_A6_TEMPORAL_ARCHIVE=/tmp/bento-b-temporal-author-aaOJQ2/release.tar.gz pnpm --dir apps/orchestrator test:temporal-retry
-node apps/orchestrator/acceptance/temporal-retry/check-package.mjs
-pnpm --dir apps/orchestrator typecheck
-pnpm lint
-pnpm format:check
-git diff --check
-```
-
-PASS：独立suite完整9/9、0skip/0fail；真实3个CaseReport均passed且清理true；白名单/pack正负/类型/lint/format通过，固定CI入口不可静默跳过。本地不伪造Linux CI结果；CI运行在本PR后回读。删除步骤提交 `CI(ci): 固定真实 Temporal 重投验收与包边界门禁`。
-STOP：case少于9/skip、根files变化、包内含私有artifact、网络失败/CI入口未强制执行；不缩断言、不临时卸依赖、不改正向rootfiles。
-
 ### T8：完整验证、证据迁移与临时计划删除
 
-前置状态：T7全量suite与发布检查已PASS提交，尚未修改Readiness。共享文件若被A合入，先由MASTER固定新基线与复验窗口；本步不自选合入顺序。
+前置状态：全量suite9/9、0skip已实际PASS（运行代码HEAD3b3ecf1898f53b0c9f1dda44f7d893df5311c87f），pack121文件正负/八源精确public/原rootfiles/类型/lint/format均通过，门禁接线源码和前置提交可回读；尚未修改Readiness。共享文件若被A合入，先由MASTER固定新基线与复验窗口；本步不自选合入顺序。
 允许修改：本 RUNBOOK、docs/40-readiness/CURRENT-READINESS.md、deploy/README.md（3）；专门核对：正式APPLICATION-BOUNDARIES-REQUIREMENTS、APPLICATION-BOUNDARIES-DESIGN、README.md、apps/orchestrator/package.json、check-package.mjs（合计8）。禁止修改：正式需求/架构口径、相邻A6状态、生产代码和A任务证据。
 
 执行：
