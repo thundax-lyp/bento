@@ -2,7 +2,7 @@
 
 ## 状态与工作边界
 
-- 状态：MASTER 已审核 Executable 并显式启动 worker；T1 已 PASS。
+- 状态：MASTER 已审核 Executable 并显式启动 worker；T1、T2 已 PASS。
 - 建立日期：2026-11-19。作者 checkout：`bento-b`；基线 `104be8f5139c1100e3e5949bf3478f66f175e274`，`main=origin/main`。
 - 本轮只新增本地验收 fixture/test、锁定其官方依赖、同步相关设计和 Readiness。生产代码只读。计划执行分支固定为 `codex/a2-provider-recovery`，顺序固定为：MASTER 审核为 Executable→MASTER 单独派发建立该分支并只提交本 RUNBOOK→回读计划 commit 与文件 SHA256→MASTER 显式调用 `$bento-runbook-worker` 开工。建分支和仅提交计划属于开工前独立阶段，不属于 T1；获审计划提交为 `4278b4fee05fef0d71c1e9a2d12881abe4fb9ecf`，当前已处于该分支。
 - MASTER 主 checkout 不属于 WORKER；A checkout、旧 Docker/OpenShell、远端环境、IdP、S3、外部模型均禁止写入。A 独占 `service.ts` 的 retryReason/advanceTaskRetry、既有 service retry suite、外部 checkpoint 验收窗口。
@@ -218,30 +218,9 @@ PASS：MASTER 独立审核本草稿为 Executable，且确认上述基线/T0 适
 
 ## 机械步骤
 
-### T2：官方成功链与同库恢复
-
-前置状态：官方九项 devDependencies 已精确锁定；pnpm install --frozen-lockfile 与 pnpm check:orchestrator 通过（104 tests：102 pass/2既有skip，Go test/vet通过），该依赖变更已提交。
-允许修改：新增 fixture.ts、新增 openshell/provider-lifecycle.test.ts、public-files.json、本 RUNBOOK。
-专门核对：以上 4 + remote-session.ts、single-host.ts、session-history.ts、persistence-ingress.ts、worker-gate.ts，共 9。
-禁止修改：上述所有生产文件、A 的路径、根 files/CI。
-
-执行：严格实现本页“唯一 fixture 接口与调用顺序”。新增一个 test，名称固定 `A2-01 official provider checkpoint survives reopen and continues`，timeout 30_000，serial。创建 fixture→start1/create→turn/checkpoint，读取 SQL 对齐历史、所有 receipt digest/range、intents 空；证明 adapter 开始前 request prefix 已持久；close runtime→takeover1→确认 READY generation2→reopen 双库→start2/resume→原历史为精确前缀→turn/checkpoint→receipt epoch1/2 均有、新 seq 连续、历史只增新轮与官方 seed marker。对每 receipt 以 SQL events 对应范围 JSON.stringify 重算 sha256；校验计数、Session/epoch/run 绑定、materialized=1、关闭后 handle=null。finally dispose fixture。
-
-public-files.json.files 精确加入 `apps/orchestrator/openshell/provider-lifecycle/fixture.ts` 和 `apps/orchestrator/openshell/provider-lifecycle.test.ts`；不得扩大 patterns。根 files 已包含 apps/orchestrator，无需变化。现有 Orchestrator test `openshell/*.test.ts` 自动发现该 suite；CI Repository checks 已执行 check:orchestrator，不能创建仅手工跑的入口。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --test --test-name-pattern='A2-01 official' apps/orchestrator/openshell/provider-lifecycle.test.ts
-pnpm --filter @bento/orchestrator typecheck
-pnpm exec prettier --check apps/orchestrator/openshell/provider-lifecycle/fixture.ts apps/orchestrator/openshell/provider-lifecycle.test.ts public-files.json
-```
-
-PASS：恰 1 个目标 case 通过，无目标跳过；上述不变量全部有 assertion。STOP：marker 不连续、receipt/digest 不匹配、policy 未参与、必须生产修复或新接口；保留脱敏失败，finally 仅清理本 fixture 随机资源，不放宽前缀断言。
-
 ### T3：旧代三方法独立拒绝
 
-前置状态：T2 成功链已提交，正常 close/reopen 通过。
+前置状态：官方 Provider 成功链与独立 fixture 已提交；A2-01 focused 1/1、Orchestrator typecheck、fixture/test/public-files 格式检查通过，官方 checkpoint 在模型前完成持久化、原历史/receipt 保持、双库重开后合法新代完成第二轮，资源目录清理断言通过。
 允许修改：fixture.ts、provider-lifecycle.test.ts、本 RUNBOOK。
 专门核对：以上 3 + remote-session.ts、single-host.ts、worker-gate.ts、persistence-ingress.ts，共 7。
 禁止修改：生产文件及同一 handle 复用为三个 case。

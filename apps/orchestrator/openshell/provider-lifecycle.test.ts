@@ -1,0 +1,142 @@
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { test } from 'node:test';
+import { createProviderFixture } from './provider-lifecycle/fixture.ts';
+
+type Fixture = Awaited<ReturnType<typeof createProviderFixture>>;
+function verifyStored(fixture: Fixture) {
+    const state = fixture.snapshot();
+    assert.equal(state.sessions.length, 1);
+    assert.equal(state.intents.length, 0);
+    const row = state.sessions[0]!;
+    assert.equal(row.id, fixture.session);
+    assert.equal(row.materialized, 1);
+    assert.equal(row.next, state.events.length);
+    assert.deepEqual(
+        state.events.map((event) => event.seq),
+        state.events.map((_, seq) => seq),
+    );
+    for (const receipt of state.receipts) {
+        assert.equal(receipt.id, fixture.session);
+        assert.equal(typeof receipt.batch, 'string');
+        const events = state.events.slice(
+            Number(receipt.first),
+            Number(receipt.first) + Number(receipt.count),
+        );
+        assert.equal(events.length, receipt.count);
+        const digest = createHash('sha256')
+            .update(
+                JSON.stringify(
+                    events.map((event) => JSON.parse(String(event.event))),
+                ),
+            )
+            .digest('hex');
+        assert.equal(receipt.digest, digest);
+        assert(Number(receipt.count) > 0);
+    }
+    for (const event of state.events) {
+        assert.equal(
+            state.receipts.filter(
+                (receipt) =>
+                    Number(receipt.first) <= Number(event.seq) &&
+                    Number(receipt.first) + Number(receipt.count) >
+                        Number(event.seq),
+            ).length,
+            1,
+        );
+    }
+    const authority = fixture.controller.inspect(fixture.session);
+    assert.equal(row.epoch, authority.generation);
+    assert.equal(row.owner, authority.run);
+    return state;
+}
+async function withFixture(body: (fixture: Fixture) => Promise<void>) {
+    const fixture = await createProviderFixture();
+    const failures: unknown[] = [];
+    try {
+        await body(fixture);
+    } catch (error) {
+        failures.push(error);
+    }
+    try {
+        await fixture.dispose();
+    } catch (error) {
+        failures.push(error);
+    }
+    assert.equal(existsSync(dirname(fixture.historyPath)), false);
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1)
+        throw new AggregateError(failures, 'A2 case and cleanup failed');
+}
+
+test(
+    'A2-01 official provider checkpoint survives reopen and continues',
+    { timeout: 30_000 },
+    async () => {
+        await withFixture(async (fixture) => {
+            const first = await fixture.start(1);
+            const handle = await first.create();
+            const events = await first.turn();
+            const stored = verifyStored(fixture);
+            assert.deepEqual(
+                stored.events.map((row) => JSON.parse(String(row.event))),
+                events,
+            );
+            assert(stored.receipts.every((row) => row.epoch === 1));
+            assert.equal(
+                first.ctx.sessions.get(fixture.session),
+                handle.agent.session,
+            );
+            assert(
+                first.trace.some(
+                    (row) => row.method === 'flush' && row.status === 200,
+                ),
+            );
+            await first.close();
+            assert.equal(fixture.snapshot().sessions[0]?.handle, null);
+            await fixture.controller.takeover(fixture.session, 1);
+            assert.equal(
+                fixture.controller.inspect(fixture.session).state,
+                'READY',
+            );
+            assert.equal(
+                fixture.controller.inspect(fixture.session).generation,
+                2,
+            );
+            await fixture.reopen();
+            const second = await fixture.start(2);
+            const resumed = await second.resume();
+            const restored = resumed.agent.session.snapshotEvents();
+            assert.deepEqual(restored.slice(0, events.length), events);
+            assert(
+                restored
+                    .slice(events.length)
+                    .every((event) => event.type === 'session/end-seed'),
+            );
+            assert.deepEqual(
+                fixture.snapshot().receipts.filter((row) => row.epoch === 1),
+                stored.receipts,
+            );
+            const continued = await second.turn();
+            assert.deepEqual(continued.slice(0, events.length), events);
+            const final = verifyStored(fixture);
+            assert.deepEqual(
+                final.events.map((row) => JSON.parse(String(row.event))),
+                continued,
+            );
+            assert(final.receipts.some((row) => row.epoch === 2));
+            assert.deepEqual(
+                final.receipts.filter((row) => row.epoch === 1),
+                stored.receipts,
+            );
+            assert.equal(
+                continued.filter((event) => event.type === 'turn/end').length,
+                2,
+            );
+            await second.close();
+            assert.equal(fixture.snapshot().sessions[0]?.handle, null);
+        });
+    },
+);
