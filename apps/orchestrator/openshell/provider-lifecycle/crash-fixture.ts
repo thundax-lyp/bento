@@ -573,8 +573,12 @@ export async function runCrashCase(point: CrashPoint, t: TestContext) {
                         receiptValue(receipt),
                     );
                 }
-                assert.equal(prior.intents.length, 1);
-                const intent = prior.intents[0]!;
+                const stageOnly = point === 'after-stage';
+                const alreadyCommitted =
+                    point === 'after-commit' || point === 'after-append';
+                assert.equal(prior.intents.length, stageOnly ? 0 : 1);
+                const intent = view.intents[0]!;
+                if (!stageOnly) assert.deepEqual(prior.intents, [intent]);
                 assert.deepEqual(Object.keys(intent).sort(), [
                     'batch',
                     'epoch',
@@ -606,40 +610,57 @@ export async function runCrashCase(point: CrashPoint, t: TestContext) {
                     !prior.receipts.some((row) => row.batch === target.batch),
                 );
                 assert.equal(prior.sessions[0]!.materialized, 1);
-                assert.deepEqual(view, {
-                    sessions: [
-                        {
-                            ...prior.sessions[0]!,
-                            next: prior.events.length + payload.length,
-                            revision: Number(prior.sessions[0]!.revision) + 1,
-                            materialized: 1,
-                        },
-                    ],
-                    events: [
-                        ...prior.events,
-                        ...payload.map((event) => ({
-                            id: fixture.session,
-                            seq: event.seq,
-                            event: JSON.stringify(event),
-                        })),
-                    ],
-                    receipts: [
-                        ...prior.receipts,
-                        { id: fixture.session, ...target },
-                    ].sort(receiptOrder),
-                    intents: prior.intents,
-                });
+                if (stageOnly)
+                    assert.deepEqual(view, { ...prior, intents: [intent] });
+                else {
+                    assert.deepEqual(view, {
+                        sessions: [
+                            {
+                                ...prior.sessions[0]!,
+                                next: prior.events.length + payload.length,
+                                revision:
+                                    Number(prior.sessions[0]!.revision) + 1,
+                                materialized: 1,
+                            },
+                        ],
+                        events: [
+                            ...prior.events,
+                            ...payload.map((event) => ({
+                                id: fixture.session,
+                                seq: event.seq,
+                                event: JSON.stringify(event),
+                            })),
+                        ],
+                        receipts: [
+                            ...prior.receipts,
+                            { id: fixture.session, ...target },
+                        ].sort(receiptOrder),
+                        intents: prior.intents,
+                    });
+                }
                 verifyCommittedRows(view);
-                await host.peer.killAndWait(true);
+                if (point === 'before-commit' || point === 'after-commit')
+                    await host.peer.killAndWait(true);
                 await producer.peer.killAndWait(true);
                 const crashed = fixture.snapshot();
                 assert.deepEqual(
                     crashed,
                     point === 'before-commit' ? prior : view,
                 );
-                const receipt = view.receipts.find(
-                    (row) => row.batch === target.batch,
-                )!;
+                const receipt: Row = { id: fixture.session, ...target };
+                if (alreadyCommitted)
+                    assert.deepEqual(
+                        view.receipts.find((row) => row.batch === target.batch),
+                        receipt,
+                    );
+                if (point === 'after-stage' || point === 'after-append') {
+                    const dropped = await host.peer.command({
+                        command: 'drop-ack',
+                    });
+                    assert.equal(dropped.pending, 0);
+                    assert.deepEqual(fixture.snapshot(), crashed);
+                    await host.peer.normalClose();
+                }
                 host = await fixture.host(false);
                 const takeover = await host.peer.command({
                     command: 'takeover',
@@ -678,17 +699,12 @@ export async function runCrashCase(point: CrashPoint, t: TestContext) {
                 };
                 assert.equal(
                     result.outcome,
-                    point === 'before-commit'
-                        ? 'committed'
-                        : 'already-committed',
+                    alreadyCommitted ? 'already-committed' : 'committed',
                 );
                 assert.equal(result.receipt.batch, intent.batch);
                 assert.equal(result.receipt.digest, receipt.digest);
-                assert.equal(
-                    result.receipt.epoch,
-                    point === 'before-commit' ? 2 : 1,
-                );
-                if (point === 'after-commit')
+                assert.equal(result.receipt.epoch, alreadyCommitted ? 1 : 2);
+                if (alreadyCommitted)
                     assert.deepEqual(
                         result.receipt,
                         Object.fromEntries(
@@ -712,7 +728,7 @@ export async function runCrashCase(point: CrashPoint, t: TestContext) {
                         handle: before.sessions[0]!.handle,
                     },
                 ]);
-                if (point === 'before-commit') {
+                if (!alreadyCommitted) {
                     assert.deepEqual(after, {
                         sessions: [
                             {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { writeSync, realpathSync } from 'node:fs';
-import { createServer, type Server } from 'node:http';
+import { createHash } from 'node:crypto';
+import { createServer, type Server, type ServerResponse } from 'node:http';
 import { once } from 'node:events';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -90,6 +91,7 @@ async function host() {
     let armed = false;
     let preparedBaseline: ReturnType<typeof snapshot> | undefined;
     let hits = 0;
+    let held: { response: ServerResponse; release: () => void } | undefined;
     let running = true;
     const active = new Set<Promise<void>>();
     const fetches = new Set<AbortController>();
@@ -118,6 +120,8 @@ async function host() {
                     errors.push(error);
                 }
             }
+            held?.response.destroy();
+            held?.release();
             const proxyClosed = closeServer(proxy);
             for (const abort of fetches) abort.abort();
             await attempt(() => proxyClosed);
@@ -265,7 +269,26 @@ async function host() {
                                 assert(typeof authorization === 'string');
                                 const query = JSON.parse(body) as {
                                     method: string;
+                                    batch?: string;
+                                    events?: SessionEvent[];
                                 };
+                                const callerTarget =
+                                    armed &&
+                                    ((point === 'after-stage' &&
+                                        query.method === 'stage') ||
+                                        (point === 'after-append' &&
+                                            query.method === 'append')) &&
+                                    query.events?.some(
+                                        (event) =>
+                                            event.type === 'request/header',
+                                    ) &&
+                                    query.events.some(
+                                        (event) =>
+                                            event.type === 'user/message',
+                                    );
+                                const priorCommitted = callerTarget
+                                    ? readSnapshot()
+                                    : undefined;
                                 const before =
                                     query.method === 'reconcile'
                                         ? readSnapshot()
@@ -294,6 +317,79 @@ async function host() {
                                             ? readSnapshot()
                                             : undefined,
                                 });
+                                if (callerTarget) {
+                                    assert(
+                                        priorCommitted &&
+                                            preparedBaseline &&
+                                            query.events &&
+                                            query.batch,
+                                    );
+                                    assert.equal(upstream.status, 200);
+                                    const transactionView = readSnapshot();
+                                    assert.equal(
+                                        transactionView.intents.length,
+                                        1,
+                                    );
+                                    const intent = transactionView.intents[0]!;
+                                    const payload = JSON.stringify(
+                                        query.events,
+                                    );
+                                    assert.equal(intent.batch, query.batch);
+                                    assert.equal(intent.payload, payload);
+                                    const target = {
+                                        batch: query.batch,
+                                        digest: createHash('sha256')
+                                            .update(payload)
+                                            .digest('hex'),
+                                        epoch: intent.epoch,
+                                        first: priorCommitted.sessions[0]!.next,
+                                        count: query.events.length,
+                                    };
+                                    if (point === 'after-append') {
+                                        const receipt =
+                                            transactionView.receipts.find(
+                                                (row) =>
+                                                    row.batch ===
+                                                        target.batch &&
+                                                    row.epoch === target.epoch,
+                                            );
+                                        assert(receipt);
+                                        assert.deepEqual(receipt, {
+                                            id: config.binding.session,
+                                            ...target,
+                                        });
+                                        assert.deepEqual(
+                                            JSON.parse(result).value,
+                                            target,
+                                        );
+                                    } else
+                                        assert(
+                                            !transactionView.receipts.some(
+                                                (row) =>
+                                                    row.batch === target.batch,
+                                            ),
+                                        );
+                                    assert(!held);
+                                    let release!: () => void;
+                                    const gate = new Promise<void>(
+                                        (resolve) => {
+                                            release = resolve;
+                                        },
+                                    );
+                                    held = { response, release };
+                                    armed = false;
+                                    frame({
+                                        command: 'barrier',
+                                        point,
+                                        hits: ++hits,
+                                        preparedBaseline,
+                                        priorCommitted,
+                                        transactionView,
+                                        target,
+                                    });
+                                    await gate;
+                                    return;
+                                }
                                 response
                                     .writeHead(upstream.status, {
                                         'content-type': 'application/json',
@@ -349,14 +445,28 @@ async function host() {
                 case 'arm':
                     assert(!armed && hits === 0);
                     assert(
-                        input.point === 'before-commit' ||
-                            input.point === 'after-commit',
+                        [
+                            'before-commit',
+                            'after-commit',
+                            'after-stage',
+                            'after-append',
+                        ].includes(input.point),
                     );
                     point = input.point;
                     preparedBaseline = readSnapshot();
                     armed = true;
                     frame({ command: 'arm', ok: true });
                     break;
+                case 'drop-ack': {
+                    assert(held && hits === 1);
+                    held.response.destroy();
+                    held.release();
+                    await Promise.all([...active]);
+                    held = undefined;
+                    assert.equal(active.size, 0);
+                    frame({ command: 'drop-ack', ok: true, pending: 0 });
+                    break;
+                }
                 case 'close':
                     await close();
                     frame({ command: 'close', ok: true, pending: active.size });

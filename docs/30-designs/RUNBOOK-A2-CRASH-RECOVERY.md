@@ -2,7 +2,7 @@
 
 ## 状态与执行者契约
 
-- 状态：执行中；2026-11-19。T2已通过，下步T3。最后 PASS T1 `97bd22a53c57bde931f0a7b39e2341a25a0cfda2`。获审类型桥接与事务采证修订均已落地；T1/T2通过事实见下文。
+- 状态：执行中；2026-11-19。T2/T3已通过，下步T4。最后 PASS T1 `97bd22a53c57bde931f0a7b39e2341a25a0cfda2`。获审类型桥接与事务采证修订均已落地；T1/T2通过事实见下文。
 - checkout：B；基线 `6c59560e95da641719e2ab9343cc23986abd4163`。执行分支唯一为 `codex/a2-crash-recovery`，作者阶段不得创建。顺序固定：MASTER 对本文件精确 SHA256 给出 Executable → MASTER 派建该分支且仅提交获审 RUNBOOK → 回读分支、基线、提交 SHA、单文件清单与文件 SHA256，交 MASTER 核对 → MASTER 显式 `$bento-runbook-worker RUNBOOK-A2-CRASH-RECOVERY.md` 启动后才能 T1。审核通过或计划提交本身不等于实施启动。
 - 遵循 [RUNBOOK Rules](../00-governance/RUNBOOK-RULES.md)、[Document Rules](../00-governance/DOCUMENT-RULES.md)、[Commit Rules](../00-governance/COMMIT-RULES.md)、[PR Rules](../00-governance/PR-RULES.md)。每步 PASS 后删该步、保留事实与剩余步骤，独立 commit；最后迁移长期证据并删除本文件。不得 squash/rebase。
 - 每步预算包含本文件及专门读取文件，不超过 10 个。只允许下文指定路径；需要生产修复、依赖改版、断言降级或超过预算则 STOP，交作者修订重审。不得由执行者选择替代方案。
@@ -224,27 +224,11 @@ function assertWorkerConsumedFields(events: readonly SessionEvent[]): void;
 
 T2 已通过（2026-11-19）：获审77b6a098的严格realpath身份、prepared/priorCommitted/transactionView和四表精确断言已落地。两项COMMIT边界真实SIGKILL 2/2、0skip；同库正式runDshWorker自主reconcile、原receipt/新receipt分别核验、SQL/Provider与generation2正常轮全部通过；全部ChildProcess exit/close及目录删除通过。Orchestrator typecheck、原Provider五项5/5、四代码文件ESLint、diff检查通过。局部snapshot类型断言仅在获审边界，未修改生产与原五test。提交由包含本记录的Git提交回读。
 
-### T3：调用方退出后新 Worker 自主发现
-
-前置状态：包含上述T2通过事实的提交已核对，两项实际强杀通过。
-允许修改：crash-child.ts、crash-fixture.ts、provider-crash.test.ts、本文件。
-专门读取：runtime.ts、apps/worker/dsh-worker.ts、apps/worker/remote-session.ts、apps/worker/protocol.ts、session-history.ts。预算9文件。
-
-执行：补代理barrier；新增 `A2-05 caller SIGKILL after-stage is discovered`、`A2-05 caller SIGKILL after-append preserves original receipt`。每项独立双库与进程，先seed正常轮退出；produce官方caller先prepare并flush seed suffix，prepared后父进程读preparedBaseline再arm并发turn；host在转发唯一目标stage/append前独立读取priorCommitted，实际提交后读取transactionView，完整核对目标与四表变化才暂扣ACK并发barrier，父进程只kill caller SIGKILL并等待，host保留。after-stage为完整intent且无目标events/receipt，after-append有完整批次与原receipt且intent未删除。destroy下游后host按drop-ack/close回执与退出协议正常关闭重开双库（不是代替caller强杀），合法takeover/admit新代；新Worker只经runDshWorker恢复，无旧进程、batch/event/receipt输入。trace逐项断言恢复入口顺序及reconcile无batch/events，返回committed/already-committed与服务端目标一致。执行上节05 after-stage/after-append全部精确四表断言，不能拿prepare后的旧基线比较。与T2相同SQL/Provider/digest/seq不变量，再新代正常轮。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --test apps/orchestrator/openshell/provider-crash.test.ts
-node --import ./register-paths.mjs --test apps/orchestrator/openshell/provider-lifecycle.test.ts
-pnpm --filter @bento/orchestrator typecheck
-```
-
-PASS：四个新case4/4、原5/5，无skip；新Worker参数精确无恢复批次提示；stage-only新receipt与append原receipt分别核对；旧caller确实退出且未dispose。STOP：任何手工reconcile、人工复制payload、旧caller重试、fixture代替runDshWorker，保留失败现场，不算通过。提交 `Test(openshell): 验证新 Worker 自主对账崩溃批次`，删T3并核对提交。
+T3 已通过（2026-11-19）：after-stage/after-append真实caller SIGKILL独立场景通过；新Worker只拿合法request及workspaceRoot，经生产runDshWorker无batch/events参数reconcile发现原intent。stage-only生成epoch2新receipt；append已提交复用epoch1原receipt；单RPC前后四表与合法resume后缀分开核对。新四case4/4、原五Provider5/5均无skip，Orchestrator typecheck、三代码ESLint、diff检查通过；每个场景双库重开、新代正常轮、全部进程exit/close和目录删除均通过。提交由包含本记录的Git提交回读。
 
 ### T4：完整验证及长期证据收口
 
-前置状态：T3提交，四项独立证据完整；与MASTER核对最新主线及A合入顺序。主线变化只普通merge；共享边界冲突或证据语义变化先交作者核对，不覆盖A记录。
+前置状态：包含上述T3事实的提交已核对，四项独立证据完整；与MASTER核对最新主线及A合入顺序。主线变化只普通merge；共享边界冲突或证据语义变化先交作者核对，不覆盖A记录。
 允许修改：APPLICATION-BOUNDARIES-DESIGN.md 的A2接线、CURRENT-READINESS.md 的A2条目与A2证据、本文件（删除）。
 专门读取：正式APPLICATION-BOUNDARIES-REQUIREMENTS.md、package.json、apps/orchestrator/package.json、.github/workflows/checks.yml、public-files.json、provider-crash.test.ts、crash-fixture.ts。预算10文件。
 
