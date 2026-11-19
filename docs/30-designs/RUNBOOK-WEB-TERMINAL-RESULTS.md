@@ -2,10 +2,10 @@
 
 ## 状态与执行者契约
 
-2026-11-19；WORKER B；仅调查起草，未获 Executable，禁止实施、提交和部署。
+2026-11-19；WORKER B；原计划已获 Executable 并显式开工，T1～T4 已 PASS/提交；本次仅修订合入顺序与剩余 T5，复审放行前不执行 T5。本轮不部署。
 绑定 checkout 为派工指定的 bento-b；调查基线 `fbbee2f536112ba6e050b469bd1c6134306694d8`，目标分支 main，计划分支 `codex/web-terminal-results`。
-本稿为待审草稿，不自行授予 Executable。按 MASTER 2026-11-19 补充口径，失败和非通过检查使用真实投影、HTTP、Store 和 Chromium 的分层 fixture；本轮不部署或调用模型。
-收到 MASTER 的同一内容 Executable 后才单独提交本文件；收到显式 worker 开工后才实施。
+剩余 T5 的本次修订待 MASTER 复审，不自行授予 Executable。按 MASTER 2026-11-19 补充口径，失败和非通过检查使用真实投影、HTTP、Store 和 Chromium 的分层 fixture；本轮不部署或调用模型。
+原获审计划提交为 `806dae0`；T1～T4 的既有 PASS 证据保留在 `f83af1b`、`11ba73e`、`178dccb`、`38e32ae`。本次修订单独提交后，收到 MASTER 对同一内容的复审与放行才继续 T5。
 逐步 PASS 才删除该步并同次提交，最后一步同步长期证据并删除本文件。失败停在原步，不删步骤，不放宽断言。
 
 ## Purpose、Scope 与 Non-goals
@@ -15,7 +15,7 @@
 已有成功证据适用时复用，新增验证补齐实际缺口。目标是两行均有正式必需断言的适用通过记录。
 不改 retry/cancel/checkpoint/Session 恢复、Task 状态语义、鉴权机制、旧部署迁移、模型能力、部署拓扑；不碰 A 的任务控制区和 web-a13 验收文件。
 MASTER 已允许 pages.tsx 的 resultVersion=null 提示及 TaskRunResult/checkLabels 的最小修复；未授权顺手整理其他 UI。
-A 先使用实栈并先合入，B 在步骤提交的安全点 merge 最新 main，复验共享查询展示和 A 的重试回归。实栈窗口未经 MASTER 放行不得使用。
+MASTER 调整为 B 先合入、A 后合入：MASTER 回读 B 当前 HEAD 与最新 origin/main，确认 A 尚无实施提交或共享重叠后放行 B 收口。A 后以 B 合入后的新 main 更新草稿和基线，并复验 retry 共享查询。B 本轮不使用实栈；实栈窗口未经 MASTER 放行不得使用。
 
 ## 正式依据与当前断点
 
@@ -67,7 +67,7 @@ Readiness 记载 2026-11-17 `36ab687` 加私有 Worker 的 WEB-A13 1/1：两轮�
 
 ### T5：完整复验与独立证据收口
 
-前置：上一 STEP 已提交独立 HTTP/Store/DTO/Chromium 验收，1/1 通过、Web typecheck 和定向 ESLint 通过；已采用证据的版本边界准确、已纳入 A 的最新 main 并经 MASTER 核对共享行为。若 A 尚未合入，在已提交独立验收 STEP 的安全点等待并保留只剩 T5 的 RUNBOOK；不得把等待当作前置已满足，不执行 T5、不删除 RUNBOOK、不宣告收口。merge 不改写历史，冲突涉及 A 控制区先 STOP。
+前置：上一 STEP 已提交独立 HTTP/Store/DTO/Chromium 验收，1/1 通过、Web typecheck 和定向 ESLint 通过；既有 T1～T4 PASS 证据继续保留。MASTER 已回读 B 当前 HEAD 与最新 origin/main，确认 A 尚无实施提交或共享重叠，复审同意本次顺序修订并显式放行 T5。B 先合入，A 后以 B 新 main 更新草稿/基线并复验 retry 共享查询。若最新主线已有影响结果链的变化或发现 A 实施重叠，保留 RUNBOOK 并 STOP，交 MASTER 核对受影响步骤；不自行宣告前置满足。纳入最新主线时使用普通 merge，不改写历史。
 允许修改：CURRENT-READINESS.md、本 RUNBOOK。
 专门只读：WEB-DESIGN.md、README.md、deploy/README.md（均为现有正式路径），合计 5。
 执行：记录日期、准确源码/Worker 版本、环境摘要、各用例结果、已有证据复用边界及未覆盖项。Readiness 仅改 WEB-06-02 和 WEB-08-04 行；父汇总变化交 MASTER 协调，不覆盖 A 内容。未改架构/启动/发布方式，核对三份入口文档后记录无需改写。将适中长度的分项证据直接写入这两行说明列，不新增独立证据文档；不含本机路径、真实身份或连接参数。
@@ -80,7 +80,7 @@ npm pack --dry-run --json
 git diff --check
 ```
 
-PASS：完整检查退出 0；Readiness 分项证据逐项关闭两个需求；共享查询、结果下载和 A 的既有安全重试 Chromium 回归通过。未通过的必需项不得标已实现。删除本 RUNBOOK，rg 核对无仅指向它的链接，再提交。
+PASS：完整检查退出 0；Readiness 分项证据逐项关闭两个需求；当前基线的共享查询、结果下载和已有安全重试 Chromium 回归通过；A 后续新增重试实现的共享复验由 A 在 B 合入后执行。未通过的必需项不得标已实现。删除本 RUNBOOK，rg 核对无仅指向它的链接，再提交。
 STOP：完整验证失败、证据版本受改动影响或尚有未验必需项，保留步骤并报告 MASTER。本轮没有实栈撤场，旧服务、卷和资源不动。
 提交边界：`Docs(task-entry): 记录终态结果逐项验收证据`，同次删除整个 RUNBOOK。
 
@@ -98,4 +98,4 @@ STOP：完整验证失败、证据版本受改动影响或尚有未验必需项�
 | WEB-08-04 unavailable | fixture TrustedTaskCheck unavailable 投影事实、unavailable、固定公开输出 | T1/T2/T3/T4                     |
 
 权限、旧代、重放、持久重开覆盖采用既有测试加 T2，不改变生产事务；完整负例扩展、并发恢复和迁移 Not Applicable，本任务无该行为变更。旧 Run 不覆盖复用适用 A13。
-全部矩阵满足、长期证据和 Readiness 完成才关闭。WEB-06-02/WEB-08-04 的本地分层验证足以关闭本任务展示与查询契约；不代表真实模型具备全部非通过状态的生产触发工具。PR/Ready/Codex 当前 HEAD 审查、普通 merge、同步清理依 worker 技能和 PR 规则执行，先 A 后 B；本轮授权覆盖这些后续动作，但当前阶段仍只起草。
+全部矩阵满足、长期证据和 Readiness 完成才关闭。WEB-06-02/WEB-08-04 的本地分层验证足以关闭本任务展示与查询契约；不代表真实模型具备全部非通过状态的生产触发工具。PR/Ready/Codex 当前 HEAD 审查、普通 merge、同步清理依 worker 技能和 PR 规则执行，先 B 后 A；本轮授权覆盖这些后续动作，但本次修订复审放行前不执行 T5。
