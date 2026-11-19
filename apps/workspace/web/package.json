@@ -11,7 +11,8 @@
         "test": "vitest run",
         "test:e2e": "playwright test",
         "test:space-integrity": "playwright test --config playwright.web-space-integrity.config.ts",
-        "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build"
+        "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build",
+        "test:queue-isolation": "playwright test --config playwright.web-queue-isolation.config.ts"
     },
     "dependencies": {
         "@radix-ui/react-slot": "^1.2.4",

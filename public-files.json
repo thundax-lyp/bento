@@ -158,7 +158,11 @@
         "apps/orchestrator/execution-service/task-submission.test.ts",
         "apps/workspace/web/acceptance/task-submission-fixture.ts",
         "apps/workspace/web/acceptance/web-task-submission.spec.ts",
-        "apps/workspace/web/playwright.task-submission.config.ts"
+        "apps/workspace/web/playwright.task-submission.config.ts",
+        "apps/workspace/web/acceptance/queue-storage-fixture.ts",
+        "apps/workspace/web/acceptance/queue-isolation-fixture.ts",
+        "apps/workspace/web/acceptance/web-queue-isolation.spec.ts",
+        "apps/workspace/web/playwright.web-queue-isolation.config.ts"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",
