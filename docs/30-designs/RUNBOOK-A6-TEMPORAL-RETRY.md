@@ -3,7 +3,7 @@
 ## 状态与执行边界
 
 - 建立日期：2026-11-19。
-- 状态：`Executable / Implementing`；MASTER审核及计划提交已核对，显式Worker已开工。T1工具/生命周期2例PASS，剩余步骤如下。
+- 状态：`Executable / Implementing`；MASTER审核及计划提交已核对，显式Worker已开工。T1工具/生命周期与T2生产控制代理各2例PASS，剩余步骤如下。
 - checkout：仅 B；分支 `codex/a6-temporal-retry`，基线 `0f4327470885e32f56296a3afc0ad142d1054a08`，获审计划提交 `acf25388748dc2ac9aeca27af93965c0da5b3cf9`。
 - 授权：按MASTER显式Worker派工逐步实施/提交；生产文件保持只读，外部环境仅本任务隔离本地资源。
 
@@ -405,32 +405,9 @@ business.sqlite 固定查询：`SELECT * FROM runs WHERE id=?`（必须一行）
 
 下列命令 cwd 均为仓库根。各步只有获审 Worker 可执行；本作者回合不执行。验证使用 test-name-pattern 选择已创建的固定用例，允许 Node 对不匹配用例显示未选中，但所选 case 必须实际 PASS、不得 skip；T7/T8 全量运行九项，必须 skip=0。pnpm typecheck 运行时读取的依赖不等于专门人工核对文件预算，专门读文件已逐步穷举。
 
-### T2：生产控制面的透明代理与关闭确认
-
-前置状态：工具与进程focused两例已通过并提交，可从当前源码直接复跑。
-允许修改：本 RUNBOOK、control-proxy.mjs、process.ts、real-retry.test.ts、public-files.json（5）；专门核对：apps/orchestrator/temporal.go、apps/orchestrator/execution-service/temporal.ts（合计7）。禁止修改：两份生产文件及所有service retry行为。
-
-执行：
-
-1. 实现父持有真实Go ChildProcess的startControlTransport，以及代理帧转发/held/drop/shutdown/close ack延迟至父观察Go close的契约。代理不注册Workflow/Activity、没有Go子进程；真实Go固定编译生产 `.`。
-2. process.ts 本步新增 `buildControl(directory:string,signal:AbortSignal):Promise<string>`，内部 `go build -mod=readonly -o <directory>/bento-orchestrator .`、cwd为 root/apps/orchestrator、120秒上限；失败不改 go.mod/sum。T3 扩成 buildBinaries 时沿用本符号，禁止重复构建非本次生产源码。
-3. 新增 `A6 proxy: production control closes before proxy acknowledgement`：独立server，启动proxy→以生产stdio start/choose(empty)/close，与真实生产Go交互但不enqueue；父必须先收到正常control-closed marker再得到close ack，Go code0、proxy关闭且无子进程残留。
-4. 新增 `A6 cleanup: proxy shutdown reaps production control`：同样start成功后不close，发shutdown文件；必须control/proxy closed，close信息可观察。另在同一case内让startControlTransport使用不存在的control路径验证spawn-error关闭；该子case不启动proxy/host，不接其他server。两例各timeout=120000。登记新源精确白名单。
-
-验证：
-
-```bash
-BENTO_A6_TEMPORAL_ARCHIVE=/tmp/bento-b-temporal-author-aaOJQ2/release.tar.gz node --import ./register-paths.mjs --experimental-strip-types --test --test-concurrency=1 --test-timeout=1200000 --test-name-pattern='^A6 (proxy|cleanup: proxy)' apps/orchestrator/acceptance/temporal-retry/real-retry.test.ts
-pnpm --dir apps/orchestrator typecheck
-git diff --check
-```
-
-PASS：所选2例实际PASS，生产Go真实server握手，正常close无强杀，shutdown/spawn-error均等close后退出，无业务副作用。删除步骤并提交 `Test(execution-service): 固定生产 Temporal 控制代理与回收`。
-STOP：代理需伪造生产结果/改变生产文件、close ack先于Go close、句柄未关闭或指定验证失败；不扩大修改范围。
-
 ### T3：真实 Temporal history 独立证据探针
 
-前置状态：生产control构建与代理关闭两例已提交PASS。
+前置状态：工具/进程提交ac9c86e1e71e02b907422a656ea68e26238317c9已纳入；生产control构建与代理关闭/回收两例已实际2/2 PASS，源码和本步骤前置提交可回读。
 允许修改：本 RUNBOOK、probe/main.go、process.ts、real-retry.test.ts、public-files.json（5）；专门核对：apps/orchestrator/go.mod、apps/orchestrator/temporal.go（合计7）。禁止修改：生产Workflow/Activity、go.mod/sum、testsuite用例。
 
 执行：

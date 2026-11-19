@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { closeSync, openSync, writeSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { connect, createServer } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -323,4 +323,185 @@ export async function startServer(
         }
         throw error;
     }
+}
+
+export async function atomicJson(path: string, value: unknown) {
+    const temporary = path + '.tmp';
+    await writeFile(temporary, JSON.stringify(value), {
+        mode: 0o600,
+        flush: true,
+    });
+    await rename(temporary, path);
+}
+
+export async function readMarker(
+    directory: string,
+    name: string,
+    signal: AbortSignal,
+    timeoutMs = 5000,
+): Promise<Record<string, unknown>> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        signal.throwIfAborted();
+        try {
+            return JSON.parse(
+                await readFile(join(directory, name), 'utf8'),
+            ) as Record<string, unknown>;
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+        await delay(20, undefined, { signal });
+    }
+    throw new Error('Acceptance marker timed out: ' + name);
+}
+
+export async function buildControl(
+    directory: string,
+    signal: AbortSignal,
+): Promise<string> {
+    const control = join(directory, 'bento-orchestrator');
+    await runCommand('go', ['build', '-mod=readonly', '-o', control, '.'], {
+        cwd: join(root, 'apps/orchestrator'),
+        env: process.env,
+        timeoutMs: 120000,
+        signal,
+        input: null,
+    });
+    return control;
+}
+
+export type ControlTransport = {
+    socketPath: string;
+    process: OwnedProcess;
+    close: () => Promise<void>;
+};
+export async function startControlTransport(
+    controlBinary: string,
+    directory: string,
+    signal: AbortSignal,
+): Promise<ControlTransport> {
+    signal.throwIfAborted();
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const socketPath = join(directory, 'c.sock');
+    if (Buffer.byteLength(socketPath) >= 100)
+        throw new Error('Control socket path exceeds fixed limit');
+    let socket: import('node:net').Socket | undefined;
+    let backgroundError: unknown;
+    const listener = createServer((client) => {
+        if (socket) {
+            client.destroy();
+            backgroundError = new Error('Duplicate control socket client');
+            return;
+        }
+        socket = client;
+        for (const chunk of buffered) client.write(chunk);
+        buffered.length = 0;
+        client.on('data', (chunk) => {
+            if (!owned.child.stdin!.destroyed) owned.child.stdin!.write(chunk);
+        });
+        client.on('end', () => {
+            void close().catch((error) => {
+                backgroundError = error;
+            });
+        });
+        client.on('error', () => {
+            void close().catch((error) => {
+                backgroundError = error;
+            });
+        });
+    });
+    const buffered: Buffer[] = [];
+    await new Promise<void>((resolve, reject) =>
+        listener.once('error', reject).listen(socketPath, resolve),
+    );
+    await chmod(socketPath, 0o600);
+    const owned = own(controlBinary, ['temporal'], {
+        cwd: join(root, 'apps/orchestrator'),
+        env: process.env,
+        log: join(directory, 'go.log'),
+        ipc: false,
+    });
+    let reason: 'normal' | 'shutdown' | 'spawn-error' = 'normal';
+    owned.child.stdout!.on('data', (chunk: Buffer) => {
+        if (socket) socket.write(chunk);
+        else {
+            buffered.push(chunk);
+            if (
+                buffered.reduce((sum, b) => sum + b.length, 0) >
+                8 * 1024 * 1024
+            ) {
+                backgroundError = new Error('Control buffer exceeded limit');
+                void close().catch(() => {});
+            }
+        }
+    });
+    const finished = owned.closed.then(async (exit) => {
+        let dropped = false;
+        try {
+            dropped =
+                JSON.parse(
+                    await readFile(join(directory, 'drop-ready.json'), 'utf8'),
+                ).discarded === true;
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+        if (owned.child.pid === undefined) reason = 'spawn-error';
+        await atomicJson(join(directory, 'control-closed.json'), {
+            schema: 1,
+            ...exit,
+            reason: dropped && exit.signal === 'SIGKILL' ? 'dropped' : reason,
+            closed: true,
+        });
+        socket?.end();
+        const stopped = new Promise<void>((resolve, reject) =>
+            listener.close((error) => (error ? reject(error) : resolve())),
+        );
+        if (
+            !(await within(
+                stopped.then(() => true),
+                5000,
+            ))
+        ) {
+            socket?.destroy();
+            if (
+                !(await within(
+                    stopped.then(() => true),
+                    5000,
+                ))
+            )
+                throw new Error('Control socket listener did not close');
+        }
+    });
+    void finished.catch(() => {});
+    let closing: Promise<void> | undefined;
+    const close = () =>
+        (closing ??= (async () => {
+            if (!closed.has(owned.child)) {
+                reason = 'shutdown';
+                owned.child.stdin!.end();
+                if (!(await within(owned.closed, 5000))) {
+                    if (
+                        !owned.child.kill('SIGKILL') &&
+                        !closed.has(owned.child)
+                    )
+                        throw new Error('Could not kill owned Go control');
+                    if (!(await within(owned.closed, 5000)))
+                        throw new Error('Go control failed to close');
+                    await finished;
+                    throw new Error('Go control required forced shutdown');
+                }
+            }
+            await finished;
+            if (backgroundError) throw backgroundError;
+        })());
+    try {
+        await new Promise<void>((resolve, reject) => {
+            owned.child.once('spawn', resolve);
+            owned.child.once('error', reject);
+        });
+    } catch (error) {
+        await close();
+        throw new Error('Go control could not spawn', { cause: error });
+    }
+    return { socketPath, process: owned, close };
 }
