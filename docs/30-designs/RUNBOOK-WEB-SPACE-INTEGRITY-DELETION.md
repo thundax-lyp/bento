@@ -103,35 +103,7 @@ PASS：获审 RUNBOOK 是唯一任务变更；基线一致；端口命令退出 
 
 已完成前置事实：T1 物理存储/真实 HTTP fixture 已交付于 `apps/workspace/api/space-integrity-fixture.ts`，其导出 SpaceIntegrityFixture/openSpaceIntegrityFixture 为后续步骤的固定契约。API happy path 1/1、API typecheck、两新文件eslint、diff检查通过；实际3字节上传/原件下载/重开/清理后不可连接均通过。backend选项、三类fault setters、suspend/reopen与performance计时边界按获审T1实现，后续不得临场改动核心签名。完整原T1可从本文件前序获审提交读取。
 
-### T2：路径拒绝与完整性逐负例
-
-前置状态：T1 已提交，fixture Happy Path 通过。
-允许修改：`space-integrity-fixture.ts`、`space-path-integrity.test.ts`、新增 `apps/workspace/api/space-object-integrity.test.ts`、`public-files.json`、本文件。专门核对 `space.ts`、`space-storage.ts`、`space-files.test.ts`（合计 8）。
-禁止修改：生产校验、原大测试套件、A 的范围。
-
-执行：
-
-1. 路径分别 test/subtest：`../x`、`/x`、`a//b`、`a/./b`、反斜杠、控制字符、长度1025；独立新 UUID 重复 `nested/source.txt`；先文件 `nested` 后 `nested/x`，及先 `nested/x` 后 `nested`，各用隔离项目。断言400 invalid_space_input或409 space_conflict；旧 bytes+SHA256、完整上传行、saved/reserved、存储写入调用计数不变，候选 ID 无行/对象。另验证 uploading 路径占用拒绝、相同 ID/同清单重放不重复预占。
-
-2. 完整性用 Buffer.alloc(16777216,1) + Buffer.alloc(3,2)，合计16777219 bytes。独立 test：只 putPart 第2块；两块写入后 `setPartFault(id,1,{kind:'size',delta:-1})`；两块写入后 `setPartFault(id,1,{kind:'checksum',value:createHash('sha256').update('wrong').digest('base64')})`；两块写入后 `setCompleteFault(id,'reject')`；两块写入后 `setCompleteFault(id,'short')`。缺块/错块/错摘要都409 space_conflict、state uploading、parts只[2]、不调用 storage.complete；存储拒绝500 server_error、state completing；错对象409 space_conflict、state cleaning/cleanup failed。
-
-3. 每项逐一 readPart/readObject、GET upload、GET project.files、GET space 和 GET `/api/space/files/<id>/download`。未保存 ID 的 download=404，files 不含半成品，saved=0/reserved=声明大小。错摘要及错块清除用 `setPartFault(id,1,null)`，先断言原物理块 SHA256 未变、parts 恢复[1,2]，再原 complete 成功；存储拒绝用 `setCompleteFault(id,null)` 后原 complete 成功且一次保存记账。错误对象不“修回”saved，必须保持清理直到failed。
-
-4. 在 `space-object-integrity.test.ts` 固定新增 `integrityClock(t:TestContext)`，仅错对象清理 case 使用。调用 `const clock=integrityClock(t)` 时、在建 fixture 前 `t.mock.timers.enable({apis:['Date','setInterval'],now:1800000000000})`，与既有 recoveryClock 的 mock API 和初值一致。helper 唯一返回签名为 `{sweep():Promise<void>; expireSignature(f:SpaceIntegrityFixture,uploadId:string):void}`；sweep 执行 `t.mock.timers.tick(30000)` 后 `await new Promise<void>(resolve=>setImmediate(resolve))`；expireSignature 从 `f.rows('space_uploads')` 找原id，assert signedUntil为number，`t.mock.timers.setTime(signedUntil+1)`。不mock setTimeout/setImmediate/performance/hrtime，不import原大test文件。
-
-5. 全部条件等待固定使用 `waitFor(check:()=>Promise<boolean>):Promise<void>`：以 `performance.now()` 起点循环，check严格true才成功；失败时仅在 `performance.now()-start>=5000` 抛错，间隔 `await delay(20)`，delay 从 node:timers/promises 导入。不能用 Date.now 作网络/状态deadline，不能把超时当成功。fake Date 跳跃只触发业务到期；AbortSignal.timeout(5000) 保留真实单次网络期限。sweep 后用 waitFor 等待可观察SQLite状态，不以一次setImmediate假定全部清理完成。
-
-6. 错对象 case：签名未失效先 sweep，断言 cleaning/reserved仍为声明大小，readObject实际少1字节、readPart缺失（short已完成multipart）；`setCleanupFault(id,'remove-reject')`，`clock.expireSignature(f,id)` 后sweep，仍cleaning/额度不释放/对象物理存在；`setCleanupFault(id,null)` 后再次sweep并waitFor state failed，断言对象及multipart块均缺失、reserved=0。`setCompleteFault(id,null)` 清除剩余故障，再reopen核对failed不变；下载404、重复complete409且额度不变。清理失败覆盖作为同一完整性闭环，不称为真实S3故障。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --test apps/workspace/api/space-path-integrity.test.ts apps/workspace/api/space-object-integrity.test.ts
-pnpm --filter @bento/workspace-api typecheck
-git diff --check
-```
-
-PASS：每类别有单独命名结果与上述所有保护断言。STOP：任何分支开放半成品、原对象改变、状态/错误码与计划不符。先报告再修订，不修改生产绕过。提交 `Test(task-entry): 分别验证路径拒绝和上传完整性门禁`。
+已完成前置事实：T2 路径/完整性两文件17/17通过，包含独立checksum拒绝、Complete拒绝、少1字节物理对象、清理拒绝仍保留额度及重开后failed/不可下载。API typecheck、两测试eslint和diff通过。故障通过T1 setter解除。后续等待固定使用 `performance.now()` 起点、check严格true才成功、5秒真实deadline、`node:timers/promises`的delay(20)，网络AbortSignal.timeout(5000)；禁止mock setTimeout/setImmediate/performance/hrtime。fake Date仅控制上传业务到期，helper见space-object-integrity.test.ts::integrityClock。原T2细节保留在前序提交。
 
 ### T3：持久 Task 引用逐状态删除门禁
 
