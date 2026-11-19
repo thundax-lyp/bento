@@ -43,6 +43,7 @@
         "docs/30-designs/WEB-DESIGN.md",
         "docs/40-readiness/CURRENT-READINESS.md",
         "deploy/README.md",
-        "public-files.json"
+        "public-files.json",
+        "!apps/**/node_modules/**"
     ]
 }

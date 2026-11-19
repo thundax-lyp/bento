@@ -162,7 +162,10 @@
         "apps/workspace/web/acceptance/queue-storage-fixture.ts",
         "apps/workspace/web/acceptance/queue-isolation-fixture.ts",
         "apps/workspace/web/acceptance/web-queue-isolation.spec.ts",
-        "apps/workspace/web/playwright.web-queue-isolation.config.ts"
+        "apps/workspace/web/playwright.web-queue-isolation.config.ts",
+        "apps/orchestrator/openshell/provider-lifecycle/fixture.ts",
+        "apps/orchestrator/openshell/provider-lifecycle.test.ts",
+        "apps/workspace/api/go/accounts_lifecycle_test.go"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",
