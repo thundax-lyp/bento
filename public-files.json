@@ -125,6 +125,7 @@
         "apps/workspace/api/space-integrity-fixture.ts",
         "apps/workspace/api/space-path-integrity.test.ts",
         "apps/workspace/api/space-object-integrity.test.ts",
+        "apps/workspace/api/space-deletion-states.test.ts",
         "apps/workspace/api/space-storage.ts",
         "apps/workspace/api/space.ts",
         "apps/workspace/auth/package.json",

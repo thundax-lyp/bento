@@ -105,74 +105,7 @@ PASS：获审 RUNBOOK 是唯一任务变更；基线一致；端口命令退出 
 
 已完成前置事实：T2 路径/完整性两文件17/17通过，包含独立checksum拒绝、Complete拒绝、少1字节物理对象、清理拒绝仍保留额度及重开后failed/不可下载。API typecheck、两测试eslint和diff通过。故障通过T1 setter解除。后续等待固定使用 `performance.now()` 起点、check严格true才成功、5秒真实deadline、`node:timers/promises`的delay(20)，网络AbortSignal.timeout(5000)；禁止mock setTimeout/setImmediate/performance/hrtime。fake Date仅控制上传业务到期，helper见space-object-integrity.test.ts::integrityClock。原T2细节保留在前序提交。
 
-### T3：持久 Task 引用逐状态删除门禁
-
-前置状态：T2 已提交；A 未占用本 fixture 端口/目录。
-允许修改：新增 `apps/workspace/api/space-deletion-states.test.ts`、`space-integrity-fixture.ts`、`public-files.json`、本文件。专门核对 `space-execution.ts`、`execution-service-http.ts`、`store.ts`、`http.ts`、`apps/orchestrator/execution-service/task-submission.test.ts`（合计 9）。
-禁止修改：生产状态机、service.ts/service.test.ts、可信结案算法、公开调试路由。
-
-执行：
-
-1. 使用 T1 已固定的 backend 选项，不再修改核心签名。新测试文件定义 `const hexSHA256=(text:string)=>createHash('sha256').update(text).digest('hex')`；固定摘要不得改成随机值。测试私有账本目录为 mkdtemp 内 `business.sqlite`，`let store=new Store(path,16)`，token=`'fixture-space-deletion-'+randomUUID()`，以下调用固定；所有未用 callback 统一 `throw new Error('Unexpected fixture operation')`，不返回假公开 DTO。
-
-```ts
-const unexpected = (): never => {
-    throw new Error('Unexpected fixture operation');
-};
-const server = executionHttp(
-    store,
-    token,
-    () => {},
-    async () => unexpected(),
-    () => unexpected(),
-    async () => unexpected(),
-    {
-        environmentVersion: 'sha256:' + 'a'.repeat(64),
-        runView: () => unexpected(),
-        cancel: () => unexpected(),
-        retry: () => unexpected(),
-        async purgeSource(owner, spaceId, operationId) {
-            const bindings = store.taskSourceDeletionBindings(
-                owner,
-                spaceId,
-                operationId,
-            );
-            for (const binding of bindings) {
-                store.purgeProject(binding, operationId, spaceId);
-            }
-            return store.finishTaskSourceDeletion(owner, spaceId, operationId);
-        },
-    },
-);
-```
-
-server.listen(0,'127.0.0.1') 并等待 listening 后取实际 URL。`let upstream=httpBackend(url,token,5000)`；传 T1 `backend:(owner,operation)=>upstream(owner,operation)`。私有 source purge 只清理fixture持久账本，不创建/删除实际执行资源。只准调用 task create/replay/GET、source impact/delete、input hold/release 路由；不得调用 runs HTTP GET/POST、cancel/retry、legacy项目删除或owner purge，因此runView绝不调用，Store.enqueueTaskRun只在测试代码调用。若实际代码意外走未用路由而throw则STOP，不改callback掩盖。
-
-2. 经个人 API 保存3字节来源，POST `/api/tasks`，body=`{name:'fixture',source:{kind:'space_snapshot',spaceId:projectId,fileIds:[fileId]}}`，taskKey=randomUUID()，断言202且返回task.id。直接 fixture `store.importResult(taskId,'ready')`，再以相同body/taskKey重放 POST `/api/tasks`，断言200、同id/status ready；这一步触发 spaceExecution.verifyTaskReceipt 释放readPinned，不依赖GET触发reconcile。最后GET Task只核对公开结果。核对空间 `space_task_inputs` readPinned=0、Orchestrator task_input_refs、taskConfig.inputManifest、taskInitialFiles和inputDigest。READY为受控准备fixture，不运行scheduler/Worker。
-
-3. 五状态分别全新fixture：`source=store.enqueueTaskRun(ownerId,taskId,randomUUID(),'Original').run`，`store.status(source.id,status,'Synthetic active state')`，status仅取queued/running/recovering/cancelling/needs_review。先读预检blockers=[project_busy]；项目DELETE409 project_busy，文件DELETE409 project_busy，分别重复一次；download helper回读原bytes与摘要、树与saved=3/reserved=0不变。用只读DatabaseSync行快照检查冻结输入/refs不变、space_file_deletions无checking残留、私有task_input_delete_holds/task_source_deletions有对应denied receipt。reopen严格按T1第7项顺序关闭并重建两个业务HTTP与Store；对象server保持。再次验证全部门禁和账本。
-
-4. 三种终态分别新fixture：创建同上Run后 `store.status(source.id,terminal,'Synthetic terminal state')`，terminal取failed/cancelled/succeeded。文件DELETE首次202或204、waitFor最终204，来源download404且quota归零，Task冻结输入仍可读；再项目DELETE waitFor最终204、GET Task404。重复两个DELETE均204不重复释放。状态消费fixture不声明真实终态执行；旧真实Happy Path证据承担真实结果/补丁/资源回收。
-
-5. 四retry阶段分别新fixture，严格复用 `task-submission.test.ts::retryFixture` 构造：`source=store.enqueueTaskRun(ownerId,taskId,randomUUID(),'Original').run`；`store.status(source.id,'failed','Synthetic failure')`；`proof=store.recordStopProof(source.id,'{}')`，断言proof.sha256等于hexSHA256('{}')；`evidence={oldGeneration:1,newGeneration:2,workspaceSha256:hexSHA256('[]'),historySha256:hexSHA256('[]')}`；`attempt=store.acceptTaskRetry(ownerId,taskId,source.id,randomUUID(),evidence).attempt`，断言phase/lastConfirmedPhase=preparing、sourceRunId/source.id一致、新Run尚不存在。'{}'和固定摘要只是Store门禁fixture，不是可信runtime stop/恢复证据。禁止直接INSERT/UPDATE/DELETE retry_attempts。
-
-6. 阶段构造唯一表：preparing不调用advance；workspace_restored仅 `advanceTaskRetry(id,'preparing','workspace_restored')`；history_restored依次 `advanceTaskRetry(id,'preparing','workspace_restored')` 和 `advanceTaskRetry(id,'workspace_restored','history_restored')`；blocked仅 `advanceTaskRetry(id,'preparing','blocked')`。所有调用断言true；前三者lastConfirmedPhase等于phase/error=null，blocked的lastConfirmedPhase=preparing/error=restore_conflict。每阶段重复第3项的双DELETE、download、持久reopen；源Run仍failed、newRun不存在、SQL pending Run count=0/pending retry count=1。
-
-7. 每阶段拒绝证据完成后：若尚未blocked，调用 `advanceTaskRetry(id,currentPhase,'blocked')` 并断言true；blocked不重复advance。closureCanonical=`JSON.stringify({kind:'fixture-only-closure',attemptId:attempt.id,generation:2})`，closureDigest=hexSHA256(closureCanonical)；`audit=store.closeBlockedTaskRetry(id,2,closureDigest)`，断言非null、attemptId=id、authorityGeneration=2、evidenceDigest=closureDigest、closedAt有效ISO字符串；重复同参深等于audit。store.taskRetry.phase=closed、task.closedReason=unconfirmed、pending计数均0；重开回读审计相同，然后按第4项删除放行。此处只消费受信结案fixture，不验证service的可信观察/证据算法。
-
-8. queued承接独立fixture：按第5项建preparing，依次advance至workspace_restored/history_restored（均true），`next=store.finalizeTaskRetry(id,'history_restored')`，断言next.id=attempt.newRunId/next.status=queued、attempt.phase=queued、pending retry count=0/pending Run count=1。双DELETE仍409；再 `store.status(next.id,'succeeded','Synthetic success')`，重开后count均0、旧attempt仍queued；按第4项删除放行。禁止手动添加newRun或修改receipt phase。
-
-上述只读私有账本观察 helper 固定 `(sql:string,...values:SQLInputValue[])=>Record<string,SQLOutputValue>[]`，仅测试文件内部定义，打开readOnly DatabaseSync、prepare/all后finally close；SQL仅写死在测试内，不形成公开/fixture调试路由。pending计数固定按 `runs WHERE projectId=? AND status IN ('queued','running','recovering','cancelling','needs_review')` 和 `retry_attempts WHERE taskId=? AND phase IN ('preparing','workspace_restored','history_restored','blocked')` 各count(*)。全部等待使用 T2 的 performance.now/真实delay helper，禁用 Date deadline。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --test apps/workspace/api/space-deletion-states.test.ts
-pnpm --filter @bento/workspace-api typecheck
-git diff --check
-```
-
-PASS：5种pending Run、4种retry阶段、queued承接及3种Run终态分别有单独命名断言；实际双HTTP和两个SQLite、对象均对账。STOP：门禁拒绝结果与状态不符、需要修改A范围、closed receipt仍占额度；保留失败现场并向MASTER回报。提交 `Test(task-entry): 逐状态验证空间来源删除保护`。
+已完成前置事实：T3 `space-deletion-states.test.ts` 13/13通过（5活跃Run、3终态、4retry预留阶段、queued承接），API typecheck通过。每个阻断状态跨实际双HTTP和两SQLite重开验证对象/输入/下载/额度保留；闭合审计与终态只为Store门禁fixture，不证明恢复/可信结案算法。按MASTER获审修订仅mock setInterval，DELETE受理后tick30000，再用performance真实5秒deadline核验；在父项目仍存时验证重复file DELETE两次204，整项目删除后只核对Task/项目/原下载404及重复project DELETE204。未修改生产代码。原T3及两次定向审核内容从前序提交回读。
 
 ### T4：正常 Web 选择入口拒收原因
 
