@@ -169,7 +169,10 @@
         "apps/workspace/api/go/accounts_lifecycle_test.go",
         "apps/orchestrator/openshell/provider-lifecycle/crash-child.ts",
         "apps/orchestrator/openshell/provider-lifecycle/crash-fixture.ts",
-        "apps/orchestrator/openshell/provider-crash.test.ts"
+        "apps/orchestrator/openshell/provider-crash.test.ts",
+        "apps/orchestrator/acceptance/temporal-retry/tool.ts",
+        "apps/orchestrator/acceptance/temporal-retry/process.ts",
+        "apps/orchestrator/acceptance/temporal-retry/real-retry.test.ts"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",

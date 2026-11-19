@@ -3,13 +3,13 @@
 ## 状态与执行边界
 
 - 建立日期：2026-11-19。
-- 状态：`Pending MASTER Review`，决策完备作者草稿；T0 已通过，尚未获 `Executable`，禁止实施。
-- checkout：仅 B；起始 `main` / `origin/main` 为 `0f4327470885e32f56296a3afc0ad142d1054a08`，起草前工作区干净。尚未创建任务分支或提交。
-- 本轮只交付未提交计划。MASTER 审为 `Executable` 后，才允许按单独派工创建 `codex/a6-temporal-retry`、独立提交本文件；计划提交核对和显式 Worker 调用完成前不实施。
+- 状态：`Executable / Implementing`；MASTER审核及计划提交已核对，显式Worker已开工。T1工具/生命周期2例PASS，剩余步骤如下。
+- checkout：仅 B；分支 `codex/a6-temporal-retry`，基线 `0f4327470885e32f56296a3afc0ad142d1054a08`，获审计划提交 `acf25388748dc2ac9aeca27af93965c0da5b3cf9`。
+- 授权：按MASTER显式Worker派工逐步实施/提交；生产文件保持只读，外部环境仅本任务隔离本地资源。
 
 ## 执行者契约
 
-当前允许读取本文件及 T0 列出的证据，向 MASTER 报告；不允许创建分支、提交、启动服务、实现测试或更新 Readiness。禁止把 SDK testsuite、TS 同函数调用两次、必需用例 skip 当作真实 Temporal PASS。
+当前按剩余步骤允许修改/验证/提交并向MASTER回报；不扩大到生产修复或共享环境。禁止把 SDK testsuite、TS 同函数调用两次、必需用例 skip 当作真实 Temporal PASS。
 
 后续授权顺序固定为：作者送审本版本 → MASTER `Executable` → 获审分支与独立计划提交核对 → 显式 `$bento-runbook-worker RUNBOOK-A6-TEMPORAL-RETRY.md`。PASS 步骤须删除并与该步产物同次提交；剩余步骤中对已删除STEP的引用替换为实际已存在产物、PASS断言和对应SHA，不改变剩余行为。每步暂存前完整核对diff与公开源范围，不纳入私有工具/证据；最后迁移精确证据、删除 RUNBOOK。
 
@@ -404,29 +404,6 @@ business.sqlite 固定查询：`SELECT * FROM runs WHERE id=?`（必须一行）
 ## 机械执行步骤
 
 下列命令 cwd 均为仓库根。各步只有获审 Worker 可执行；本作者回合不执行。验证使用 test-name-pattern 选择已创建的固定用例，允许 Node 对不匹配用例显示未选中，但所选 case 必须实际 PASS、不得 skip；T7/T8 全量运行九项，必须 skip=0。pnpm typecheck 运行时读取的依赖不等于专门人工核对文件预算，专门读文件已逐步穷举。
-
-### T1：固定官方工具与自有进程生命周期
-
-前置状态：获审计划独立提交，T0 PASS，已显式 Worker；既有代码未变化。
-允许修改：本 RUNBOOK、tool.ts、process.ts、real-retry.test.ts、public-files.json（5 文件）。专门核对：apps/orchestrator/tsconfig.json（合计6）。禁止修改：依赖/lock、根 files、生产入口、共享部署。
-
-执行：
-
-1. 按上方精确平台/来源/size/SHA 实现 acquireTemporal。依赖仅 Node、curl、tar，所有网络/命令子进程由本步进程模块持有；失败删除部分文件。
-2. 实现 own/stopOwned/runCommand/startServer；本步不声明 startHost 或尚未存在的 probe 构建。测试根 before 在仓库外mkdtemp创建0700 suite工具目录并只 acquire 一次工具，after 清理该目录；后续buildControl/buildBinaries在同一目录各memoize一次Promise，所有case复用同版本编译产物但不复用业务state/server DB；Node test 外层 timeout=1200000，无 force-exit。工具获取 hook timeout=540000；工具生命周期 case timeout=180000，所有wait绑定t.signal并在abort后清理，清理操作使用独立有限deadline而非已abort的signal，保证能完成close。
-3. 新增两个 top-level tests：`A6 tool: verified CLI and persistent server lifecycle`（使用上述已实测首次/不带namespace重启流程）；`A6 cleanup: managed process timeout and spawn failure`（自有 Node inline child 忽略 SIGINT，待 ready 后 stopOwned(graceMs=100)，必须 forced=true、signal=SIGKILL且close；不存在绝对binary spawn错误也必须close，整个case≤15000ms）。均无需业务 Run。
-4. public-files.json.files 精确添加本步三个源路径；不添加目录/泛 glob、不改 patterns。未来每步新增源同次登记。本任务临时 RUNBOOK 不登记为公开交付物，独立计划提交只含本文件，最终 PR 交付前按 T8 删除，不把本地私有证据发布。
-
-验证：
-
-```bash
-BENTO_A6_TEMPORAL_ARCHIVE=/tmp/bento-b-temporal-author-aaOJQ2/release.tar.gz node --import ./register-paths.mjs --experimental-strip-types --test --test-concurrency=1 --test-timeout=1200000 --test-name-pattern='^A6 (tool|cleanup: managed)' apps/orchestrator/acceptance/temporal-retry/real-retry.test.ts
-pnpm --dir apps/orchestrator typecheck
-git diff --check
-```
-
-PASS：所选2例实际通过，无必需skip，真实server两次正常关闭且原DB namespace保留，forced清理case确实发生KILL并close，类型/whitespace通过。删除本步骤说明后提交 `Test(execution-service): 固定真实 Temporal 工具与进程生命周期`。
-STOP：摘要/平台/网络不满足或正常关闭需KILL、未回收进程、类型不通过；不换来源、不skip、不改正式scope。保留脱敏失败证据，清理已确认自有资源，未确认close的目录保留。
 
 ### T2：生产控制面的透明代理与关闭确认
 
