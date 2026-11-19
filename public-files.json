@@ -177,7 +177,9 @@
         "apps/orchestrator/acceptance/temporal-retry/probe/main.go",
         "apps/orchestrator/acceptance/temporal-retry/host.ts",
         "apps/orchestrator/acceptance/temporal-retry/evidence.ts",
-        "apps/orchestrator/acceptance/temporal-retry/check-package.mjs"
+        "apps/orchestrator/acceptance/temporal-retry/check-package.mjs",
+        "apps/orchestrator/openshell/binding-grants/sdk.ts",
+        "apps/orchestrator/openshell/binding-grants/sdk-probe.ts"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",

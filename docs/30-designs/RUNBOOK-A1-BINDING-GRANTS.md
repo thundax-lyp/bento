@@ -164,28 +164,9 @@ git diff --check
 PASS：只有本文未跟踪，基线相同，链接/格式通过；官方探针6项已实测，MASTER对同SHA评Executable并核对计划提交。当前尚缺最后审核/提交/worker调用。
 STOP：来源/基线/共享窗口变化或审核未通过；不能把本工具探针当业务PASS。
 
-## T1：固定官方 SDK 准备与 wire
-
-前置状态：T0完成，获审计划与显式worker均已回读。
-允许修改：本文、sdk.ts、sdk-probe.ts、public-files.json。专门读取command-host.ts、Orchestrator package.json，共6文件。
-禁止修改：生产decoder、依赖/lock、根files与public patterns。
-
-执行：按上文唯一签名新增sdk.ts/sdk-probe.ts；public-files.files精确登记两新源一次；不得新增泛配模式。准备器正常下载构建，不复用作者临时目录；probe重复6真实断言。source/lock/config hash固定，所有退出路径有清理。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --experimental-strip-types apps/orchestrator/openshell/binding-grants/sdk-probe.ts
-pnpm --filter @bento/orchestrator typecheck
-git diff --check
-```
-
-PASS：6真实wire断言、source/lock/config核对全部通过、CLI退出0且临时目录删除；typecheck0。
-STOP：缺工具/网络/导出/版本、超时或清理失败；保留STEP，不替换SDK。工具失败无业务状态副作用。
-
 ## T2：真实当次授权 Happy Path
 
-前置状态：T1工具可用且来源不变。
+前置状态：sdk.ts/sdk-probe.ts 已完成官方来源校验、正常构建与6项生产decoder探针；CLI退出0且工具目录清理，typecheck/lint通过（2026-11-19）；来源不变。
 允许修改：本文、fixture.ts、binding-grants.test.ts、public-files.json。专门读取single-host.ts、sdk-ingress.ts、worker-gate.ts、sdk.ts，共8文件。
 禁止修改：任何生产行为、原provider fixture。
 
