@@ -2,9 +2,9 @@
 
 ## 状态与工作边界
 
-- 状态：作者草稿，待 MASTER 审核；不是 Executable，也未授权执行 T1。
+- 状态：MASTER 已审核 Executable 并显式启动 worker；T1 已 PASS。
 - 建立日期：2026-11-19。作者 checkout：`bento-b`；基线 `104be8f5139c1100e3e5949bf3478f66f175e274`，`main=origin/main`。
-- 本轮只新增本地验收 fixture/test、锁定其官方依赖、同步相关设计和 Readiness。生产代码只读。计划执行分支固定为 `codex/a2-provider-recovery`，顺序固定为：MASTER 审核为 Executable→MASTER 单独派发建立该分支并只提交本 RUNBOOK→回读计划 commit 与文件 SHA256→MASTER 显式调用 `$bento-runbook-worker` 开工。建分支和仅提交计划属于开工前独立阶段，不属于 T1；当前仍禁止建分支和提交。
+- 本轮只新增本地验收 fixture/test、锁定其官方依赖、同步相关设计和 Readiness。生产代码只读。计划执行分支固定为 `codex/a2-provider-recovery`，顺序固定为：MASTER 审核为 Executable→MASTER 单独派发建立该分支并只提交本 RUNBOOK→回读计划 commit 与文件 SHA256→MASTER 显式调用 `$bento-runbook-worker` 开工。建分支和仅提交计划属于开工前独立阶段，不属于 T1；获审计划提交为 `4278b4fee05fef0d71c1e9a2d12881abe4fb9ecf`，当前已处于该分支。
 - MASTER 主 checkout 不属于 WORKER；A checkout、旧 Docker/OpenShell、远端环境、IdP、S3、外部模型均禁止写入。A 独占 `service.ts` 的 retryReason/advanceTaskRetry、既有 service retry suite、外部 checkpoint 验收窗口。
 
 ## 执行者契约
@@ -13,7 +13,7 @@
 2. 每步只读其列出的专门核对文件，只修改允许文件；预算包含本 RUNBOOK。工具自动加载的依赖不是要求执行者阅读的材料，不新增专门读取范围。
 3. 每步全部断言及命令退出 0 才 PASS；PASS 后删该步、将后续依赖换成实际可核验事实，与该步产物一起提交，回读 SHA 和文件清单。不得提前删未完成步骤。
 4. 任何未固定的接口、断言、依赖、生产修复或系统错误都是 STOP，回报最后成功 STEP/SHA、符号、最小复现命令和脱敏实际输出，不改断言绕过。保留现场，不回滚无关文件。
-5. 单个 RUNBOOK 对应一个 PR；交付遵守 [Worker Skill](../../.agents/skills/bento-runbook-worker/SKILL.md)、[Commit Rules](../00-governance/COMMIT-RULES.md)、[PR Rules](../00-governance/PR-RULES.md)。当前阶段禁止建分支、提交、push、实施正式代码。
+5. 单个 RUNBOOK 对应一个 PR；交付遵守 [Worker Skill](../../.agents/skills/bento-runbook-worker/SKILL.md)、[Commit Rules](../00-governance/COMMIT-RULES.md)、[PR Rules](../00-governance/PR-RULES.md)。已进入获审实施阶段，只允许本计划内的逐步提交和交付。
 
 ## 目标、依据与当前断点
 
@@ -218,26 +218,9 @@ PASS：MASTER 独立审核本草稿为 Executable，且确认上述基线/T0 适
 
 ## 机械步骤
 
-### T1：锁定官方验收依赖
-
-前置状态：MASTER Executable 已确认；MASTER 单独派发后已建立 `codex/a2-provider-recovery` 并只提交本 RUNBOOK，计划 commit/文件 SHA256 已回读；随后显式 worker 开工指令已回读。当前分支必须已经是该分支，禁止 T1 再建分支。
-允许修改：apps/orchestrator/package.json、pnpm-lock.yaml、本 RUNBOOK。
-专门核对：以上 3 + pnpm-workspace.yaml，共 4。
-禁止修改：worker/runtime 依赖、根 files、CI、生产代码。
-
-执行：核对上述已存在分支和已审核计划提交，不建立分支；从仓库根运行：
-
-```bash
-pnpm --filter @bento/orchestrator add -D -E @deepseek-ai/dsh-agent@0.2.1-rc.4 @deepseek-ai/dsh-agent-loop@0.2.1-rc.4 @deepseek-ai/dsh-session@0.2.1-rc.4 @deepseek-ai/dsh-session-projection@0.2.1-rc.4 @deepseek-ai/dsh-llm@0.2.1-rc.4 @deepseek-ai/dsh-system-prompt@0.2.1-rc.4 @deepseek-ai/dsh-tools@0.2.1-rc.4 @deepseek-ai/dsh-scope@0.2.1-rc.4 @deepseek-ai/dsh-session-checkpoint-policy@0.2.1-rc.4
-pnpm install --frozen-lockfile
-pnpm check:orchestrator
-```
-
-PASS：依赖精确声明、lock integrity 存在，原 suite/typecheck/Go 全通过，既有 skip 数不增加。STOP：安装/校验失败、TLS 错误、依赖版本或 peer 冲突；不换镜像、不复制旧 node_modules、不跳过 TLS。无数据库副作用，保留安装失败现场送回作者。
-
 ### T2：官方成功链与同库恢复
 
-前置状态：T1 已提交且官方包可按声明导入。
+前置状态：官方九项 devDependencies 已精确锁定；pnpm install --frozen-lockfile 与 pnpm check:orchestrator 通过（104 tests：102 pass/2既有skip，Go test/vet通过），该依赖变更已提交。
 允许修改：新增 fixture.ts、新增 openshell/provider-lifecycle.test.ts、public-files.json、本 RUNBOOK。
 专门核对：以上 4 + remote-session.ts、single-host.ts、session-history.ts、persistence-ingress.ts、worker-gate.ts，共 9。
 禁止修改：上述所有生产文件、A 的路径、根 files/CI。
