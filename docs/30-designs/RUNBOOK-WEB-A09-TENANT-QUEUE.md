@@ -148,22 +148,13 @@ node -e "const n=require('node:net'); (async()=>{for(const port of [4363,4364]) 
 
 PASS：基线一致；端口可绑定；Go 指定测试实际 PASS；13项均通过且无 skip。执行启动前基线受 A 合入影响时由 MASTER 复审受影响步骤，不擅自换基线。STOP：任一不满足、未知改动、硬端口冲突、正式契约冲突。无外部副作用，无回滚。T0 不产生 commit。
 
-## T1：独立生产链与物理存储 fixture
+## 已通过的执行前置事实
 
-前置状态：MASTER Executable、计划单独提交、显式worker开工、T0通过，分支已核对。允许修改：两个新 fixture 和本 RUNBOOK；专门核对 Store、service、http、httpBackend、server、space（合计9文件）。禁止生产修复、既有fixtures、A热点。
-
-执行：严格按以上签名实现两个fixture；observe只读；排队和slot查询必须与生产一致。初始化无SQL seed；身份可种子，业务数据不可种子。内部随机回环端口，公共4363，不启动4364。启动/关闭失败均清理自己创建的资源。
-
-```bash
-pnpm --filter @bento/web typecheck
-node --import ./register-paths.mjs --experimental-strip-types --input-type=module -e 'const {startQueueIsolationFixture}=await import("./apps/workspace/web/acceptance/queue-isolation-fixture.ts");const f=await startQueueIsolationFixture();try{const s=await f.observe();if(s.activeWorkers!==0||s.occupied.length||s.queued.length||Object.values(s.owners).some(o=>o.runs||o.tasks)||f.accounts.length!==3||new Set(f.accounts.map(a=>a.ownerId)).size!==3||new Set(f.accounts.map(a=>a.account)).size!==3)throw Error("invalid initial fixture");console.log("queue fixture starts empty with three distinct identities")}finally{await f.close()}'
-```
-
-PASS：typecheck 0；3个distinct owner/account；观察0worker/0Run/0队列；fixture.close自身assert临时目录ENOENT，close后用T0端口命令确认4363重新可绑定。STOP：任何错误或需新增签名外接口。仅自己创建的fixture资源清理，不撤销用户文件。提交 `Test(task-entry): 建立租户队列独立验收宿主`。
+T1 已完成：两个独立fixture已落地；web typecheck、两个fixture eslint、计划空状态启动/close smoke和关闭后4363/4364 bind检查均PASS。观察3个distinct账号/owner与0 Task/Run/worker/队列；close内确认目录ENOENT。没有生产代码变更。对应提交为包含本记录的 `Test(task-entry): 建立租户队列独立验收宿主`，从该提交进入T2。
 
 ## T2：三账号队列和上传在途完整验收
 
-前置状态：T1提交且fixture可启动关闭。允许修改：新spec、新config、本 RUNBOOK；专门核对两个新fixture、pages.tsx、space-api.ts、web/src/space.tsx（合计8文件）。禁止页面retry/cancel变更与生产修复。
+前置状态：上述T1能力提交可回读且fixture可启动关闭。允许修改：新spec、新config、本 RUNBOOK；专门核对两个新fixture、pages.tsx、space-api.ts、web/src/space.tsx（合计8文件）。禁止页面retry/cancel变更与生产修复。
 
 执行：新 config 唯一内容为以下配置（导入 `defineConfig, devices` 自 `@playwright/test`）：
 
