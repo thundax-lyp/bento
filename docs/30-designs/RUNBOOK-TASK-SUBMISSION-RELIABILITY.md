@@ -73,66 +73,9 @@ ENVIRONMENTS.md 调查时不存在；本任务不连接外部受控服务，无�
 
 ## 机械步骤
 
-### T3：实际 HTTP 与浏览器丢回执验收入口
-
-前置状态：execution-service/task-submission.test.ts 已提交，node:test 13/13 PASS；orchestrator typecheck PASS。覆盖 blank/snapshot 重开回执、五活跃态、四 retry 预留态、queued/closed 对照。
-允许修改：新 fixture、新 spec、新 config、RUNBOOK。专门核对 terminal-results-fixture.ts、space.ts、space-storage.ts、space-execution.ts、api/server.ts、web/src/space.tsx，共 10 文件。
-禁止修改：所有既有 fixture/验收、生产服务、页面；本步先复现页面缺口。
-
-执行：
-
-1. 新 fixture 返回签名固定如下，不新增产品路由：
-
-```ts
-export async function startTaskSubmissionFixture(): Promise<{
-    seedSource(): Promise<{
-        spaceId: string;
-        fileId: string;
-        path: 'input.txt';
-        name: 'Submission source';
-    }>;
-    setSourceText(text: string): void;
-    releaseRun(taskId: string): void;
-    observe(taskId: string): Promise<{
-        prepare: number;
-        execute: number;
-        runs: number;
-        userMessages: number;
-        creationReceipts: number;
-        sourceReads: number;
-    }>;
-    reopen(): Promise<void>;
-    close(): Promise<void>;
-}>;
-```
-
-接线顺序固定：mkdtemp(tmpdir()/bento-submission-*)→localHost(join(state,'volume'))→包装 host→serveExecution({state,host,token:bearer,retryMs:20,workerTimeoutMs:15000})→`let backend=httpBackend(execution.url,bearer,5000)`→`let space=mySpace(join(state,'space.sqlite'),storage,(owner,op)=>backend(owner,op))`→`let api=await taskEntryServer({port:4343,origin:'http://127.0.0.1:4344',auth:sessionAuth(mockAccounts(accounts),false,false),backend:(owner,op)=>backend(owner,op),space})`。accounts=demoAccounts()，demo=accounts.find(a=>a.account==='demo')!，owner 仅来自 demo.ownerId；bearer='fixture-submission-'+randomUUID()。不得使用 mockBackend。
-
-storage=`spaceStorage('http://127.0.0.1:1','fixture','us-east-1')`，仅 read(key,size) 使用本地对象字节：assert key===spaceObjectKey(fileId)（即 'space/'+fileId）、size===5，sourceReads++，返回 Buffer.from(currentSource)，初始 currentSource=Buffer.from('base\n')。setSourceText(text) 仅把 currentSource 更新为 UTF-8 Buffer，测试传入同长 'next\n'。其他 storage 方法 create/signPart/parts/complete/empty/abort/size/remove/preview/download 全部覆写为抛 Unexpected storage operation（方法列表已逐项核对 space-storage.ts）。此处替代 S3 对象读取本身；mySpace 传给生产 spaceExecution 的 storage.read、生产 freezeTask 的 key/大小/UTF-8/checksum/manifest/digest 和持久 receipt 路径完整保留，不模拟 freeze 或返回 Task。
-
-seedSource() 只能调用一次，重复调用返回首次 IDs；spaceId/fileId=randomUUID()，在 mySpace 初始化 schema 后以独立 DatabaseSync(join(state,'space.sqlite')) 事务写入：`INSERT INTO space_projects(id,owner,name) VALUES (?,?,?)` 参数 [spaceId,demo.ownerId,'Submission source']；`INSERT INTO space_uploads(id,project,owner,path,size,manifest,state,storageId,expires,signedUntil,cleanup) VALUES (?,?,?,?,?,?,?,?,?,?,?)` 参数 [fileId,spaceId,demo.ownerId,'input.txt',5,JSON.stringify([SHA256(Buffer.from('base\n')).digest('base64')]),'saved',null,0,0,null]。COMMIT 后关闭连接，返回上面 source 对象。失败 ROLLBACK 并关闭；只 seed 已保存上传前置，不写 space_tasks、pins、Task、Run。对象 key 一律由生产 spaceObjectKey(fileId) 计算。冻结 manifest hex SHA 来自生产 freezeTask，inputDigest 为生产文本快照 SHA，不从 fixture 灌入。
-
-正常 snapshot 入口：注册登录后 seedSource，page.goto('/space/'+spaceId)，page.getByRole('checkbox',{name:'input.txt'}).check()，page.getByRole('button',{name:'从所选文件新建任务',exact:true}).click()；Task 名称沿用源项目名 'Submission source'，不添加虚构任务名称输入。POST /api/tasks body 必是该 name 和唯一 fileId 的 space_snapshot。丢回包后仍在该页面，选择未丢失，再点原按钮。blank 入口 page.goto('/')、getByLabel('任务名称').fill(name)、getByRole('button',{name:'创建空白任务',exact:true}).click()。
-
-2. host.provisionTask 包装生产 localHost 实际调用，按 task project ID 计数；host.worker 对 execute 按 project ID 计数后调用 base.worker。为 prompt=`hold-submission` 使用按 project ID 管理的可释放 Promise，在释放前保留 running；releaseRun(taskId) 只 resolve 对应 gate，close 先释放所有自有 gate 再停自有服务。setSourceText 只更新 storage.read 的 fixture 字节。observe 新开只读 DatabaseSync(join(state,"business.sqlite"),{readOnly:true})，用 `SELECT COUNT(*) AS n FROM runs WHERE projectId=?`、`SELECT COUNT(*) AS n FROM task_events WHERE taskId=? AND json_extract(body,'$.kind')='user_message'`、`SELECT COUNT(*) AS n FROM task_creation_receipts WHERE taskId=?` 绑定 taskId 计数并 finally close；sourceReads 来自 read 包装，host 计数来自包装调用，不从 HTTP 状态推断。reopen 先断言所有已计数 Run 终态，依序 await api.close()/execution.close()（api.close 内部负责 await space.close，禁止二次 close space），按上述顺序以原 state、accounts、bearer、storage 重建 execution/backend/space/api，保留计数和 source IDs/字节；禁止重开 running 来触发恢复。
-3. spec 每个 test.beforeEach 启动新 fixture，test.afterEach finally close，注册各自 demo 合成账号；testDir acceptance、testMatch web-task-submission.spec.ts、workers=1、retries=0、timeout=120000、Chromium、trace/video/screenshot off；Vite 4344 strictPort，API_TARGET=4343，reuseExistingServer=false。端口冲突直接失败。
-4. spec 登录从注册/登录正常入口；blank 和 snapshot 创建分别 page.route 对匹配 POST 执行 route.fetch()，断言真实上游 202、保存 body/key/Task，随后 route.abort('failed')。页面保留原表单后点击同创建按钮重投，route.fetch 捕获 200 后 route.fulfill({response})。核对同 ID/输入/environment、prepare=1/receipt=1；snapshot 通过 setSourceText 在受理后把 fixture 源字节改为 `next\n`，重投 inputDigest 不变、storage.read 不再调用。随后页面发送 noop 并核对 execute=1。
-5. Run 丢包用同样 fetch→202→abort。先允许 noop 结束，页面原正文重投得到同 Run。另用 hold-submission 保持 running；断言 pending entry“重试提交”可见并重投（此处当前生产缺陷应复现）。第二登录页/旧页面发送不同新键要求，实际 HTTP 409 task_busy；UI 禁发送并显示等待/取消。原键异正文 409 idempotency_conflict。每次前后 observe 核对不新增 prepare、execute、Run、user_message。
-6. 增加服务同库重开后原 Task/Run key 原正文 replay 200 测试；原 ID/输入/environment 和计数不变。reload 检查未知请求键仍在 sessionStorage；不声明组件 pendingSubmission 跨刷新存在。
-
-验证：
-
-```bash
-pnpm --filter @bento/web typecheck
-pnpm --filter @bento/web exec playwright test -c playwright.task-submission.config.ts --grep 'create receipt|completed Run receipt|reopen receipt'
-pnpm --filter @bento/web exec playwright test -c playwright.task-submission.config.ts --grep 'active Run receipt'
-```
-
-PASS：前三个命名组退出 0；active Run receipt 组只包含一个测试，退出 1，且唯一失败必须是 getByRole(button,{name:"重试提交",exact:true}) 的 toBeVisible 找不到元素；其前置上游 202、abort、原 Run running 与 host/数据库计数断言须先 PASS。任何其他失败均 STOP。保留该精确红灯输出，作为 T3 回归复现产物；不是整体验收通过。该 acceptance/config 仅由专用 -c 手动运行，不接入默认 playwright.config.ts 或 CI；不得加 test.fail/expectedFailure/skip。T3 可单独提交该唯一红灯，T4 必须紧随，最终专用套件必须全绿。STOP：任何其他失败、上游未实际受理、假 fulfill 受理、缺计数/清理失败；不尝试外部服务。
-
 ### T4：未知回执原正文重投入口
 
-前置状态：T3 三组 PASS、active Run 缺按钮精确失败已提交；MASTER 已协调页面范围。
+前置状态：T3 专用验收四用例 PASS（blank/snapshot create、completed Run、reopen）；active Run 用例唯一失败为重试提交按钮 toBeVisible 找不到，前置实际 202/running/prepare=execute=Run=user_message=receipt=1 全通过。web typecheck PASS；新 fixture/spec/config 已提交。MASTER 已协调页面范围。
 允许修改：pages.tsx、web-task-submission.spec.ts、task-submission.test.ts、RUNBOOK。专门核对 api.ts，共 5 文件。
 禁止修改：retry/cancel mutation、安全重试/结果段、api.ts、其他生产代码。
 
