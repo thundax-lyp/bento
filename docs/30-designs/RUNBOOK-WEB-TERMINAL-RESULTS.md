@@ -94,25 +94,9 @@ PASS：端口与本地依赖检查退出 0；基线与归属核对、正式需�
 STOP：内容/基线变化影响范围、正式依据冲突或本地依赖不能执行。无外部副作用，不回滚旧现场。
 提交边界：通过审核后独立 RUNBOOK 提交。
 
-### T2：锁定冻结结果与不可用接口
-
-前置：Worker bootstrap 四状态真实 POST 接线与投影单测 8/8、Worker typecheck 通过，见上一 STEP 提交中的 task-bootstrap.test.ts。
-允许修改：`apps/orchestrator/execution-service/service.test.ts`、本 RUNBOOK。
-专门只读：`apps/orchestrator/execution-service/http.ts`、`apps/orchestrator/execution-service/service.ts`、`apps/workspace/api/protocol.ts`，合计 5 文件。
-执行：在既有 Task event projection suite 的独立新增用例，使用 localHost fixture，经真实 HTTP 入库四状态，精确核对 results.checks 和 events.check；不得改变旧 suite 的重复/旧代负例。分别创建非空和空结果，比对两种 view 的预览/附件字节、metadata SHA、固定附件名。运行未完成时读取 results 与 diff 均为 409 diff_unavailable；越权均 404。重开服务后只读回查冻结结果一致。fixture 明确标记，不能称真实模型验收。
-验证：
-
-```bash
-node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='Task event projection|Task terminal results' apps/orchestrator/execution-service/service.test.ts
-pnpm --filter @bento/orchestrator typecheck
-```
-
-PASS：新增 suite 名称含 Task terminal results；四状态、空/非空、409、404、重开断言全部执行通过。STOP：生产链缺陷超出本稿，禁止改状态机或绕过发布门禁，交作者修订。fixture 退出清理自己的临时目录，无共享资源变化。
-提交边界：`Test(execution-service): 核对终态结果和补丁可用性`，同次删除 T2。
-
 ### T3：明确页面尚不可用并覆盖四状态
 
-前置：T2 已提交，MASTER 已确认共享段许可。
+前置：上一 STEP 的 Task projection/terminal HTTP suites 2/2 及 Orchestrator typecheck 通过并提交；MASTER 已确认共享段许可。
 允许修改：`apps/workspace/web/src/pages.tsx`、`apps/workspace/web/e2e/task.spec.ts`、本 RUNBOOK。
 专门只读：`apps/workspace/web/src/api.ts`，合计 4 文件。
 执行：仅在 selected.resultVersion !== null 的现有 TaskRunResult 分支加 else `<p role="status">结果尚不可用。</p>`。不更动 selected.summary、needs_review 提示、retry/cancel 条件与 mutation，不改 TaskRunResult 的查询键和授权。新增独立 mock 路由用例覆盖 succeeded 非空、succeeded 零字节、failed 固定公开摘要、running/null；选择轮次后断言提示互斥，失败和不可用无下载。零字节仍可下载且显示无变更。四状态各项检查名称/标签/输出精确比对，null output 不产生假的通过文案。两种 view 均核对请求版本和字节。
