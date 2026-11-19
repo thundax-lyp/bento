@@ -107,31 +107,7 @@ PASS：获审 RUNBOOK 是唯一任务变更；基线一致；端口命令退出 
 
 已完成前置事实：T3 `space-deletion-states.test.ts` 13/13通过（5活跃Run、3终态、4retry预留阶段、queued承接），API typecheck通过。每个阻断状态跨实际双HTTP和两SQLite重开验证对象/输入/下载/额度保留；闭合审计与终态只为Store门禁fixture，不证明恢复/可信结案算法。按MASTER获审修订仅mock setInterval，DELETE受理后tick30000，再用performance真实5秒deadline核验；在父项目仍存时验证重复file DELETE两次204，整项目删除后只核对Task/项目/原下载404及重复project DELETE204。未修改生产代码。原T3及两次定向审核内容从前序提交回读。
 
-### T4：正常 Web 选择入口拒收原因
-
-前置状态：T3已提交。
-允许修改：新增 `apps/workspace/web/acceptance/space-integrity-fixture.ts`、`apps/workspace/web/acceptance/web-space-integrity.spec.ts`、`apps/workspace/web/playwright.web-space-integrity.config.ts`；`apps/workspace/web/package.json`、`.github/workflows/checks.yml`、`public-files.json`、本文件。专门核对 `space.tsx`、`space-api.ts`、API fixture（合计10）；登录步骤已由作者核实并写死，执行不另加载旧 spec。
-禁止修改：生产UI、根package files、其他验收配置、现有端口服务。
-
-执行：
-
-1. 浏览器fixture复用API fixture（跨层用根别名显式.ts），port4353/origin4354；配置Vite4354严格端口/reuseExistingServer=false，workers1/retries0，关闭trace/video/screenshot。由spec beforeAll/afterAll启动关闭fixture；身份保留T1创建的同一accounts/auth，spec用beforeAll/afterAll且只注册一次。密码只存spec局部变量，不输出、不写证据。在 /login 点击「使用邀请码注册」，账号 demo、邀请码 demo-invite、新密码 randomUUID()，注册后用同账号密码登录（复用 web-task-submission.spec.ts::login 的已核实顺序）取得身份，不通过route.fulfill替代业务。
-
-2. 从文件选择真实临时目录/文件和setInputFiles进入清单：两个不同目录同basename以文件选择产生重复目标；已保存同名文件显示「目标路径已被占用」；目录选择生成与既有文件的前缀冲突、以及既有目录被文件占用，逐项显示原因、确认上传不可受理这些项，API无新增上传/预占/PUT，下载原字节摘要保持。正常一个无冲突3bytes控制项仍可上传保存。
-
-3. 不构造浏览器非法系统路径。无效路径只由T2 API完整覆盖；复用现有上传清单测试证明UI invalid path guard，记录浏览器正常选择无法产生穿越路径的分层边界，不宣称真实选择到非法路径。
-
-4. package新增 `test:space-integrity` 精确命令 `playwright test --config playwright.web-space-integrity.config.ts`；CI browser job在原test:e2e后独立执行该script。新路径全部进public白名单；不改已有默认e2e的mock证据。API所有新test由T1的自动发现接入check/CI。
-
-验证：
-
-```bash
-pnpm --filter @bento/web test:space-integrity
-pnpm --filter @bento/web check
-git diff --check
-```
-
-PASS：实际Chromium正常选择、真实mySpace/SQLite/物理对象，无page.route业务替身；退出4353/4354无监听。STOP：端口占用、fixture登录不能复用、必须伪造系统路径才能满足断言。提交 `Test(task-entry): 验证真实空间接口下的上传拒收清单`。
+已完成前置事实：T4 Chromium 1/1通过，含真实邀请注册/登录、4个独立命名冲突step与1个正常上传step。业务HTTP无route.fulfill，拒绝清单期间无POST/PUT/DELETE，三个物理原件字节保持、额度9/0不变；正常控制文件由浏览器直PUT进入saved、原件可下载。新增test:space-integrity已接CI Web Chromium E2E，API自动test发现保留。Web check通过（typecheck/lint/format、17单测和build）。fixture登录完成后等待「退出登录」按钮再导航，适用于默认旧Dashboard；未修改产品UI/flags。退出后4353/4354无监听。非法系统路径仅API测试，浏览器正常选择无法产生穿越路径，未伪造该路径证据。
 
 ### T5：共享边界复验与验收证据迁移
 
