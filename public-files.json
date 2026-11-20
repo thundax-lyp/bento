@@ -191,7 +191,10 @@
         "apps/worker/base-bootstrap.test.ts",
         "apps/workspace/web/e2e/task-test-fixtures.ts",
         "apps/workspace/web/e2e/task-recovery.spec.ts",
-        "apps/workspace/web/e2e/task-results.spec.ts"
+        "apps/workspace/web/e2e/task-results.spec.ts",
+        "apps/orchestrator/acceptance/worker-reuse/fixture.ts",
+        "apps/orchestrator/acceptance/worker-reuse/observer.ts",
+        "apps/orchestrator/acceptance/worker-reuse/fixture.test.ts"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",

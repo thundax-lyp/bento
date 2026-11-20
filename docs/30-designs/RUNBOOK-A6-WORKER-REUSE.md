@@ -2,7 +2,7 @@
 
 ## 状态与执行者契约
 
-- 建立日期：2026-11-20。状态：T0/T1/T2/T3通过，待执行T4；定向只读stat fixture修订已获MASTER批准并通过。T2使用获审本地受控SDK输入，不宣称默认网络准备已恢复。
+- 建立日期：2026-11-20。状态：T0/T1/T2/T3/T4通过，待执行T5；定向只读stat fixture修订已获MASTER批准并通过。T2使用获审本地受控SDK输入，不宣称默认网络准备已恢复。
 - 唯一 checkout：`/Volumes/storage/workspace/bento-b`。调查基线：`fe12c24ddb6d2a061559173e623419d5aa97b99b`；此 SHA 不是未来验收通过声明。
 - 原计划及受控SDK输入修订已获MASTER审核Executable；T2已完整验证，按全流程授权继续剩余步骤。最终merge仍须MASTER明确放行A安全点。
 - 实施继承 WORKER 全流程授权；按 [Worker Skill](../../.agents/skills/bento-runbook-worker/SKILL.md)逐步验证、删除已完成步骤并提交。每步文件数包含本文、允许修改及专门核对的文件，最多 10。
@@ -128,7 +128,7 @@ Worker 必需直接运行依赖：`@deepseek-ai/cordis=4.0.5`；`@deepseek-ai/ds
 
 用户补充要求：测试文件尽量控制在1000物理行以内（含空行/注释，使用`wc -l`核对），按职责拆分，不能压缩格式、删除断言或合并测试来达标。本任务新建的`base-bootstrap.test.ts`、`sdk-transport.test.ts`、`sdk.test.ts`、`fixture.test.ts`、`real-reuse.test.ts`均以此为门槛；共享fixture/observer同样避免超过1000行。计划当前每文件预计低于1000行，若执行超过，不临场新建未列文件，先回作者给出唯一拆分路径并重新审核相关步骤及文件数。保留所有case、名称、skip条件、超时、串行/并行边界和默认发现入口，不依赖跨文件执行顺序。
 
-基线发现既有超限测试：`apps/orchestrator/execution-service/service.test.ts`6032行、`apps/workspace/api/space-files.test.ts`3359行、`apps/workspace/web/e2e/task.spec.ts`1225行。现有`acceptance/temporal-retry/real-retry.test.ts`950行，禁止向其中堆入新验收。三个既有大文件的拆分需MASTER按A冻结范围另行排序；不随本A6-05实施静默改动。拆分验收必须对照前后测试清单/实际执行数量和断言、专门子进程入口/测试发现/共享清理，不能只以文件行数或编译通过作为完成。
+基线发现既有超限测试：`apps/orchestrator/execution-service/service.test.ts`6032行、`apps/workspace/api/space-files.test.ts`3359行、`apps/workspace/web/e2e/task.spec.ts`1225行。现有`acceptance/temporal-retry/real-retry.test.ts`950行，禁止向其中堆入新验收。用户随后明确本次旧文件拆分的新增加删除总量不得超过4000行，超出暂不拆。经MASTER独立排序，仅Web E2E拆分以PR #72普通合并（c7b12901de46dc8be25a772f54497a2cbb0c64b4，5文件822新增/794删除）；service/API拆分已原字节撤回。该独立拆分不计作A6验收；A6于7649f3019ac207f22d9bbe564e9e600de1e29aac普通合流最新main，Web/Go/OIDC/deploy与main一致，保留A6及Web白名单。拆分验收必须对照前后测试清单/实际执行数量和断言、专门子进程入口/测试发现/共享清理，不能只以文件行数或编译通过作为完成。
 
 ## 独立验收结构与不变量
 
@@ -258,28 +258,9 @@ export function isolateVerifiedSdkFiles(
 
 测试concurrency=false、各test120000、无skip；真实SDK选择与数据IO单测分开记录结果。原T2五项transport测试在同来源SDK上完整执行，CI默认是真实Linux SDK build→六探针→实际HTTP/2 RPC，不依赖Mac路径。本地使用受控输入时只证明该显式来源，全量默认网络准备失败事实保留；日志不写原始路径/token/header。T6将wrapper单测加入默认test:worker-reuse，CI不注入BENTO_A6_WORKER_REUSE_SDK_BUNDLE、不改workflow、不打包本地bundle/cache或历史manifest；本轮不为跨平台输入增加canonical inventory或新发布流程。
 
-## T4：生产 ingress 与独立资源观察器
-
-前置状态：本条所属T3提交的正式base及单测通过，下方记录T3/T2联合14/14无skip；T3已提交可回读。
-允许修改：`apps/orchestrator/acceptance/worker-reuse/fixture.ts`、`observer.ts`、`fixture.test.ts`、`public-files.json`、本文（5；前述文件均位于同新目录）。
-专核：`apps/orchestrator/acceptance/worker-reuse/sdk.ts`、`apps/orchestrator/openshell/single-host.ts`（共7）。
-禁止修改：专核文件、旧A1/A2/A6验收或所有生产安全原语。
-
-执行：实现规定fixture/observer，SDK只调用prepareReuseSdk并保持原六探针。`fixture.test.ts`独立取得官方SDK、校验官方client连接production ingress→mTLS upstream→真实protobuf输出/exit；创建两个合法session并非法跨目标拒绝，独立SQL前后不变。fixture expose固定 `request(sessionIndex):WorkerRequest`、`takeover(sessionIndex):Promise<void>`、`snapshot():ReuseSnapshot`、`close():Promise<void>`；sessionCount个session由父端创建，索引从0到sessionCount-1；P1+P2唯一reference为索引64、测量轮为0..63，其余case为索引0/1。token只存私有内存。snapshot字段固定schema=1、sessions记录tenant/session/run/generation与历史/receipt摘要、sdkConnections/sdkStreams/upstreamCalls、残留子进程数，不输出token。创建失败finally清理已创建本fixture资源，错误聚合。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --test --test-concurrency=1 --test-timeout=1200000 apps/orchestrator/acceptance/worker-reuse/fixture.test.ts
-pnpm --dir apps/orchestrator typecheck
-git diff --check
-```
-
-PASS：正式SDK client正向与跨绑定拒绝均真实发生；不是只有protobuf工具探针。STOP：helper协议或官方client无法调用，不改decoder/安全语义来适配fixture。服务器自身日志留私有temp且0600。
-
 ## T5：同生产 base 的长期四项隔离与补位
 
-前置状态：T4独立fixture正向/拒绝均通过。
+前置状态：T4已实现生产ingress/mTLS fixture与独立observer，下方记录本地受控SDK来源fixture两项2/2无skip；本步以前一T4产物提交为基线。
 允许修改：新目录 `model-adapter.ts`、`observed-bootstrap.ts`、`real-reuse.test.ts`、`public-files.json`、本文（5）。
 专核：`apps/worker/base-bootstrap.ts`、`apps/worker/sdk-transport.ts`、`apps/worker/run-worker.ts`、`apps/orchestrator/execution-service/warm-worker.ts`（共9）。
 禁止修改：全部专核文件、生产测试探针/临时endpoint、旧验收。
@@ -367,3 +348,11 @@ PY
 ## T3 实际通过记录
 
 2026-11-20，本条所属T3提交完成正式base与单测。完整base9项+transport5项14/14，fail0/skip0，duration3081.650584ms，采用已核受控SDK来源及原六probe。真实官方handle正常/撤权后显式dispose再fiber只close一次；recover无SDK/模型、Task无投影不发prompt；factory仅provider/model且拒单例/多字段；局部初始化失败、两handle/根fiber/模型三错后续清理全部执行。新增正常真实AgentLoop轮completed、model stream1、history handle null/close1、SDK session归零。此前故障注入误用ctx.plugin动态别名已改实际registry.plugin；正常轮最初因SDK cwd lookup需stat而fixture拒绝返回review，MASTER批准只读根stat后重验原成功断言通过。两情况不算此前PASS，生产base无SDK/权限降级。单测的helper/mTLS外部系统/模型皆非真实部署证据，A6-05仍待T4..T6长期验收。
+
+## T4 实际通过记录
+
+2026-11-20，本条所属T4提交实现独立fixture/observer/SDK验收。以7649f3019ac207f22d9bbe564e9e600de1e29aac为前置提交，本地受控SDK来源（原六probe实际执行）完成fixture两项2/2、fail0/skip0，duration1716.181125ms。官方SandboxClient通过生产SingleHostExecution SDK ingress、真实双向TLS与同SDK protobuf上游，GetSandbox及interactive helper resolve取得真实输出和exit0；跨目标SDK返回grpc7、persistence HTTP403，上游调用数不增，私有内存完整execution_sessions/history四表行及脱敏snapshot不变（完整行比较不写入断言输出）。父端观察实际HTTP2 session/stream关闭，而非Worker自报。
+
+独立撤权用例在interactive输入未closeInput/cancel时观察到上游held stream；controller.takeover因沙盒退出未证实而拒绝，记录UNKNOWN/stopConfirmed=false。实际既有RPC结束、官方done拒绝、后续write拒绝、上游held消失；新连接旧token返回grpc16且不触达上游，邻Session新token正向成功。SDK transport主动关闭后父端quiescent断言全部连接/stream归零、原生Worker子进程为空，断言先于fixture finally清理。
+
+Orchestrator typecheck、三源focused ESLint/Prettier、public-files格式与git diff检查通过；三个新源分别低于1000行。fixture仅本地合成helper/沙盒运行契约，不是真实沙盒进程或磁盘；不证明沙盒已停止、不证明真实外部模型、长期跨Session同PID/四项隔离/Worker失败补位或默认网络SDK构建已恢复。A6-05仍待T5/T6。
