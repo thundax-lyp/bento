@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { constants, openSync, closeSync, fsyncSync, writeSync } from 'node:fs';
+import { constants } from 'node:fs';
 import {
     copyFile,
     mkdir,
@@ -14,7 +14,6 @@ import {
     writeFile,
 } from 'node:fs/promises';
 import { createServer } from 'node:http';
-import { connect } from 'node:http2';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -22,322 +21,50 @@ import { backup, DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { PersistenceFence } from '../openshell/persistence-fence.ts';
-import { SingleHostExecution } from '../openshell/single-host.ts';
-import { executionHttp } from './http.ts';
-import { dockerOpenShellPurge } from './docker-openshell-purge.ts';
-import { localEnvironmentVersion, localHost } from './local.ts';
-import { commandHost } from './command-host.ts';
+import { PersistenceFence } from '@/apps/orchestrator/openshell/persistence-fence.ts';
+import { SingleHostExecution } from '@/apps/orchestrator/openshell/single-host.ts';
+import { executionHttp } from '@/apps/orchestrator/execution-service/http.ts';
+import { dockerOpenShellPurge } from '@/apps/orchestrator/execution-service/docker-openshell-purge.ts';
+import {
+    localEnvironmentVersion,
+    localHost,
+} from '@/apps/orchestrator/execution-service/local.ts';
+import { commandHost } from '@/apps/orchestrator/execution-service/command-host.ts';
 import { completedTurn } from '@/apps/worker/dsh-worker.ts';
-import { Store } from './store.ts';
-import { serveExecution, snapshotSha256 } from './service.ts';
+import { Store } from '@/apps/orchestrator/execution-service/store.ts';
+import {
+    serveExecution,
+    snapshotSha256,
+} from '@/apps/orchestrator/execution-service/service.ts';
 import {
     TaskRestoreEvidenceConflict,
     executionBindingDigest,
     type ExecutionHost,
-    type FileText,
     type WorkerRequest,
-} from './types.ts';
-import { processWorker } from './worker.ts';
+} from '@/apps/orchestrator/execution-service/types.ts';
 import { reserveOperation } from '@/apps/worker/protocol.ts';
-import { prewarmedWorker } from './warm-worker.ts';
+import { prewarmedWorker } from '@/apps/orchestrator/execution-service/warm-worker.ts';
+import {
+    testToken,
+    readme,
+    barrier,
+    fixtureSdk,
+    client,
+    until,
+    project,
+    submit,
+    rpc,
+    operation,
+    sdk,
+    start,
+    type ResponseBody,
+} from './fixtures/service.ts';
 
-const testToken = 'fixture-only-bento-service-bearer';
-const testFile = fileURLToPath(import.meta.url);
-const readme = [{ path: 'README.md', text: '# Fixture\n' }];
-function barrier() {
-    let resolve = () => {};
-    const promise = new Promise<void>((done) => {
-        resolve = done;
-    });
-    return { promise, resolve };
-}
-const fixtureSdk = {
-    upstream: new URL('https://127.0.0.1:1'),
-    credentials: {
-        ca: Buffer.alloc(0),
-        cert: Buffer.alloc(0),
-        key: Buffer.alloc(0),
-    },
-    workspace: 'default',
-    decode: () => {
-        throw new Error('Denied probes should not reach the decoder');
-    },
-};
+const controllerFixtureFile = fileURLToPath(
+    new URL('./fixtures/controller.ts', import.meta.url),
+);
 
-type ResponseBody = {
-    id: string;
-    status: string;
-    sessionId: string;
-    projects?: { id: string }[];
-};
-function client(url: string, owner = 'account-a', token = testToken) {
-    return async (
-        path: string,
-        method = 'GET',
-        body?: unknown,
-        key?: string,
-    ) => {
-        const response = await fetch(url + '/v1/projects' + path, {
-            method,
-            headers: {
-                authorization: 'Bearer ' + token,
-                'x-bento-owner-id': owner,
-                ...(body === undefined
-                    ? {}
-                    : { 'content-type': 'application/json' }),
-                ...(key === undefined ? {} : { 'idempotency-key': key }),
-            },
-            ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-            signal: AbortSignal.timeout(5000),
-        });
-        const type = response.headers.get('content-type');
-        const text = await response.text();
-        return {
-            status: response.status,
-            type,
-            text,
-            json: () => JSON.parse(text) as ResponseBody,
-        };
-    };
-}
-
-async function until<T>(
-    read: () => Promise<T>,
-    done: (value: T) => boolean,
-    label: string,
-) {
-    for (let i = 0; i < 250; i++) {
-        const value = await read();
-        if (done(value)) return value;
-        await delay(20);
-    }
-    throw new Error('Timed out: ' + label);
-}
-
-async function project(
-    api: ReturnType<typeof client>,
-    files: FileText[] = readme,
-) {
-    const created = await api('', 'POST', { name: 'Text project', files });
-    assert.equal(created.status, 201);
-    const path = '/' + created.json().id;
-    await until(
-        () => api(path),
-        (r) => r.json().status === 'ready',
-        'project ready',
-    );
-    return path;
-}
-
-async function submit(
-    api: ReturnType<typeof client>,
-    projectPath: string,
-    prompt: string,
-    key: string,
-) {
-    const response = await api(projectPath + '/runs', 'POST', { prompt }, key);
-    assert.equal(response.status, 202);
-    return projectPath + '/runs/' + response.json().id;
-}
-
-async function rpc(
-    request: WorkerRequest,
-    method: string,
-    fields: object = {},
-) {
-    return fetch(new URL('/rpc', request.persistenceUrl), {
-        method: 'POST',
-        headers: { authorization: 'Bearer ' + request.grant.token },
-        body: JSON.stringify({ method, id: request.grant.session, ...fields }),
-        signal: AbortSignal.timeout(5000),
-    });
-}
-
-async function operation(request: WorkerRequest) {
-    return fetch(new URL('/operations', request.operationUrl), {
-        method: 'POST',
-        headers: { authorization: 'Bearer ' + request.grant.token },
-        body: JSON.stringify({ id: 'forbidden', input: 'probe' }),
-        signal: AbortSignal.timeout(5000),
-    });
-}
-
-async function sdk(request: WorkerRequest) {
-    assert(request.gateway);
-    const transport = connect(request.gateway);
-    return new Promise<string>((resolve, reject) => {
-        const call = transport.request({
-            ':method': 'POST',
-            ':path': '/openshell.v1.OpenShell/ExecSandbox',
-            'content-type': 'application/grpc',
-            authorization: 'Bearer ' + request.grant.token,
-        });
-        const timeout = setTimeout(
-            () => transport.destroy(new Error('SDK probe timed out')),
-            3000,
-        );
-        transport.once('error', reject);
-        transport.once('close', () => clearTimeout(timeout));
-        call.once('error', reject);
-        call.once('response', (headers) => {
-            resolve(String(headers['grpc-status']));
-            transport.destroy();
-        });
-        call.resume();
-        call.end(Buffer.alloc(5));
-    });
-}
-
-async function start(state: string, host: ExecutionHost) {
-    return serveExecution({
-        state,
-        host,
-        token: testToken,
-        retryMs: 20,
-        workerTimeoutMs: 15_000,
-    });
-}
-
-async function effectWorker(state: string) {
-    const parts: Buffer[] = [];
-    for await (const part of process.stdin) parts.push(part as Buffer);
-    const request = JSON.parse(
-        Buffer.concat(parts).toString('utf8'),
-    ) as WorkerRequest;
-    assert.equal(request.mode, 'execute');
-    const created = await rpc(request, 'create', {
-        header: {
-            id: request.grant.session,
-            version: 4,
-            createdAt: Date.now(),
-            isSeeded: false,
-        },
-    });
-    assert.equal(created.status, 200);
-    const result = (await created.json()) as {
-        ok: boolean;
-        value: { key: string };
-    };
-    assert(result.ok);
-    await writeFile(
-        join(state, 'old-grant.json'),
-        JSON.stringify({ request, key: result.value.key }),
-        { mode: 0o600 },
-    );
-    assert.equal(
-        await reserveOperation(request, 'fault-effect', 'append'),
-        true,
-    );
-    const file = openSync(
-        join(state, 'volume', request.binding.project, 'volume', 'README.md'),
-        'a',
-    );
-    writeSync(file, 'once\n');
-    fsyncSync(file);
-    closeSync(file);
-    process.exit(73);
-}
-
-async function crashController(state: string) {
-    const base = localHost(join(state, 'volume'));
-    const service = await start(state, {
-        ...base,
-        sdk: fixtureSdk,
-        worker: processWorker({
-            command: process.execPath,
-            args: [...process.execArgv, testFile, '--effect-worker', state],
-        }),
-        async stop(binding) {
-            await base.stop(binding);
-            await writeFile(join(state, 'stop-observed'), '');
-            throw new Error('Lost stop acknowledgment');
-        },
-        async stopped() {
-            return false;
-        },
-    });
-    process.stdout.write(service.url + '\n');
-}
-
-async function projectDeleteControlFixture(counter: string) {
-    const lines = createInterface({ input: process.stdin });
-    for await (const line of lines) {
-        const { id, method } = JSON.parse(line) as {
-            id: string;
-            method: string;
-        };
-        let result: { value: unknown } | { error: string } = { value: null };
-        if (method === 'purge') {
-            const count =
-                Number(await readFile(counter, 'utf8').catch(() => '0')) + 1;
-            await writeFile(counter, String(count));
-            result =
-                count === 2
-                    ? { error: 'Unconfirmed workflow deletion' }
-                    : { value: count >= 3 };
-        } else if (method === 'choose') {
-            result = { value: '' };
-        } else if (method !== 'start' && method !== 'close') {
-            result = { error: 'Unexpected control method' };
-        }
-        process.stdout.write(JSON.stringify({ id, ...result }) + '\n');
-        if (method === 'close') break;
-    }
-}
-
-async function taskCrashController(state: string, fault: string) {
-    const base = localHost(join(state, 'volume'));
-    const service = await start(state, {
-        ...base,
-        taskRecovery: {
-            ...base.taskRecovery!,
-            async retryObservation(...args) {
-                if (fault === 'after-authority') process.exit(79);
-                return base.taskRecovery!.retryObservation(...args);
-            },
-        },
-        async worker(request, signal, slot) {
-            if (request.mode !== 'execute')
-                return base.worker(request, signal, slot);
-            if (fault === 'before-write') {
-                assert(
-                    await reserveOperation(
-                        request,
-                        'local-demo',
-                        request.prompt!,
-                        signal,
-                    ),
-                );
-                process.exit(79);
-            }
-            if (fault === 'before-receipt') {
-                // The fixture write reaches the volume but cannot save its evidence.
-                await writeFile(
-                    join(state, 'volume', request.binding.project, 'writes'),
-                    'receipt fault',
-                );
-                await base.worker(request, signal, slot).catch(() => {});
-                process.exit(79);
-            }
-            await base.worker(request, signal, slot);
-            if (fault === 'before-authority') process.exit(79);
-            // The host exit and write receipts exist; there is no successful Run receipt.
-            return 'review';
-        },
-    });
-    process.stdout.write(service.url + '\n');
-}
-
-if (process.argv[2] === '--effect-worker') {
-    await effectWorker(process.argv[3] ?? '');
-} else if (process.argv[2] === '--project-delete-control-fixture') {
-    await projectDeleteControlFixture(process.argv[3] ?? '');
-} else if (process.argv[2] === '--crash-controller') {
-    await crashController(process.argv[3] ?? '');
-} else if (process.argv[2] === '--task-crash-controller') {
-    await taskCrashController(process.argv[3] ?? '', process.argv[4] ?? '');
-} else {
+{
     test('DSH completion and UNKNOWN use the structured event shapes', () => {
         const completed = {
             type: 'turn/end',
@@ -808,7 +535,7 @@ if (process.argv[2] === '--effect-worker') {
                 [
                     process.execPath,
                     ...process.execArgv,
-                    testFile,
+                    controllerFixtureFile,
                     '--project-delete-control-fixture',
                     join(state, 'purges'),
                 ]
@@ -2554,7 +2281,12 @@ if (process.argv[2] === '--effect-worker') {
             process.execPath,
             [
                 ...process.execArgv,
-                fileURLToPath(new URL('./start.ts', import.meta.url)),
+                fileURLToPath(
+                    new URL(
+                        '../../execution-service/start.ts',
+                        import.meta.url,
+                    ),
+                ),
                 '--local',
             ],
             {
@@ -2627,7 +2359,7 @@ if (process.argv[2] === '--effect-worker') {
                 import { access } from 'node:fs/promises';
                 import { join } from 'node:path';
                 import { setTimeout as delay } from 'node:timers/promises';
-                import { localHost } from ${JSON.stringify(new URL('./local.ts', import.meta.url).href)};
+                import { localHost } from ${JSON.stringify(new URL('../../execution-service/local.ts', import.meta.url).href)};
                 export default function ({ state }) {
                     const base = localHost(join(state, 'volume'));
                     let sequence = 0;
@@ -2690,7 +2422,12 @@ if (process.argv[2] === '--effect-worker') {
                 process.execPath,
                 [
                     ...process.execArgv,
-                    fileURLToPath(new URL('./start.ts', import.meta.url)),
+                    fileURLToPath(
+                        new URL(
+                            '../../execution-service/start.ts',
+                            import.meta.url,
+                        ),
+                    ),
                 ],
                 {
                     detached: false,
@@ -3111,7 +2848,12 @@ if (process.argv[2] === '--effect-worker') {
         const state = await mkdtemp(join(tmpdir(), 'bento-recovery-test-'));
         const controller = spawn(
             process.execPath,
-            [...process.execArgv, testFile, '--crash-controller', state],
+            [
+                ...process.execArgv,
+                controllerFixtureFile,
+                '--crash-controller',
+                state,
+            ],
             { stdio: ['ignore', 'pipe', 'ignore'] },
         );
         const exited = new Promise<void>((resolve) =>
@@ -3825,7 +3567,12 @@ test('startup requires the trusted host environment version', async (t) => {
             process.execPath,
             [
                 ...process.execArgv,
-                fileURLToPath(new URL('./start.ts', import.meta.url)),
+                fileURLToPath(
+                    new URL(
+                        '../../execution-service/start.ts',
+                        import.meta.url,
+                    ),
+                ),
                 '--local',
             ],
             {
@@ -5401,7 +5148,7 @@ test(
                             (arg) => !arg.startsWith('--test-name-pattern='),
                         ),
                         '--test-name-pattern=^$',
-                        testFile,
+                        controllerFixtureFile,
                         '--task-crash-controller',
                         state,
                         fault,
@@ -5806,7 +5553,9 @@ test('startup registers the six trusted review callbacks only in process', async
         process.execPath,
         [
             ...process.execArgv,
-            fileURLToPath(new URL('./start.ts', import.meta.url)),
+            fileURLToPath(
+                new URL('../../execution-service/start.ts', import.meta.url),
+            ),
             '--local',
         ],
         {

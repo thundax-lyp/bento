@@ -304,7 +304,7 @@ test(
         const origin = 'http://127.0.0.1:8080';
         const controllerPath = fileURLToPath(
             new URL(
-                '../../orchestrator/execution-service/service.test.ts',
+                '../../orchestrator/tests/execution-service/fixtures/controller.ts',
                 import.meta.url,
             ),
         );
