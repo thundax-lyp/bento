@@ -76,6 +76,18 @@
 
 OpenShell Gateway interceptor 的固定源码白名单可以管理部分一元控制面 RPC，但不能绑定 ExecSandbox/ExecSandboxInteractive 流式执行。当前可行组合是原生 mTLS 保护后端、平台服务端入口检查业务 generation/READY；入口是新增平台代码，并非已有插件零配置提供。可信管理证书不可下发 worker。
 
+## A1-03 旧执行授权验收接线
+
+[A1-03](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a1-03-bad-case-旧执行授权) 的本地验收入口是 [binding-grants.test.ts](../../apps/orchestrator/openshell/binding-grants.test.ts)，由 Orchestrator 既有 `openshell/*.test.ts` 纳入 `pnpm check`。独立 [fixture](../../apps/orchestrator/openshell/binding-grants/fixture.ts) 经生产 SingleHostExecution.bind/admit 签发真实当次 capability，调用真实 sdkIngress 和 operationIngress；不使用手填 token、手造 grantFor 或 SQL 写授权来替代入口。
+
+[SDK 准备器](../../apps/orchestrator/openshell/binding-grants/sdk.ts) 在受控临时目录获取 NVIDIA/OpenShell revision `ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47`，校验归档 SHA-256 `ef434dd44746c5ee14a24e8dc4f09654134ee362f5a09fb08d31eb27c81b02ad`、官方 lock 和生成配置后，以官方锁正常安装、生成和构建。官方 protobuf 编码交给生产 schemaDecoder/schemaExecEventDecoder，覆盖 GetSandbox、ExecSandbox、ExecSandboxInteractive、stdin 与 exit；[六项工具探针](../../apps/orchestrator/openshell/binding-grants/sdk-probe.ts) 不计作业务验收。固定 CI 入口缺工具、网络或 SDK 时明确失败，不跳过或退为 JSON mock。
+
+每例先有合法控制，再调用生产 takeover 完成撤权阶段。SDK/operation/持有流 fixture 没有独立沙盒停止证明，stopped 固定 false；精确期待 `old execution unconfirmed`，独立 SQL 保留 UNKNOWN、generation1、原 Run/绑定和 capabilityNULL，只调用一次，不伪造 READY 或清理未知 operation。新 stream、重连、原库 reopen 后旧 token 在生产 grant/authorize 层拒绝为 header16；已授权且未发响应头的持有 interactive 流在撤权时返回 header7，实际观察两侧关闭与后续 stdin 未达 upstream。
+
+真实 mTLS/HTTP2、HTTP 与 SQLite 用于验证平台入口的拒绝；upstream 是独立受控服务器，模型和沙盒观察是 fixture。只读独立连接核对权威状态、operation 与历史；无历史行时按生产 fence 的 absence 契约处理，不冒充真实历史行撤销。历史拒绝另复用既有官方 Provider fixture，先正常 checkpoint，再真实撤权，以旧 writer.append 观察 stage403/SessionOwnershipLostError、四表不变、真实历史行 epoch/owner/handle 栅栏和同库 reopen；该子链不修改原 A2 场景或 flush 时序。
+
+[发布检查](../../apps/orchestrator/openshell/binding-grants/check-package.mjs) 在固定 Orchestrator check 中核对实际安装树的 npm pack 清单，保留根 files/patterns，精确登记新源并拒绝依赖、TLS/数据库和私有证据。实际验证结果和未覆盖项见 [A1-03 Readiness](../40-readiness/CURRENT-READINESS.md#a1-03-旧执行授权本地验收)。本接线不证明外部 OpenShell/Docker 进程停止、全部署绑定或 A3 接管就绪，也不关闭 A1 的其他子项。
+
 ## A2 Provider 验收接线
 
 [A2-01/02/03](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a2-持久会话) 的本地联合验收使用 [固定测试入口](../../apps/orchestrator/openshell/provider-lifecycle.test.ts) 和 [独立 fixture](../../apps/orchestrator/openshell/provider-lifecycle/fixture.ts)，由既有 Orchestrator `openshell/*.test.ts` 纳入 `pnpm check`。Orchestrator 测试依赖将官方 AgentRegistry、AgentLoop、SessionStore、session-projection、LLM、system-prompt、tools、scope、session-checkpoint-policy 固定为 `0.2.1-rc.4`，沿用 SessionPersistence `0.2.1-rc.4` 与 Cordis `4.0.5`；不改变生产 worker 装配。
