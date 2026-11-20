@@ -188,7 +188,10 @@
         "apps/orchestrator/acceptance/worker-reuse/sdk.ts",
         "apps/orchestrator/acceptance/worker-reuse/sdk.test.ts",
         "apps/worker/base-bootstrap.ts",
-        "apps/worker/base-bootstrap.test.ts"
+        "apps/worker/base-bootstrap.test.ts",
+        "apps/workspace/web/e2e/task-test-fixtures.ts",
+        "apps/workspace/web/e2e/task-recovery.spec.ts",
+        "apps/workspace/web/e2e/task-results.spec.ts"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",
