@@ -2,7 +2,7 @@
 
 ## 状态与执行者契约
 
-- 建立日期：2026-11-20。状态：MASTER已审核Executable，T0通过，待执行T1。
+- 建立日期：2026-11-20。状态：执行中，T0/T1通过，待执行T2。
 - 唯一 checkout：`/Volumes/storage/workspace/bento-b`。调查基线：`fe12c24ddb6d2a061559173e623419d5aa97b99b`；此 SHA 不是未来验收通过声明。
 - 本轮授权仅作者调查、设计及送审。收到同内容版本 `Executable`、MASTER 指定分支与开工指令前，不执行 T1，不改依赖。
 - 实施继承 WORKER 全流程授权；按 [Worker Skill](../../.agents/skills/bento-runbook-worker/SKILL.md)逐步验证、删除已完成步骤并提交。每步文件数包含本文、允许修改及专门核对的文件，最多 10。
@@ -186,28 +186,11 @@ SDK 取得只调用原 prepareSdk，入口/构建引用固定官方来源；不�
 
 T0已于2026-11-20通过：计划提交`7b829986238e4a6b9f10b3773d1dcc492d03fbd0`仅本文、parent=`fe12c24ddb6d2a061559173e623419d5aa97b99b`、获审blob=`7f25770725298fb54c793f0b7ff362d9a76eec88`；提交后clean，远端main同基线。Worker typecheck exit0；原Orchestrator check:core在B既有系统回环代理下exit0，wall=137110ms，123 tests中121通过/0失败/2既有条件skip，Go test/vet及原pack检查通过。代理值仅本地私有使用，未写入Git。初次未注入代理的baseline进程树已取消，最终采用完整代理运行结果，不把取消运行算PASS。T0不包含本任务新单测/长期case/九项真实Temporal，后续仍须执行完整固定门禁。独立本地实施已授权，最终merge仍等待MASTER确认A安全点。
 
-## T1：登记生产 runtime 直接依赖
-
-前置状态：上方已核实前置状态成立，B独立checkout及本地实施授权已确认；A合入窗口尚未放行也可执行本步。
-允许修改：`apps/worker/package.json`、`pnpm-lock.yaml`、本文（3）。
-禁止修改：版本外升级、root package、CI、镜像及其他应用。
-
-执行：按依赖清单只增真正由新base/transport直接导入的11项固定运行依赖；`pnpm install --lockfile-only`生成锁文件，再`pnpm install --frozen-lockfile`安装。SDK仍外部官方只读制品，不引用临时目录为workspace依赖。核lock新增/peer变化均能追溯到清单；若依赖数与清单不符STOP而非猜测补依赖。
-
-验证：
-
-```bash
-pnpm install --frozen-lockfile
-pnpm --filter @bento/worker list --depth 0
-pnpm --dir apps/worker typecheck
-git diff --check
-```
-
-PASS：11项版本精确，旧版本不变，安装/typecheck exit0；记录新增lock节点与A闭包影响。STOP：未授权版本变化或需要新增模型/工具包。安装副作用仅本checkout node_modules；失败保留lock供作者核对。
+T1已通过：新增11项直接运行依赖，旧13项中原2项版本不变；lock仅Worker importer和Connect 2.1.2/Connect-node 2.1.2所需peer protobuf 2.17.0（3个新增节点及对应snapshots），无其他升级。`pnpm install --frozen-lockfile`、Worker依赖list和typecheck exit0，diff检查通过；A checkout/镜像未修改。
 
 ## T2：每轮 SDK transport 关闭契约
 
-前置状态：T1依赖安装通过。
+前置状态：上方已记录的T1固定依赖安装通过。
 允许修改：`apps/worker/sdk-transport.ts`、`apps/worker/sdk-transport.test.ts`、`public-files.json`、本文（4）。
 专核：`apps/worker/protocol.ts`、`apps/orchestrator/openshell/binding-grants/sdk.ts`（共6）。
 禁止修改：生产ingress、grant、mTLS、retry及原worker文件。
@@ -338,4 +321,4 @@ PY
 
 ## 作者送审自审
 
-作者按低级执行者顺序核对 T0→T6 的输入、产物、文件数与命令，判定：`Executable`，但尚未获 MASTER 审核通过；T0 的独立checkout与实施授权、最终merge的A安全点与MASTER放行是分开的明确前置 STOP，不是假定已经成立。计划未执行任何生产检查或端到端测试，不存在验收 PASS 声明。若实施发现固定官方API、fixture wire协议或直接依赖与本文不一致，按本规则回作者修订和重审，不由执行者选择替代。
+作者按低级执行者顺序核对 T0→T6 的输入、产物、文件数与命令，判定：`Executable`，但尚未获 MASTER 审核通过；T0 的独立checkout与实施授权、最终merge的A安全点与MASTER放行是分开的明确前置 STOP，不是假定已经成立。T0/T1实际验证见已核实前置状态；新生产与端到端测试仍待逐步执行，不存在提前验收PASS声明。若实施发现固定官方API、fixture wire协议或直接依赖与本文不一致，按本规则回作者修订和重审，不由执行者选择替代。
