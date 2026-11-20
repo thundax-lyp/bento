@@ -83,7 +83,7 @@ assert.equal(new Set(files).size, files.length);
 for (const path of [
     'package.json',
     'register-paths.mjs',
-    'apps/orchestrator/temporal.go',
+    'apps/orchestrator/src/control/temporal.go',
     'apps/orchestrator/go.mod',
     'apps/orchestrator/src/execution-service/service.ts',
     ...sources,

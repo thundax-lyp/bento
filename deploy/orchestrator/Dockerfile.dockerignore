@@ -7,10 +7,12 @@
 !apps/orchestrator/
 !apps/orchestrator/package.json
 !apps/orchestrator/index.ts
-!apps/orchestrator/*.go
 !apps/orchestrator/go.mod
 !apps/orchestrator/go.sum
 !apps/orchestrator/src/
+!apps/orchestrator/src/control/
+!apps/orchestrator/src/control/main.go
+!apps/orchestrator/src/control/temporal.go
 !apps/orchestrator/src/execution-service/
 !apps/orchestrator/src/execution-service/*.ts
 !apps/orchestrator/src/openshell/

@@ -361,13 +361,17 @@ export async function buildControl(
     signal: AbortSignal,
 ): Promise<string> {
     const control = join(directory, 'bento-orchestrator');
-    await runCommand('go', ['build', '-mod=readonly', '-o', control, '.'], {
-        cwd: join(root, 'apps/orchestrator'),
-        env: process.env,
-        timeoutMs: 120000,
-        signal,
-        input: null,
-    });
+    await runCommand(
+        'go',
+        ['build', '-mod=readonly', '-o', control, './src/control'],
+        {
+            cwd: join(root, 'apps/orchestrator'),
+            env: process.env,
+            timeoutMs: 120000,
+            signal,
+            input: null,
+        },
+    );
     return control;
 }
 

@@ -26,6 +26,7 @@ func TestTemporalFairDispatchThroughExecutionEntry(t *testing.T) {
 	cmd := exec.Command("node", "--import", "../../register-paths.mjs",
 		"--experimental-strip-types", "--test", "--test-reporter=tap",
 		"--test-name-pattern=^"+name+"$", "tests/execution-service/scheduling.test.ts")
+	cmd.Dir = "../.."
 	cmd.Env = append(os.Environ(), "BENTO_TEST_FAIR_BINARY="+binary, "BENTO_TEST_FAIR_DIR="+dir)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var output bytes.Buffer
