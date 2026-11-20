@@ -2,7 +2,7 @@
 
 ## 状态与执行者契约
 
-- 建立日期：2026-11-20。状态：作者草稿，待 MASTER 审核；未实施，T0 尚未执行。
+- 建立日期：2026-11-20。状态：MASTER已审核Executable，T0通过，待执行T1。
 - 唯一 checkout：`/Volumes/storage/workspace/bento-b`。调查基线：`fe12c24ddb6d2a061559173e623419d5aa97b99b`；此 SHA 不是未来验收通过声明。
 - 本轮授权仅作者调查、设计及送审。收到同内容版本 `Executable`、MASTER 指定分支与开工指令前，不执行 T1，不改依赖。
 - 实施继承 WORKER 全流程授权；按 [Worker Skill](../../.agents/skills/bento-runbook-worker/SKILL.md)逐步验证、删除已完成步骤并提交。每步文件数包含本文、允许修改及专门核对的文件，最多 10。
@@ -182,30 +182,13 @@ SDK 取得只调用原 prepareSdk，入口/构建引用固定官方来源；不�
 
 五个独立test严格为P0、P1+P2、R、E、L，无skip。P0/R/E/L各用`{timeout:120000,concurrency:false}`；P1+P2仅一个`test`，用`{timeout:600000,concurrency:false}`，在同一个callback内create fixture→64轮正向/四项负测→finally close，不能拆成两个test隐式共享fixture或依赖执行顺序。P2生成64条分项结果：P1+P2先在同一常驻Worker执行request(64)这一reference Session，取得真实旧ctx/listener/fsTarget/token；它不计64个测量轮但必须与随后64轮同PID。测量轮0使用该reference，轮1..63使用真实前一测量轮，因而64轮都有实际前驱可逐项负测，不用首轮空对象/缺省true代替。P1+P2显式createReuseFixture(sdk,65)；P0/R/E/L与fixture.test各用createReuseFixture(sdk,2)，不共享fixture。SDK在before hook准备、timeout=600000，仅共享只读SDK制品；每个case独立fixture/DB/pool，after仅清理SDK，不能代清case资源制造PASS。全文件`--test-timeout=1200000`。没有墙钟跨度/同PID/正向SDK调用的证据则不能判长期复用PASS。
 
-## T0：基线与资源窗口（独立，不写生产文件）
+## 已核实前置状态
 
-前置状态：MASTER 审核同草稿内容，指定 `codex/a6-worker-reuse` 分支并允许 B 独立实施（无须等待 A 合入安全点）；先单独提交获审本文，记录真实提交 SHA。
-允许修改：本文（仅记录T0证据）。专核：Worker package、pnpm-lock、warm-worker、dsh-worker、remote-session、provider、run-worker、deploy/worker/Dockerfile，共9文件含本文。
-禁止修改：所有生产、依赖、A文件。独立 checkout 不能保持或必须进入 A 冻结内容即 STOP；A 合入安全点只约束最终 merge，不阻塞 B 独立本地实施。
-
-执行：核 checkout干净、main基线与审核一致；核无 A 专属进程/端口/目录被使用。ENVIRONMENTS.md若存在先只本地读取；缺失时本任务独立mkdtemp与回环资源不依赖私有环境，不凭空编造连接配置。外部工具下载继续使用B既有本地代理与权限，小写/大写proxy只在子进程规范化，不打印值；可走既有官方archive输入并完整校验，不用A隧道。不因check:core新增长时case改变代理/TLS/超时或外部权限；T0记录原基线wall，新增case时间预算在验证矩阵中独立固定。
-
-验证（仓库根目录）：
-
-```bash
-git status --short
-git rev-parse HEAD
-git ls-remote origin refs/heads/main
-pnpm --dir apps/worker typecheck
-time pnpm --dir apps/orchestrator check:core
-git diff --check
-```
-
-PASS：基线/独立实施边界核实，现有核心检查exit0，记录time实际wall耗时和既有测试数量；这是新增长时验收接入前的基线，不冒充新门禁已通过。条件skip不算A6证据。STOP：baseline失败、主线变化影响冻结文件、SDK源或所需官方API与本文不一致。保持现场，不通过改TLS/skip重试绕过。
+T0已于2026-11-20通过：计划提交`7b829986238e4a6b9f10b3773d1dcc492d03fbd0`仅本文、parent=`fe12c24ddb6d2a061559173e623419d5aa97b99b`、获审blob=`7f25770725298fb54c793f0b7ff362d9a76eec88`；提交后clean，远端main同基线。Worker typecheck exit0；原Orchestrator check:core在B既有系统回环代理下exit0，wall=137110ms，123 tests中121通过/0失败/2既有条件skip，Go test/vet及原pack检查通过。代理值仅本地私有使用，未写入Git。初次未注入代理的baseline进程树已取消，最终采用完整代理运行结果，不把取消运行算PASS。T0不包含本任务新单测/长期case/九项真实Temporal，后续仍须执行完整固定门禁。独立本地实施已授权，最终merge仍等待MASTER确认A安全点。
 
 ## T1：登记生产 runtime 直接依赖
 
-前置状态：T0通过，B独立checkout及本地实施授权已确认；A合入窗口尚未放行也可执行本步。
+前置状态：上方已核实前置状态成立，B独立checkout及本地实施授权已确认；A合入窗口尚未放行也可执行本步。
 允许修改：`apps/worker/package.json`、`pnpm-lock.yaml`、本文（3）。
 禁止修改：版本外升级、root package、CI、镜像及其他应用。
 
