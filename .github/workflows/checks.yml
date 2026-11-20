@@ -22,6 +22,7 @@ jobs:
             workspace: ${{ steps.paths.outputs.workspace }}
             orchestrator: ${{ steps.paths.outputs.orchestrator }}
             worker: ${{ steps.paths.outputs.worker }}
+            worker_reuse: ${{ steps.paths.outputs.worker_reuse }}
             browser: ${{ steps.paths.outputs.browser }}
             space: ${{ steps.paths.outputs.space }}
             queue: ${{ steps.paths.outputs.queue }}
@@ -39,6 +40,7 @@ jobs:
                   workspace=false
                   orchestrator=false
                   worker=false
+                  worker_reuse=false
                   browser=false
                   space=false
                   queue=false
@@ -70,16 +72,24 @@ jobs:
                                   space=true
                                   queue=true
                                   ;;
+                              apps/orchestrator/tests/execution-service/*|apps/orchestrator/temporal_test.go|apps/orchestrator/temporal_fair_entry_test.go)
+                                  workspace=true
+                                  orchestrator=true
+                                  queue=true
+                                  temporal=true
+                                  ;;
                               apps/orchestrator/*|deploy/orchestrator/*)
                                   # API tests and queue acceptance import Orchestrator.
                                   workspace=true
                                   orchestrator=true
+                                  worker_reuse=true
                                   queue=true
                                   temporal=true
                                   ;;
                               apps/worker/*|deploy/worker/*)
                                   workspace=true
                                   orchestrator=true
+                                  worker_reuse=true
                                   worker=true
                                   queue=true
                                   temporal=true
@@ -87,6 +97,7 @@ jobs:
                               *)
                                   workspace=true
                                   orchestrator=true
+                                  worker_reuse=true
                                   worker=true
                                   browser=true
                                   space=true
@@ -99,6 +110,7 @@ jobs:
                       # Unknown scope must run every check.
                       workspace=true
                       orchestrator=true
+                      worker_reuse=true
                       worker=true
                       browser=true
                       space=true
@@ -106,7 +118,7 @@ jobs:
                       temporal=true
                   fi
 
-                  for check in workspace orchestrator worker browser space queue temporal; do
+                  for check in workspace orchestrator worker worker_reuse browser space queue temporal; do
                       printf '%s=%s\n' "$check" "${!check}" >> "$GITHUB_OUTPUT"
                   done
 
@@ -139,8 +151,10 @@ jobs:
             - run: pnpm install --frozen-lockfile
             - run: pnpm check:workspace
               if: ${{ needs.changes.outputs.workspace == 'true' }}
-            - run: pnpm --filter @bento/orchestrator check:core
+            - run: pnpm --filter @bento/orchestrator check:core:fast
               if: ${{ needs.changes.outputs.orchestrator == 'true' }}
+            - run: pnpm --filter @bento/orchestrator test:worker-reuse
+              if: ${{ needs.changes.outputs.worker_reuse == 'true' }}
             - run: pnpm check:worker
               if: ${{ needs.changes.outputs.worker == 'true' }}
             - run: pnpm lint
