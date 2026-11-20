@@ -63,3 +63,7 @@ Compose 同步设置 `BENTO_MYSQL_HOST=mysql:3306`、`BENTO_MYSQL_USER=bento`、
 设置 `BENTO_OIDC_ISSUER` 后，任务入口用 OIDC 授权码与 S256 PKCE 接受 Keycloak 身份。服务器验证 state、nonce、签名及 Token 声明。只有邮箱已验证且属于配置组织的身份才能取得 Bento 会话。Go 账号仓储在 MySQL 以 `(oidc_issuer, oidc_subject)` 唯一绑定 `owner_id`，并发回调读取同一个绑定。邮箱用于展示。
 
 `/auth` 独立提供认证界面，OIDC 回调使用 `/api/oidc/callback`。此模式关闭任务入口的密码登录、注册和密码确认注销端点。普通退出使用 OIDC RP-Initiated Logout。业务注销要求用原身份重新认证，随后按现有机制关闭账号并清理资源。登录会话及未完成的 OIDC 事务随 task-entry 重启失效，身份绑定和关闭状态保留。部署配置见 [部署配置](../../../deploy/README.md#准备配置)。
+
+## 文件与上传测试
+
+文件生命周期、项目删除和上传测试位于 [`tests/`](tests/)。运行 `pnpm --filter @bento/workspace-api check` 可执行 API 类型检查、Node 测试及 Go 检查。
