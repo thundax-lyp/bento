@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { Authority } from '@/apps/orchestrator/openshell/authority.ts';
-import { SandboxManagement } from '@/apps/orchestrator/openshell/management.ts';
+import { Authority } from '@/apps/orchestrator/src/openshell/authority.ts';
+import { SandboxManagement } from '@/apps/orchestrator/src/openshell/management.ts';
 
 const binding = {
     tenant: 'tenant',

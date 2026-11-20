@@ -8,8 +8,8 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { localEnvironmentVersion } from '@/apps/orchestrator/execution-service/local.ts';
-import { commandHost } from '@/apps/orchestrator/execution-service/command-host.ts';
+import { localEnvironmentVersion } from '@/apps/orchestrator/src/execution-service/local.ts';
+import { commandHost } from '@/apps/orchestrator/src/execution-service/command-host.ts';
 import { testToken, client } from './fixtures/service.ts';
 
 test('documented startup installs trusted review and waits for its cleanup', async () => {
@@ -34,7 +34,10 @@ test('documented startup installs trusted review and waits for its cleanup', asy
         [
             ...process.execArgv,
             fileURLToPath(
-                new URL('../../execution-service/start.ts', import.meta.url),
+                new URL(
+                    '../../src/execution-service/start.ts',
+                    import.meta.url,
+                ),
             ),
             '--local',
         ],
@@ -86,7 +89,7 @@ test('startup requires the trusted host environment version', async (t) => {
                 ...process.execArgv,
                 fileURLToPath(
                     new URL(
-                        '../../execution-service/start.ts',
+                        '../../src/execution-service/start.ts',
                         import.meta.url,
                     ),
                 ),
@@ -203,7 +206,10 @@ test('startup registers the six trusted review callbacks only in process', async
         [
             ...process.execArgv,
             fileURLToPath(
-                new URL('../../execution-service/start.ts', import.meta.url),
+                new URL(
+                    '../../src/execution-service/start.ts',
+                    import.meta.url,
+                ),
             ),
             '--local',
         ],

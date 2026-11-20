@@ -10,18 +10,18 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { PersistenceFence } from '@/apps/orchestrator/openshell/persistence-fence.ts';
-import { SingleHostExecution } from '@/apps/orchestrator/openshell/single-host.ts';
-import { localHost } from '@/apps/orchestrator/execution-service/local.ts';
-import { Store } from '@/apps/orchestrator/execution-service/store.ts';
+import { PersistenceFence } from '@/apps/orchestrator/src/openshell/persistence-fence.ts';
+import { SingleHostExecution } from '@/apps/orchestrator/src/openshell/single-host.ts';
+import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
+import { Store } from '@/apps/orchestrator/src/execution-service/store.ts';
 import {
     serveExecution,
     snapshotSha256,
-} from '@/apps/orchestrator/execution-service/service.ts';
+} from '@/apps/orchestrator/src/execution-service/service.ts';
 import {
     type ExecutionHost,
     type WorkerRequest,
-} from '@/apps/orchestrator/execution-service/types.ts';
+} from '@/apps/orchestrator/src/execution-service/types.ts';
 import {
     testToken,
     readme,

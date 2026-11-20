@@ -4,8 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { Store } from '@/apps/orchestrator/execution-service/store.ts';
-import { snapshotSha256 } from '@/apps/orchestrator/execution-service/service.ts';
+import { Store } from '@/apps/orchestrator/src/execution-service/store.ts';
+import { snapshotSha256 } from '@/apps/orchestrator/src/execution-service/service.ts';
 import { readme } from './fixtures/service.ts';
 
 test('Task input, Run, and source deletion share a durable transaction boundary', async (t) => {

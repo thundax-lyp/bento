@@ -22,7 +22,7 @@ import { probeSdk } from '@/apps/orchestrator/tests/openshell/binding-grants/sdk
 import {
     schemaDecoder,
     schemaExecEventDecoder,
-} from '@/apps/orchestrator/execution-service/command-host.ts';
+} from '@/apps/orchestrator/src/execution-service/command-host.ts';
 
 type File = { path: string; bytes: number; sha256: string };
 const repo = fileURLToPath(new URL('../../../../', import.meta.url));

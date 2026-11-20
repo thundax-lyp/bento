@@ -16,14 +16,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { localHost } from '@/apps/orchestrator/execution-service/local.ts';
-import { snapshotSha256 } from '@/apps/orchestrator/execution-service/service.ts';
+import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
+import { snapshotSha256 } from '@/apps/orchestrator/src/execution-service/service.ts';
 import {
     TaskRestoreEvidenceConflict,
     executionBindingDigest,
     type ExecutionHost,
     type WorkerRequest,
-} from '@/apps/orchestrator/execution-service/types.ts';
+} from '@/apps/orchestrator/src/execution-service/types.ts';
 import {
     readme,
     client,

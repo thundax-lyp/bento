@@ -19,7 +19,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { TLSSocket } from 'node:tls';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { SingleHostExecution } from '@/apps/orchestrator/openshell/single-host.ts';
+import { SingleHostExecution } from '@/apps/orchestrator/src/openshell/single-host.ts';
 import type { PreparedSdk } from '@/apps/orchestrator/tests/openshell/binding-grants/sdk.ts';
 import type { WorkerRequest } from '@/apps/worker/protocol.ts';
 import {

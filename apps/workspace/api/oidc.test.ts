@@ -9,11 +9,11 @@ import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { localHost } from '@/apps/orchestrator/execution-service/local.ts';
+import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
 import {
     serveExecution,
     snapshotSha256,
-} from '@/apps/orchestrator/execution-service/service.ts';
+} from '@/apps/orchestrator/src/execution-service/service.ts';
 import test from 'node:test';
 import { mockAccounts } from './account-store.ts';
 import { sessionAuth } from './auth.ts';

@@ -7,12 +7,12 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { executionHttp } from '@/apps/orchestrator/execution-service/http.ts';
-import { dockerOpenShellPurge } from '@/apps/orchestrator/execution-service/docker-openshell-purge.ts';
-import { localHost } from '@/apps/orchestrator/execution-service/local.ts';
-import { Store } from '@/apps/orchestrator/execution-service/store.ts';
-import { serveExecution } from '@/apps/orchestrator/execution-service/service.ts';
-import { type ExecutionHost } from '@/apps/orchestrator/execution-service/types.ts';
+import { executionHttp } from '@/apps/orchestrator/src/execution-service/http.ts';
+import { dockerOpenShellPurge } from '@/apps/orchestrator/src/execution-service/docker-openshell-purge.ts';
+import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
+import { Store } from '@/apps/orchestrator/src/execution-service/store.ts';
+import { serveExecution } from '@/apps/orchestrator/src/execution-service/service.ts';
+import { type ExecutionHost } from '@/apps/orchestrator/src/execution-service/types.ts';
 import {
     testToken,
     readme,

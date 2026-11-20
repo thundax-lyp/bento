@@ -11,13 +11,13 @@ import { fileURLToPath } from 'node:url';
 import {
     localEnvironmentVersion,
     localHost,
-} from '@/apps/orchestrator/execution-service/local.ts';
-import { Store } from '@/apps/orchestrator/execution-service/store.ts';
+} from '@/apps/orchestrator/src/execution-service/local.ts';
+import { Store } from '@/apps/orchestrator/src/execution-service/store.ts';
 import {
     type ExecutionHost,
     type WorkerRequest,
-} from '@/apps/orchestrator/execution-service/types.ts';
-import { prewarmedWorker } from '@/apps/orchestrator/execution-service/warm-worker.ts';
+} from '@/apps/orchestrator/src/execution-service/types.ts';
+import { prewarmedWorker } from '@/apps/orchestrator/src/execution-service/warm-worker.ts';
 import {
     testToken,
     barrier,
@@ -208,7 +208,7 @@ test(
                 import { access } from 'node:fs/promises';
                 import { join } from 'node:path';
                 import { setTimeout as delay } from 'node:timers/promises';
-                import { localHost } from ${JSON.stringify(new URL('../../execution-service/local.ts', import.meta.url).href)};
+                import { localHost } from ${JSON.stringify(new URL('../../src/execution-service/local.ts', import.meta.url).href)};
                 export default function ({ state }) {
                     const base = localHost(join(state, 'volume'));
                     let sequence = 0;
@@ -273,7 +273,7 @@ test(
                 ...process.execArgv,
                 fileURLToPath(
                     new URL(
-                        '../../execution-service/start.ts',
+                        '../../src/execution-service/start.ts',
                         import.meta.url,
                     ),
                 ),

@@ -48,8 +48,8 @@ const publication = JSON.parse(
 );
 assert.deepEqual(publication.patterns, [
     'apps/orchestrator/index.ts',
-    'apps/orchestrator/execution-service/*.ts',
-    'apps/orchestrator/openshell/*.ts',
+    'apps/orchestrator/src/execution-service/*.ts',
+    'apps/orchestrator/src/openshell/*.ts',
 ]);
 assert(Array.isArray(publication.files));
 assert.equal(new Set(publication.files).size, publication.files.length);
@@ -85,7 +85,7 @@ for (const path of [
     'register-paths.mjs',
     'apps/orchestrator/temporal.go',
     'apps/orchestrator/go.mod',
-    'apps/orchestrator/execution-service/service.ts',
+    'apps/orchestrator/src/execution-service/service.ts',
     ...sources,
 ])
     assert.equal(
