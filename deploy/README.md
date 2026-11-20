@@ -45,7 +45,7 @@ Compose 的 `auth-build` 阶段独立生成个人端认证 HTML 和 CSS。运行
 从仓库根目录使用已安装锁定依赖的 Node.js 22 和 pnpm 12.15.0。确认当前 Node 22 提供 `node:sqlite.backup`。命令使用测试进程的动态回环端口和私有临时目录。
 
 ```bash
-node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='^restores the completed Run business ledger from an isolated backup$' apps/orchestrator/tests/execution-service/service.test.ts
+node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='^restores the completed Run business ledger from an isolated backup$' apps/orchestrator/tests/execution-service/restore.test.ts
 ```
 
 演练生成合成项目及成功 Run，等执行服务关闭后，以 SQLite backup API 读取 `business.sqlite` 并生成单库备份。备份通过完整性、外键和已提交回执检查，才复制到一个全新目录。启动前核对备份与还原文件的 SHA-256，再用同一个执行服务入口启动还原实例。SQLite 使用 WAL，运行中直接复制主库文件可能遗漏已提交事务。其他数据库、WAL/SHM、锁文件和本地 fixture 卷均不随该备份复制。
@@ -59,7 +59,7 @@ Compose 当前的 TS 执行服务持有该业务账本。演练覆盖其中已�
 从仓库根目录使用 Node.js 22、`node:sqlite.backup` 和已安装的锁定依赖。命令通过动态回环端口在私有临时目录运行单库与三库演练。
 
 ```bash
-node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='^restores (the completed Run business ledger from an isolated backup|stopped execution state and continues fenced session history)$' apps/orchestrator/tests/execution-service/service.test.ts
+node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='^restores (the completed Run business ledger from an isolated backup|stopped execution state and continues fenced session history)$' apps/orchestrator/tests/execution-service/restore.test.ts
 ```
 
 三库演练等待源执行服务关闭。在源服务持续关闭且无写者的同一窗口，使用 SQLite backup API 依次备份 `business.sqlite`、`authority.sqlite`、`history.sqlite`。逐库核对完整性、外键和 SHA-256，在全新隔离目录还原。还原侧以同一项目绑定路径排他创建经字节校验的合成 `README.md`，供后续 Run 读取基线。演练产物仅包含合成状态，禁止覆盖已运行或曾运行的状态目录。
