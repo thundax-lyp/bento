@@ -2,7 +2,7 @@
 
 ## 状态与执行者契约
 
-- 建立日期：2026-11-20。状态：T0/T1/T2/T3/T4通过，待执行T5；定向只读stat fixture修订已获MASTER批准并通过。T2使用获审本地受控SDK输入，不宣称默认网络准备已恢复。
+- 建立日期：2026-11-20。状态：T0/T1/T2/T3/T4/T5通过，待执行T6；定向只读stat fixture修订已获MASTER批准并通过。T2使用获审本地受控SDK输入，不宣称默认网络准备已恢复。
 - 唯一 checkout：`/Volumes/storage/workspace/bento-b`。调查基线：`fe12c24ddb6d2a061559173e623419d5aa97b99b`；此 SHA 不是未来验收通过声明。
 - 原计划及受控SDK输入修订已获MASTER审核Executable；T2已完整验证，按全流程授权继续剩余步骤。最终merge仍须MASTER明确放行A安全点。
 - 实施继承 WORKER 全流程授权；按 [Worker Skill](../../.agents/skills/bento-runbook-worker/SKILL.md)逐步验证、删除已完成步骤并提交。每步文件数包含本文、允许修改及专门核对的文件，最多 10。
@@ -268,29 +268,9 @@ export function isolateVerifiedSdkFiles(
 
 测试concurrency=false、各test120000、无skip；真实SDK选择与数据IO单测分开记录结果。原T2五项transport测试在同来源SDK上完整执行，CI默认是真实Linux SDK build→六探针→实际HTTP/2 RPC，不依赖Mac路径。本地使用受控输入时只证明该显式来源，全量默认网络准备失败事实保留；日志不写原始路径/token/header。T6将wrapper单测加入默认test:worker-reuse，CI不注入BENTO_A6_WORKER_REUSE_SDK_BUNDLE、不改workflow、不打包本地bundle/cache或历史manifest；本轮不为跨平台输入增加canonical inventory或新发布流程。
 
-## T5：同生产 base 的长期四项隔离与补位
-
-前置状态：T4已实现生产ingress/mTLS fixture与独立observer，下方记录本地受控SDK来源fixture两项2/2无skip；本步以前一T4、T5a及下方T5b只读HTTP观察器补强通过提交为基线。
-允许修改：新目录 `model-adapter.ts`、`observed-bootstrap.ts`、`real-reuse.test.ts`、`public-files.json`、本文（5）。
-专核：`apps/worker/base-bootstrap.ts`、`apps/worker/sdk-transport.ts`、`apps/worker/run-worker.ts`、`apps/orchestrator/execution-service/warm-worker.ts`、`apps/worker/dsh-worker.ts`（共10；MASTER定向批准新增正式loop只读专核）。
-禁止修改：全部专核文件、生产测试探针/临时endpoint、旧验收。
-
-执行：实现P0/P1+P2/R/E/L共五个独立测试（P1与P2同一个长期case，先1个reference预热后64个测量轮，保留逐轮四项分项结果）。observed facade只观察，实际返回字段逐一委托生产base；PID由父端独立进程/socket证据交叉确认，不仅相信worker自报。model-adapter只持有当次模型HTTP请求。每轮RPC与历史独立核对。轮次/时间/无串Session均assert，不将warning或计数代替。测试失败输出case+轮次+四项失败名及残留计数，不能输出原始request/config/header。finally不改变失败结论，清理失败同样失败。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --test --test-concurrency=1 --test-timeout=1200000 apps/orchestrator/acceptance/worker-reuse/real-reuse.test.ts
-pnpm --dir apps/orchestrator typecheck
-pnpm --dir apps/worker typecheck
-git diff --check
-```
-
-PASS：五测试无skip；长期case64/64四项全真，跨度≥315秒，同PID；R/E旧进程真实退出后新PID成功；L关闭/同库重开无残留。STOP：任意一项只能靠fake/warm标志/自报证明；发现生产缺陷先回作者固定文件/修复/API与验证后重新审核，不能进入A冻结范围。
-
 ## T6：默认门禁、证据与删除
 
-前置状态：T5全部断言通过，已记录实际实现与验收SHA；仍在B独立checkout。可完成本地收口、PR与审核，但最终merge必须另等MASTER放行A/B顺序。
+前置状态：下方T5记录的完整新网络协议五case/64轮已全部通过，本步以前一T5产物提交及其实际源hash为代码基线；仍在B独立checkout。可完成本地收口、PR与审核，但最终merge必须另等MASTER放行A/B顺序。
 允许修改：`apps/orchestrator/package.json`、新目录 `check-package.mjs`、`public-files.json`、`README.md`、`docs/30-designs/APPLICATION-BOUNDARIES-DESIGN.md`、`docs/40-readiness/CURRENT-READINESS.md`、`deploy/README.md`、本文（8）。
 专核：根`package.json`、`deploy/worker/Dockerfile`（共10）。
 禁止修改：专核文件、CI、原Temporal脚本、原四项未闭合需求状态。
@@ -376,3 +356,11 @@ Orchestrator typecheck、三源focused ESLint/Prettier、public-files格式与gi
 2026-11-20，按MASTER批准工作区blob872eac208b78158941a41daa04a6ace275f18259修订，反事实只作来源诊断：临时跳过旧emit仍有4条当前摘要HTTP200（baseline后30–38ms），SDK/operation/模型不增；结合RemoteSession.enqueue200ms定时flush的stage/append/reconcile/flush四RPC源码说明，不能用原活动窗口将本轮合法刷盘算旧事件触发。原两观测源已逐字节恢复hash，反事实不提交、不计T5验收。
 
 本条所属提交仅fixture/fixture.test/RUNBOOK：只读附加response finish status/finishedAt；完整fixture两case2/2、fail0skip0、duration1688.531875ms，精确403及finishedAt≥start断言通过，原所有SDK/mTLS/SQL/撤权断言保留。两源Lint/Prettier、RUNBOOK格式、diff通过。初次类型检查发现自动文本替换误给revocations类型也增加HTTP完成字段；前一提交误先于检查结果落地，不能视作本步类型PASS。本修正提交移除误加字段，Orchestrator typecheck、两源Lint/Prettier及diff重新核验全部exit0（修正只涉及擦除类型，fixture两项行为证据仍对应相同运行代码），才继续。T5将旧事件窗口移至新base构造前，仍须最小phase后完整五case；T5尚未PASS。
+
+## T5 实际通过记录
+
+2026-11-20，本条所属提交交付model-adapter、observed-bootstrap和real-reuse测试闭包，前置为4ab80f6。受控SDK来源、原六probe，正式warm loop/生产base/官方DSH AgentLoop，完整P0/P1+P2/R/E/L五case5/5、fail0skip0，duration342406.328208ms；测量PID77309，reference+64测量轮同PID，8tenant，span315001.185667ms，64条startedMs逐项≥round×5000，四flag64/64全true。64个旧事件窗口全部7项native服务端counter前后相等（persistence/operation/SDK stream/SDK connection/upstream/model request/model connection），HTTP整轮/父端恰1负测/轮间/关闭后cursor无迟到额外请求。旧event在新base创建前触发，当前FS/新listener正向与旧namespace拒绝仍在agent/request。
+
+R真实open-input RPC撤权后done/write拒绝，旧PID退出后新PID成功；E模型dispose失败不发completed/recovered且SDK/context资源关闭后新PID成功；L关闭/同库重开及新Session完成前后旧events/receipts完整行不变，Worker/SDK/model连接归零。父端真实ps/server/只读SQL与Worker trace交叉核对，不以fake或warm标志证明。模型响应、文件helper和沙盒运行契约均为本地fixture，不证外部模型质量、真实沙盒退出/磁盘或任意第三方factory安全。
+
+原范围两次5/5（span315001.026ms及严格时序补强后duration325485.838625ms）不覆盖后来补充HTTP观察，不能替代本次。首次全网络active-runtime窗口3/5及focused失败如T5b记录，反事实源已恢复，最终使用获审启动前窗口。最小新phase两Session专门诊断1/1通过后恢复原五case源，不冒充无wrapper P0。最终生产专核文件无改动，Orchestrator/Worker类型、三源Lint/Prettier、public/RUNBOOK格式与diff全部exit0，实际运行3源SHA与私有manifest逐一相同；新源141/195/843行。T5通过不替代T6默认网络SDK准备、九项真实Temporal、pack/CI/Codex或最终merge安全点。

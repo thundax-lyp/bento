@@ -194,7 +194,10 @@
         "apps/workspace/web/e2e/task-results.spec.ts",
         "apps/orchestrator/acceptance/worker-reuse/fixture.ts",
         "apps/orchestrator/acceptance/worker-reuse/observer.ts",
-        "apps/orchestrator/acceptance/worker-reuse/fixture.test.ts"
+        "apps/orchestrator/acceptance/worker-reuse/fixture.test.ts",
+        "apps/orchestrator/acceptance/worker-reuse/model-adapter.ts",
+        "apps/orchestrator/acceptance/worker-reuse/observed-bootstrap.ts",
+        "apps/orchestrator/acceptance/worker-reuse/real-reuse.test.ts"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",
