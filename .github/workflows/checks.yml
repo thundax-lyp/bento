@@ -140,6 +140,13 @@ jobs:
                   node-version: 22.x
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
+            - name: Use Ubuntu HTTPS package mirrors
+              shell: bash
+              run: |
+                  # Regional HTTP mirrors caused multi-minute apt downloads in recent runs.
+                  sudo sed -i -E \
+                      's|http://([a-z0-9.-]+\.)?archive.ubuntu.com/ubuntu/?|https://archive.ubuntu.com/ubuntu/|g; s|http://security.ubuntu.com/ubuntu/?|https://security.ubuntu.com/ubuntu/|g' \
+                      /etc/apt/sources.list.d/ubuntu.sources
             - run: pnpm --filter @bento/web exec playwright install --with-deps --only-shell chromium
             - run: pnpm --filter @bento/web test:e2e
             - run: pnpm --filter @bento/web test:space-integrity
