@@ -111,3 +111,7 @@ OpenShell Gateway interceptor 的固定源码白名单可以管理部分一元�
 每轮[sdk-transport.ts](../../apps/worker/sdk-transport.ts)只接生产回环`http://127.0.0.1:<port>`，逐请求使用该轮grant，管理凭据和mTLS仍归Orchestrator。官方SandboxClient使用此transport；底层session由Worker显式持有，关闭先拒绝新RPC并以HTTP2 CANCEL结束在途stream，再等真实session close，截止后残留是失败。不能假定固定官方OpenShellClient存在close接口，不能以调用destroy或状态标志代替真实关闭。
 
 资源清理按AgentHandle完整dispose→注销adapter→root fiber/provider/持久化清理→SDK关闭→模型disposer依次执行，失败仍尝试其余阶段并聚合错误；回执必须在清理之后。官方factory也持有结构所有权，base先等显式handle清理结算才卸root，沿其共享teardown避免重复关闭。Agent快照保留原事件，仅断言Worker实际消费的turn/end.reason.kind及tool/result.error.code，不改写request/header.reason或伪称全事件类型兼容。单轮与故障清理验证见[base单测](../../apps/worker/base-bootstrap.test.ts)，其中SDK helper/model是受控fixture，不代表真实沙盒文件系统或生产模型。
+
+长期验收沿[real-reuse.test.ts](../../apps/orchestrator/acceptance/worker-reuse/real-reuse.test.ts)正式prewarmedWorker→run-worker --warm→runDshWorkerLoop→runDshWorker→base链路。1个reference与64测量Session、8tenant同原生PID运行至少315秒；每轮持久历史/模型请求独立，凭据/监听器/连接/文件namespace分项负测。旧Context事件在下一base创建之前触发，避免当轮合法200ms批次刷盘干扰归属；父端有界IPC与真实server计数同时覆盖SDK/模型及persistence/operation，整轮与轮间继续查迟到旧身份请求。观测包装不替代生产清理。
+
+R独立验证正式takeover撤权时持有输入流关闭与旧凭据重连拒绝，Worker退出补位；沙盒退出未独立确认时仍为UNKNOWN。E在模型disposer注入失败并确认其余资源关闭；L验证空闲pool停止/同库重开/继续新Session且旧events和receipts完整不变。资源、模型、沙盒helper的实际边界与64轮结果见[验收证据](../40-readiness/CURRENT-READINESS.md#a6-05-worker-长期池复用)，可信运行时配置与恢复操作见[部署手册](../../deploy/README.md#worker-正式运行时与复用验证)。

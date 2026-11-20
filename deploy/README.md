@@ -203,3 +203,37 @@ node apps/workspace/web/scripts/verify-web-a02.mjs --quota
 通过受控环境注入 Web 和存储 origin（`BENTO_A02_ORIGIN`、`BENTO_A02_STORAGE_ORIGIN`）、测试账号（`BENTO_A02_LOGIN`、`BENTO_A02_PASSWORD`），以及只读检查器路径 `BENTO_A02_STORAGE_CHECK`。检查器接收 `saved` 或 `absent` 和 `space/{uploadId}`，并确认该键无 multipart 残留。`saved` 模式可接收第三个参数 `expectedBytes`，HEAD 字节数必须等于该值，缺省为 100,000,000。两块预检传入 16,777,217。`absent` 模式确认对象不存在。满足条件时退出 0。
 
 先通过两块预检再跑边界。脚本打印阶段、分块编号、HTTP 状态和成功时间，边界传输采用两分钟无进展截止及十分钟阶段截止。签名自然到期单列等待。清理每次轮询最多 12 分钟。失败时查看阶段和受限临时目录中的 `recovery.json`，按原项目与上传 ID 回读。取消未完成上传，待签名失效并确认分块清理后，通过正常项目删除入口清理。核对下载入口失效、对象和分块不存在及账号用量回到起始值，再删除恢复记录和临时文件。可用 `--download-boundary` 单独复核 100 MB 下载和清理。上传记录过期回收由 API 受控时钟回归覆盖。
+
+## Worker 正式运行时与复用验证
+
+前置：锁定依赖已安装，部署端已准备与沙盒环境相符的helper/node路径、独立SDK模块及受信模型factory。启动器仍负责容器/进程组隔离、信号与当次授权；Gateway管理凭据和mTLS留在Orchestrator。选择`BENTO_DSH_BOOTSTRAP=/app/apps/worker/base-bootstrap.ts`，将可信只读JSON绝对路径放入`BENTO_DSH_RUNTIME_CONFIG`。该入口导出正式base，既有launcher仍要求显式选择bootstrap。
+
+```json
+{
+    "schema": 1,
+    "sdkModule": "/app/private/openshell-sdk/index.js",
+    "modelAdapterModule": "/app/apps/worker/production-model.mjs",
+    "provider": "trusted-provider",
+    "model": "pinned-model",
+    "workspaceRoot": "/sandbox/project",
+    "helper": "/runtime/ptc.mjs",
+    "fileSystemHelper": "/runtime/fs.mjs",
+    "node": "/usr/local/bin/node"
+}
+```
+
+九项字段均必填；示例helper路径须替换为部署沙盒内实际安装路径。SDK和factory须为Worker内现存绝对文件路径；SDK模块还需提供其锁定运行依赖，单独挂载index.js不足以完成装配；factory可挂载于Worker工程目录以解析其锁定依赖。factory契约见[ModelAdapterFactory](../apps/worker/base-bootstrap.ts)：每次只接收provider/model，返回新的官方LlmAdapter与异步disposer；请求、凭据和取消器按本轮持有，disposer须等待在途请求和连接关闭。禁止跨轮复用adapter或缓冲会话数据，base会拒绝单例。此接口仍依赖部署端信任和审核factory自身实现。
+
+base每轮新Context/SessionStore/provider，回执前依次关闭Agent、root fiber、SDK transport和模型资源；清理异常使本轮失败并沿原warm池策略退出补位。recover不创建SDK或模型；Task公共事件投影当前不由此base提供，缺投影的Task请求返回review。实际Task交付仍需满足上文投影与可信检查契约。
+
+复用测试使用随机loopback端口、私有临时SQLite、真实生产ingress及受控mTLS上游，模型HTTP和helper返回确定性fixture；旧事件负测在前轮已清理、新轮base尚未创建时观察SDK/模型/persistence/operation的真实请求计数，再在新provider内验证文件目标隔离。运行：
+
+```sh
+pnpm --filter @bento/orchestrator test:worker-runtime
+pnpm --filter @bento/orchestrator test:worker-reuse
+node apps/orchestrator/acceptance/worker-reuse/check-package.mjs
+```
+
+成功须五case无skip、64轮四项隔离全通过、跨度至少315秒、同一实际PID，以及撤权/清理失败换PID、同库重开与资源归零。测试失败按对应case和分项定位，保留失败结论；只清理本次准确拥有的临时资源，不删除其他服务状态。SDK默认走原[官方准备工具](../apps/orchestrator/openshell/binding-grants/sdk.ts)及六项schema探针；固定源码revision为`ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47`，TLS/安装和构建预算不变。
+
+本轮本地可显式指定`BENTO_A6_WORKER_REUSE_SDK_BUNDLE`为仓库外、已经审核身份的受控输入；wrapper逐项核验固定历史清单/完整SHA，隔离复制并执行相同六探针，错误不回退来源。该本地输入绑定本轮已核SDK，不能自行重签manifest或将任意SDK路径当成受控输入；CI不设置该变量，按官方来源真实构建。验收模式必须与[Readiness](../docs/40-readiness/CURRENT-READINESS.md#a6-05-worker-长期池复用)证据对应，受控来源通过不表示默认网络准备已恢复。临时SDK、mTLS材料、config、数据库和trace均在仓库外，不进入npm包；完整门禁保留真实Temporal九项。

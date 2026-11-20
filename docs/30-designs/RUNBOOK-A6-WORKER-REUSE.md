@@ -376,3 +376,5 @@ R真实open-input RPC撤权后done/write拒绝，旧PID退出后新PID成功；E
 首次official-build完整入口exit1/wall518857ms，新14项before安装失败未执行。随后controlled-local完整入口exit1/wall596614ms，但旧Orchestrator121/123（2既有skip）、新runtime14/14、reuse23/23、真实Temporal9/9均实际通过；Temporal本轮默认官方下载CLI1.5.1/Server1.29.1、三业务报告passed/cleanup全true，所有pack/类型通过。唯一失败为新pack脚本Lint的URL/console未显式builtin导入；修正后全仓lint/format与真实installed-tree pack全部exit0，生产/测试源码不变。
 
 获批再跑controlled-local完整入口exit1/wall284308ms，旧A1 prepareSdk generate失败，旧123 tests中111PASS/10hookFailed/2skip，后续新套件与Temporal未执行。有限只读原源及4份准确npm日志核实原工具用本次临时独立cache，catch删除其日志；全局gen日志只证exit1，没有本轮Buf缺失具体cause，不能按历史推断或用全局cache修复。未新GET/预热/安装/修改旧工具。MASTER明确停止本机完整重跑，采用上述定向证据+最终CI实际默认路径门禁；本段不是本机聚合成功声明。
+
+T6本地准备提交包含正式默认脚本、实际installed-tree pack、配置/部署/证据说明及public白名单；Readiness仍部分实现且CI待验证，本文保留。该提交不标T6 PASS，不替代后续CI结果。

@@ -49,4 +49,8 @@ CI 按完整变更范围选择检查：Web 常规回归、空间完整性和队�
 
 Temporal 重投与 package 契约在独立的 `Temporal retry acceptance` job 执行；`Repository checks` 使用 `pnpm --filter @bento/orchestrator check:core` 验证类型、常规测试和 Go。上述拆分不改变本地 `pnpm check` 的完整验收范围。
 
+Worker正式运行时可选用[base-bootstrap.ts](apps/worker/base-bootstrap.ts)，每轮新建官方DSH与SDK资源，清理后才返回回执。可信配置、模型factory及Task投影边界见[Worker运行时部署](deploy/README.md#worker-正式运行时与复用验证)。
+
+`pnpm --filter @bento/orchestrator test:worker-runtime`运行bootstrap/transport单测，`test:worker-reuse`运行SDK准备、生产ingress和64轮常驻Worker验收（最少315秒）；两者均纳入默认`check:core`，原真实Temporal九项入口保留。SDK默认按固定官方来源真实构建，本地受控输入范围见部署手册。
+
 使用 ESLint 与 Prettier，统一 4 空格缩进。

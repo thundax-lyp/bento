@@ -197,7 +197,8 @@
         "apps/orchestrator/acceptance/worker-reuse/fixture.test.ts",
         "apps/orchestrator/acceptance/worker-reuse/model-adapter.ts",
         "apps/orchestrator/acceptance/worker-reuse/observed-bootstrap.ts",
-        "apps/orchestrator/acceptance/worker-reuse/real-reuse.test.ts"
+        "apps/orchestrator/acceptance/worker-reuse/real-reuse.test.ts",
+        "apps/orchestrator/acceptance/worker-reuse/check-package.mjs"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",
