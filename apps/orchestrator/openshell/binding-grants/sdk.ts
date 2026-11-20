@@ -21,7 +21,7 @@ import type { SdkIngressOptions } from '../sdk-ingress.ts';
 
 export const sdkRevision = 'ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47';
 const archiveDigest =
-    'ef434dd44746c5ee14a24e8dc4f09654134ee362f5a09fb08d31eb27c81b02ad';
+    '4c14a574c0bd2feccbc5198ef9fc64f6e75c7f5ef89b5f2fe478f7688fefa43f';
 const lockDigest =
     '256dbfb9d87fe8a89a3e8a8fe9c60fc70bab4446bd1f6fa066a8a77a670ca38a';
 const configDigest =
@@ -135,7 +135,7 @@ export async function prepareSdk(): Promise<PreparedSdk> {
                 source,
                 '--strip-components=1',
                 ...['sdk/typescript', 'proto', 'buf.yaml', 'LICENSE'].map(
-                    (name) => 'OpenShell-' + sdkRevision + '/' + name,
+                    (name) => 'openshell-' + sdkRevision + '/' + name,
                 ),
             ],
             root,
