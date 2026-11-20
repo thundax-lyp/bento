@@ -375,4 +375,4 @@ Orchestrator typecheck、三源focused ESLint/Prettier、public-files格式与gi
 
 2026-11-20，按MASTER批准工作区blob872eac208b78158941a41daa04a6ace275f18259修订，反事实只作来源诊断：临时跳过旧emit仍有4条当前摘要HTTP200（baseline后30–38ms），SDK/operation/模型不增；结合RemoteSession.enqueue200ms定时flush的stage/append/reconcile/flush四RPC源码说明，不能用原活动窗口将本轮合法刷盘算旧事件触发。原两观测源已逐字节恢复hash，反事实不提交、不计T5验收。
 
-本条所属提交仅fixture/fixture.test/RUNBOOK：只读附加response finish status/finishedAt；完整fixture两case2/2、fail0skip0、duration1688.531875ms，精确403及finishedAt≥start断言通过，原所有SDK/mTLS/SQL/撤权断言保留。Orchestrator typecheck、两源Lint/Prettier、RUNBOOK格式、diff通过。T5将旧事件窗口移至新base构造前，仍须最小phase后完整五case；T5尚未PASS。
+本条所属提交仅fixture/fixture.test/RUNBOOK：只读附加response finish status/finishedAt；完整fixture两case2/2、fail0skip0、duration1688.531875ms，精确403及finishedAt≥start断言通过，原所有SDK/mTLS/SQL/撤权断言保留。两源Lint/Prettier、RUNBOOK格式、diff通过。初次类型检查发现自动文本替换误给revocations类型也增加HTTP完成字段；前一提交误先于检查结果落地，不能视作本步类型PASS。本修正提交移除误加字段，Orchestrator typecheck、两源Lint/Prettier及diff重新核验全部exit0（修正只涉及擦除类型，fixture两项行为证据仍对应相同运行代码），才继续。T5将旧事件窗口移至新base构造前，仍须最小phase后完整五case；T5尚未PASS。

@@ -101,8 +101,6 @@ export async function createReuseFixture(
         generation: number;
         stopConfirmed: false;
         at: number;
-        status: number | null;
-        finishedAt: number | null;
     }[] = [];
     async function closeControl() {
         const errors: unknown[] = [];
