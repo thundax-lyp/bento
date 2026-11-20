@@ -17,8 +17,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
     prepareSdk,
     type PreparedSdk,
-} from '@/apps/orchestrator/openshell/binding-grants/sdk.ts';
-import { probeSdk } from '@/apps/orchestrator/openshell/binding-grants/sdk-probe.ts';
+} from '@/apps/orchestrator/tests/openshell/binding-grants/sdk.ts';
+import { probeSdk } from '@/apps/orchestrator/tests/openshell/binding-grants/sdk-probe.ts';
 import {
     schemaDecoder,
     schemaExecEventDecoder,

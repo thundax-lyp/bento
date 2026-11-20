@@ -5,8 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
-import { Store, type TaskInput } from './store.ts';
-import type { RunStatus } from './types.ts';
+import {
+    Store,
+    type TaskInput,
+} from '@/apps/orchestrator/execution-service/store.ts';
+import type { RunStatus } from '@/apps/orchestrator/execution-service/types.ts';
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 const owner = 'retry-owner';

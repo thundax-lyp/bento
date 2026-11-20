@@ -15,7 +15,7 @@ import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
 import type { SessionHandle } from '@deepseek-ai/dsh-session-persistence';
 import { createOfficialRuntime } from './runtime.ts';
 import { remoteSessionPersistence } from '@/apps/worker/remote-session.ts';
-import { SingleHostExecution } from '../single-host.ts';
+import { SingleHostExecution } from '@/apps/orchestrator/openshell/single-host.ts';
 
 type Row = Record<string, SQLOutputValue>;
 type PersistedSnapshot = {

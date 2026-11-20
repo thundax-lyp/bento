@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { after, before, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import type { PreparedSdk } from '@/apps/orchestrator/openshell/binding-grants/sdk.ts';
-import { probeSdk } from '@/apps/orchestrator/openshell/binding-grants/sdk-probe.ts';
+import type { PreparedSdk } from '@/apps/orchestrator/tests/openshell/binding-grants/sdk.ts';
+import { probeSdk } from '@/apps/orchestrator/tests/openshell/binding-grants/sdk-probe.ts';
 import { isolateVerifiedSdkFiles, prepareReuseSdk } from './sdk.ts';
 
 const options = { timeout: 120_000, concurrency: false };

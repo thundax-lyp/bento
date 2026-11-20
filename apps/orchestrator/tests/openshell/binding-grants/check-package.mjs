@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath, URL } from 'node:url';
 import { join } from 'node:path';
 
-const root = fileURLToPath(new URL('../../../../', import.meta.url));
+const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 const expectedFiles = [
     'register-paths.mjs',
     'shared/text-snapshot.ts',
@@ -28,11 +28,11 @@ const expectedFiles = [
     '!apps/**/node_modules/**',
 ];
 const sources = [
-    'apps/orchestrator/openshell/binding-grants/sdk.ts',
-    'apps/orchestrator/openshell/binding-grants/sdk-probe.ts',
-    'apps/orchestrator/openshell/binding-grants/fixture.ts',
-    'apps/orchestrator/openshell/binding-grants.test.ts',
-    'apps/orchestrator/openshell/binding-grants/check-package.mjs',
+    'apps/orchestrator/tests/openshell/binding-grants/sdk.ts',
+    'apps/orchestrator/tests/openshell/binding-grants/sdk-probe.ts',
+    'apps/orchestrator/tests/openshell/binding-grants/fixture.ts',
+    'apps/orchestrator/tests/openshell/binding-grants.test.ts',
+    'apps/orchestrator/tests/openshell/binding-grants/check-package.mjs',
 ];
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 assert.deepEqual(

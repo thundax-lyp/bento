@@ -12,7 +12,9 @@ import { SessionId } from '@deepseek-ai/dsh-session';
 import type { TestContext } from 'node:test';
 import type { Grant, WorkerRequest } from '@/apps/worker/protocol.ts';
 
-const repositoryRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+const repositoryRoot = fileURLToPath(
+    new URL('../../../../../', import.meta.url),
+);
 
 type Row = Record<string, SQLOutputValue>;
 type PersistedSnapshot = {
@@ -93,7 +95,7 @@ class Peer {
                 resolve(repositoryRoot, 'register-paths.mjs'),
                 resolve(
                     repositoryRoot,
-                    'apps/orchestrator/openshell/provider-lifecycle/crash-child.ts',
+                    'apps/orchestrator/tests/openshell/provider-lifecycle/crash-child.ts',
                 ),
                 role,
             ],
