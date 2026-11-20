@@ -392,3 +392,21 @@ T6本地准备提交包含正式默认脚本、实际installed-tree pack、配�
 2026-11-20，按MASTER批准97a1219交付测试专用trace reader及脱敏分类，不改生产路径。原CI monitor异常cause未保留，仍未证实；新矩阵确定性覆盖原whole-JSON读取无法处理的合法追加尾片，不把该复现说成原CI根因已证。完整坏行/坏UTF8/坏record、EOF尾片、可见截断/改写/换inode均硬失败，真实文件序列化read、同字节换文件、hardlink/symlink也验证；fixture3/3 fail0skip0 duration1548.921291ms。最初TypeScript参数属性不被Node strip-only支持，已改显式字段后重验通过，该失败不计PASS。
 
 短IPC专门诊断1/1通过2251.010833ms且恢复原五case源hash；最终受控来源原五case5/5 fail0skip0，duration325427.3755ms，actualPID8624、span315000.372666ms、64条四flag全true/7计数before=after，所有case EOF及owned cleanup完成。实际3源hash与私有manifest一致。Orchestrator/Worker类型、变更源Lint/格式、pack新增trace源码、链接/diff通过后提交。此修订只增加fixture纯矩阵一项，SDK/fixture/reuse默认总24，真实case仍5。最终修复HEAD CI默认官方SDK及全部适用门禁/Codex仍待，T6未PASS。
+
+### T6b：Temporal CI 官方认证预取（作者送审，待 MASTER Executable）
+
+前置状态：HEAD c1ab543；当前 CI run44714723796 的 Temporal job136215120841 为官方 API 403/rate_limit exhausted，九项 before 失败，非业务失败。Repository/Web 不取消、不额外 rerun。MASTER已接受本定点方向，未授权实施。最终生产依赖 merge 仍等 A 安全点。
+
+允许修改（4文件）：本文、`.github/workflows/checks.yml`、`README.md`、`docs/40-readiness/CURRENT-READINESS.md`。专门只读核对（1文件）：`apps/orchestrator/acceptance/temporal-retry/tool.ts`。合计5。禁止修改旧tool/SDK/业务、权限配置、其他job/来源/TLS/预算/九项断言。
+
+执行：
+
+1. 仅在 temporal job 的 install 后、原 test 前新增 id=temporal-archive 的 bash 预取 step，step-only `GH_TOKEN: ${{ github.token }}`，不改现有 contents:read。固定 `set -euo pipefail; umask 077`，`mktemp -d "$RUNNER_TEMP/bento-temporal.XXXXXXXX"`，chmod0700；将此唯一目录以 `directory` output立即写入 GITHUB_OUTPUT，archive output固定为该目录内 `temporal_cli_1.5.1_linux_amd64.tar.gz`。EXIT trap 在失败时只 rm 这个本步已持有的目录；成功保留给原测试，不能打印路径或 token。
+2. 预取唯一命令 `timeout 120s gh release download v1.5.1 --repo temporalio/cli --pattern temporal_cli_1.5.1_linux_amd64.tar.gz --output "$archive"`，无glob/retry/cache/fallback/clobber；普通非symlink单文件，chmod0600，size50408448及SHA256 ddc95e08b0b076efd4ea9733a3f488eb7d2be875f8834e616cd2a37358b4852d 匹配才成功，目录仅该文件。失败exit非0保留原CI失败。
+3. 原 test step 仅增加 `BENTO_A6_TEMPORAL_ARCHIVE: ${{ steps.temporal-archive.outputs.archive }}`；无GH_TOKEN继承。原tool仍再次核size/SHA/tar精确成员/binary/版本、原九项实际执行。原pack step不变。
+4. 最后增加 always() bash清理step，step env仅传 directory output。空值不操作；非空必须精确匹配 RUNNER_TEMP/bento-temporal.加8位字母数字，且目录非symlink/owner当前UID/mode700，才删除这一owned目录；任何不符合均exit1，不扩大清理范围。失败trap已清理而目录不存在时允许成功；不删除他人目录。
+5. README说明 CI 固定官方认证预取→既有archive校验入口，token只在下载step。Readiness保留partial，追加旧/新来源与未验事实，不预记成功。本文消解“禁止改CI/不改workflow”的本定点例外；SDK默认official-build与六probe仍原样，不声称Temporal默认无输入下载分支已恢复或已被新CI覆盖。
+
+验证：`pnpm exec prettier --check .github/workflows/checks.yml README.md docs/40-readiness/CURRENT-READINESS.md docs/30-designs/RUNBOOK-A6-WORKER-REUSE.md`、`git diff --check`；提取两个新增bash脚本逐个 `bash -n`。本机仅用私有临时树与 stub gh/timeout 验证成功保留、下载失败清理、always仅清理owned目录、空/他人目录拒绝、不打印secret；成功控制流用stub checksum/stat，不计真实身份校验PASS；不GET/安装/完整pnpm check。脚本实物SHA与workflow对应；静态核step-onlytoken/原九项和tool无diff/权限不变。实际官方来源必须由新HEAD CI证明，不能以stub算来源PASS。
+
+PASS：配置/格式/边界验证exit0后可提交本定点配置准备，T6仍待；最终同HEAD全部适用CI、默认SDK/六probe/runtime14/reuse24、真实Temporal9/9无skip及Codex明确结论才T6 PASS。STOP：认证下载失败、制品身份不符、token作用域扩大、非owned清理、业务/SDK/旧tool需改或断言缺失，回MASTER，不自行retry/fallback或豁免。
