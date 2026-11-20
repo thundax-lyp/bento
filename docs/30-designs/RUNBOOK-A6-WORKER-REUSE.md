@@ -279,7 +279,7 @@ export function isolateVerifiedSdkFiles(
 
 README/deploy说明默认生产base配置、可信模型factory范围、官方SDK准备版本、当次授权及无Task投影限制；部署引用入口，不复制源码。设计保留稳定owner/关闭顺序。Readiness新增日期、真实代码SHA、官方依赖/SDK、命令/五case/64条四项结果/315秒/PID/资源残留/同库重开及Not Covered；只有全部PASS才把A6-05改已实现，A6父项仍部分实现。A6-01/04保持缺项，A6-02九项原证据保留并重新执行默认门禁。最后迁移长期结论，删除本文及仅指向本文的残留引用，再同提交收口。正文末的链接脚本只在终端执行，不新增Git跟踪的Python文件。
 
-来源修订（MASTER定向批准）：本机本轮`pnpm check`可显式传入先前获审`BENTO_A6_WORKER_REUSE_SDK_BUNDLE`，仅影响新的prepareReuseSdk路径；原A1等prepareSdk仍默认来源，不改原工具/来源/TLS/预算或任何case。准确区分controlled-local本地结果与official-build CI结果。本机默认新before已失败事实保留下方；不再盲重跑默认安装。CI不设置bundle环境变量，必须真实默认官方build、原六probe、新Worker两套单测、全部复用case和原Temporal九项通过；CI缺失/失败不能以本机受控通过替代。该CI要求仍是PR交付与最终merge前置，不因本地收口删除RUNBOOK而消失。
+来源修订（MASTER定向批准）：本机本轮`pnpm check`可显式传入先前获审`BENTO_A6_WORKER_REUSE_SDK_BUNDLE`，仅影响新的prepareReuseSdk路径；原A1等prepareSdk仍默认来源，不改原工具/来源/TLS/预算或任何case。准确区分controlled-local本地结果与official-build CI结果。本机默认新before已失败事实保留下方；不再盲重跑默认安装。CI不设置bundle环境变量，必须真实默认官方build、原六probe、新Worker两套单测、全部复用case和原Temporal九项通过；CI缺失/失败不能以本机受控通过替代。MASTER后续明确以CI补齐聚合门禁：不再本机SDK诊断/GET/安装/完整重跑。本机同运行/测试源码的全部真实行为已分别通过，唯一check-package显式builtin修复后lint/format/pack通过，只计定向本地证据；三次本机aggregate均exit1，不写pnpm check本地通过。允许先提交自洽T6脚本/docs准备并创建Draft→Ready PR，Readiness保留部分实现、本文保留。只有同HEAD CI全部适用门禁实际通过（Repository默认official-build/六probe/新runtime/reuse、独立Temporal九项等）后才T6 PASS/更新状态/删除本文；最终文档收口的新HEAD仍须CI与Codex明确结论。最终merge仍等MASTER放行A安全点。
 
 验证（本机由私有runner读取已获审bundle绝对路径并显式传入；值不写Git/聊天；CI无该变量）：
 
@@ -292,7 +292,7 @@ rg 'RUNBOOK-A6-WORKER-REUSE' README.md docs deploy .agents
 git diff --check
 ```
 
-另执行`wc -l apps/worker/base-bootstrap.test.ts apps/worker/sdk-transport.test.ts apps/orchestrator/acceptance/worker-reuse/*.ts`并核对新增测试/fixture各文件≤1000行，以及下方“文档链接检查”原命令。PASS：check全exit0，新Worker两套单测实际执行、新五case与fixture都无skip，真实Temporal九项9/9无skip；pack正负边界成立；文档本地路径/锚点有效，rg无结果（exit1为本项PASS）。STOP：原A1默认外部工具受阻、CI默认SDK构建受阻、任意新case skip、旧九项变化、pack边界扩大、A最新main影响受测依赖。不能以重跑更小套件替代；恢复只重验受影响范围，再跑已固定全门禁。
+另执行`wc -l apps/worker/base-bootstrap.test.ts apps/worker/sdk-transport.test.ts apps/orchestrator/acceptance/worker-reuse/*.ts`并核对新增测试/fixture各文件≤1000行，以及下方“文档链接检查”原命令。PASS：同HEAD CI全部适用检查真实通过（不将本机aggregate exit1改写为通过），新Worker两套单测实际执行、新五case与fixture都无skip，真实Temporal九项9/9无skip；pack正负边界成立；文档本地路径/锚点有效，rg无结果（exit1为本项PASS）。STOP：原A1默认外部工具受阻、CI默认SDK构建受阻、任意新case skip、旧九项变化、pack边界扩大、A最新main影响受测依赖。不能以重跑更小套件替代；恢复只重验受影响范围，再跑已固定全门禁。
 
 ## 文档链接检查与最终完成定义
 
@@ -370,3 +370,9 @@ R真实open-input RPC撤权后done/write拒绝，旧PID退出后新PID成功；E
 ## T6 默认来源失败与本机恢复授权
 
 2026-11-20，首次完整pnpm check明确移除SDK bundle变量，沿既有代理与原TLS/工具预算。旧Orchestrator123 tests（121PASS/2既有skip）、Go test/vet及原pack通过；新test:worker-runtime两before均在原prepareSdk install阶段失败或超时，14项全部hookFailed，0个行为用例执行/0skip，suite324516.029459ms，完整check exit1/wall518857ms。新reuse与原Temporal尚未执行，失败不计T6 PASS。所有本轮进程已按原预算结束。MASTER随后批准一次本机完整gate显式使用已审controlled输入，新路径不扩大到原A1工具，CI仍须默认官方准备与全部门禁。
+
+## T6 本机定向证据与 CI 聚合裁定
+
+首次official-build完整入口exit1/wall518857ms，新14项before安装失败未执行。随后controlled-local完整入口exit1/wall596614ms，但旧Orchestrator121/123（2既有skip）、新runtime14/14、reuse23/23、真实Temporal9/9均实际通过；Temporal本轮默认官方下载CLI1.5.1/Server1.29.1、三业务报告passed/cleanup全true，所有pack/类型通过。唯一失败为新pack脚本Lint的URL/console未显式builtin导入；修正后全仓lint/format与真实installed-tree pack全部exit0，生产/测试源码不变。
+
+获批再跑controlled-local完整入口exit1/wall284308ms，旧A1 prepareSdk generate失败，旧123 tests中111PASS/10hookFailed/2skip，后续新套件与Temporal未执行。有限只读原源及4份准确npm日志核实原工具用本次临时独立cache，catch删除其日志；全局gen日志只证exit1，没有本轮Buf缺失具体cause，不能按历史推断或用全局cache修复。未新GET/预热/安装/修改旧工具。MASTER明确停止本机完整重跑，采用上述定向证据+最终CI实际默认路径门禁；本段不是本机聚合成功声明。
