@@ -12,7 +12,7 @@ import {
 } from '../openshell/session-history.ts';
 import { unifiedDiff } from './diff.ts';
 import { executionHttp, RetryUnavailable } from './http.ts';
-import { conflict, textSnapshot } from './input.ts';
+import { conflict, RequestError, textSnapshot } from './input.ts';
 import { projectBinding, Store, type ProjectDeletionReceipt } from './store.ts';
 import type { TemporalRunOptions, temporalRuns } from './temporal.ts';
 import {
@@ -526,11 +526,23 @@ export async function serveExecution(options: Options) {
             if (
                 !checkpoint ||
                 checkpoint.workspaceSha256 !== attempt.workspaceSha256 ||
-                checkpoint.historySha256 !== attempt.historySha256 ||
-                snapshotSha256(
-                    textSnapshot(JSON.parse(checkpoint.workspace)),
-                ) !== checkpoint.workspaceSha256
+                checkpoint.historySha256 !== attempt.historySha256
             )
+                throw new RetryEvidenceConflict('Retry checkpoint mismatch');
+            let files: FileText[];
+            try {
+                files = textSnapshot(JSON.parse(checkpoint.workspace));
+            } catch (error) {
+                if (
+                    error instanceof RequestError ||
+                    error instanceof SyntaxError
+                )
+                    throw new RetryEvidenceConflict(
+                        'Retry checkpoint mismatch',
+                    );
+                throw error;
+            }
+            if (snapshotSha256(files) !== checkpoint.workspaceSha256)
                 throw new RetryEvidenceConflict('Retry checkpoint mismatch');
             const proof = {
                 attemptId: attempt.id,
@@ -572,12 +584,25 @@ export async function serveExecution(options: Options) {
                         );
                     throw error;
                 }
-                const { binding, checkpoint, proof } = validated;
+                let { binding, checkpoint, proof } = validated;
                 if (phase === 'preparing') {
                     const receipt = await recovery.queryRestore(
                         binding,
                         attempt.id,
                     );
+                    try {
+                        ({ binding, checkpoint, proof } =
+                            verifiedStopProof(attempt));
+                    } catch (error) {
+                        if (
+                            error instanceof RetryEvidenceConflict ||
+                            error instanceof SyntaxError
+                        )
+                            throw new RetryEvidenceConflict(
+                                'Invalid persisted retry evidence',
+                            );
+                        throw error;
+                    }
                     if (
                         receipt &&
                         (receipt.sha256 !== attempt.workspaceSha256 ||
@@ -694,6 +719,16 @@ export async function serveExecution(options: Options) {
                 return 'stop_unconfirmed';
             const checkpoint = db.taskCheckpoint(run.id);
             if (!checkpoint) return 'checkpoint_unavailable';
+            try {
+                if (
+                    snapshotSha256(
+                        textSnapshot(JSON.parse(checkpoint.workspace)),
+                    ) !== checkpoint.workspaceSha256
+                )
+                    return 'checkpoint_unavailable';
+            } catch {
+                return 'checkpoint_unavailable';
+            }
             const oldGeneration = run.admittedGeneration;
             if (oldGeneration === null) return 'stop_unconfirmed';
             let binding: Binding;
