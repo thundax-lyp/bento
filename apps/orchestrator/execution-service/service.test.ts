@@ -4698,6 +4698,217 @@ test(
 );
 
 test(
+    'Task retry rejects unavailable Workspace checkpoints before admission',
+    { timeout: 20_000 },
+    async (t) => {
+        for (const fault of [
+            'missing',
+            'invalid JSON',
+            'wrong digest',
+            'invalid files',
+        ]) {
+            await t.test(fault, async (t) => {
+                const state = await mkdtemp(
+                    join(tmpdir(), 'bento-retry-workspace-'),
+                );
+                const base = localHost(join(state, 'volume'));
+                let binding: WorkerRequest['binding'] | undefined;
+                let restores = 0;
+                const controller = await start(state, {
+                    ...base,
+                    async worker(request, signal, slot, exit) {
+                        const result = await base.worker(
+                            request,
+                            signal,
+                            slot,
+                            exit,
+                        );
+                        binding = request.binding;
+                        return request.prompt === 'partial failure'
+                            ? 'review'
+                            : result;
+                    },
+                    taskRecovery: {
+                        ...base.taskRecovery!,
+                        async restoreTask(...args) {
+                            restores++;
+                            return base.taskRecovery!.restoreTask(...args);
+                        },
+                    },
+                });
+                t.after(async () => {
+                    await controller.close();
+                    await rm(state, { recursive: true, force: true });
+                });
+                const api = taskRetryTestClient(() => controller.url);
+                const created = await api(
+                    '/tasks',
+                    'POST',
+                    taskRetryTestInput(),
+                    randomUUID(),
+                );
+                assert.equal(created.status, 202, created.text);
+                const task = '/tasks/' + created.json().task.id;
+                await until(
+                    () => api(task),
+                    (r) => r.json().task.status === 'ready',
+                    'Task ready',
+                );
+                const first = await api(
+                    task + '/runs',
+                    'POST',
+                    { prompt: 'prior success' },
+                    randomUUID(),
+                );
+                assert.equal(first.status, 202, first.text);
+                const prior = task + '/runs/' + first.json().run.id;
+                await until(
+                    () => api(prior),
+                    (r) => r.json().run.status === 'succeeded',
+                    'Prior result',
+                );
+                const oldResult = (await api(prior + '/results')).text;
+                const oldDiff = (
+                    await api(prior + '/results/1/diff?view=cumulative')
+                ).text;
+                const submitted = await api(
+                    task + '/runs',
+                    'POST',
+                    { prompt: 'partial failure' },
+                    randomUUID(),
+                );
+                assert.equal(submitted.status, 202, submitted.text);
+                const source = submitted.json().run.id;
+                const run = task + '/runs/' + source;
+                const failed = await until(
+                    () => api(run),
+                    (r) => r.json().run.status === 'failed',
+                    'Safe failure',
+                );
+                assert.equal(failed.json().run.retryReason, null);
+                assert(binding);
+                const volume = snapshotSha256(await base.snapshot(binding));
+                const history = new DatabaseSync(
+                    join(state, 'history.sqlite'),
+                    { readOnly: true },
+                );
+                const business = new DatabaseSync(
+                    join(state, 'business.sqlite'),
+                );
+                t.after(() => {
+                    history.close();
+                    business.close();
+                });
+                const historyState = () => [
+                    history.prepare('SELECT * FROM sessions ORDER BY id').all(),
+                    history
+                        .prepare('SELECT * FROM events ORDER BY id,seq')
+                        .all(),
+                    history
+                        .prepare(
+                            'SELECT * FROM history_checkpoints ORDER BY runId',
+                        )
+                        .all(),
+                    history
+                        .prepare(
+                            'SELECT * FROM history_restores ORDER BY attemptId',
+                        )
+                        .all(),
+                ];
+                const before = historyState();
+                if (fault === 'missing') {
+                    business
+                        .prepare(
+                            'DELETE FROM task_run_checkpoints WHERE runId=?',
+                        )
+                        .run(source);
+                } else {
+                    const body =
+                        fault === 'invalid JSON'
+                            ? '{'
+                            : fault === 'invalid files'
+                              ? JSON.stringify([
+                                    { path: '../escape', text: 'invalid' },
+                                ])
+                              : '[]';
+                    business
+                        .prepare(
+                            'UPDATE task_run_checkpoints SET workspace=? WHERE runId=?',
+                        )
+                        .run(body, source);
+                    if (fault === 'invalid files')
+                        business
+                            .prepare(
+                                'UPDATE task_run_checkpoints SET workspaceSha256=? WHERE runId=?',
+                            )
+                            .run(
+                                createHash('sha256').update(body).digest('hex'),
+                                source,
+                            );
+                }
+                await t.test(
+                    'public reason and rejected request preserve state',
+                    async () => {
+                        assert.equal(
+                            (await api(run)).json().run.retryReason,
+                            'checkpoint_unavailable',
+                        );
+                        const denied = await api(
+                            run + '/retry',
+                            'POST',
+                            undefined,
+                            randomUUID(),
+                        );
+                        assert.deepEqual(
+                            [
+                                denied.status,
+                                denied.json().error.code,
+                                denied.json().error.reason,
+                            ],
+                            [
+                                409,
+                                'run_not_retryable',
+                                'checkpoint_unavailable',
+                            ],
+                        );
+                        assert.equal(
+                            business
+                                .prepare(
+                                    'SELECT count(*) AS n FROM retry_attempts',
+                                )
+                                .get()?.n,
+                            0,
+                        );
+                        assert.equal(
+                            (await api(task + '/runs')).json().items.length,
+                            2,
+                        );
+                        assert.equal(
+                            snapshotSha256(await base.snapshot(binding!)),
+                            volume,
+                        );
+                        assert.deepEqual(historyState(), before);
+                        assert.equal(
+                            (await api(prior + '/results')).text,
+                            oldResult,
+                        );
+                        assert.equal(
+                            (
+                                await api(
+                                    prior + '/results/1/diff?view=cumulative',
+                                )
+                            ).text,
+                            oldDiff,
+                        );
+                        assert.equal(restores, 0);
+                    },
+                );
+            });
+        }
+    },
+);
+
+test(
     'Task retry blocks when its history checkpoint disappears before workspace restore',
     { timeout: 20_000 },
     async (t) => {
@@ -4889,6 +5100,279 @@ test(
                     workspaceBefore,
                 );
             });
+        }
+    },
+);
+
+test(
+    'Task retry blocks after checkpoint admission and remains blocked across restart',
+    { timeout: 20_000 },
+    async (t) => {
+        for (const checkpoint of ['workspace', 'history']) {
+            const faults =
+                checkpoint === 'workspace'
+                    ? ['missing', 'corrupt', 'invalid files']
+                    : ['missing', 'corrupt'];
+            for (const fault of faults) {
+                await t.test(checkpoint + ' ' + fault, async (t) => {
+                    const state = await mkdtemp(
+                        join(tmpdir(), 'bento-retry-admitted-'),
+                    );
+                    const base = localHost(join(state, 'volume'));
+                    const held = barrier();
+                    const release = barrier();
+                    let queries = 0;
+                    let restores = 0;
+                    let binding: WorkerRequest['binding'] | undefined;
+                    const host: ExecutionHost = {
+                        ...base,
+                        async worker(request, signal, slot, exit) {
+                            const result = await base.worker(
+                                request,
+                                signal,
+                                slot,
+                                exit,
+                            );
+                            binding = request.binding;
+                            return request.prompt === 'partial failure'
+                                ? 'review'
+                                : result;
+                        },
+                        taskRecovery: {
+                            ...base.taskRecovery!,
+                            async queryRestore(...args) {
+                                queries++;
+                                held.resolve();
+                                await release.promise;
+                                return base.taskRecovery!.queryRestore(...args);
+                            },
+                            async restoreTask(...args) {
+                                restores++;
+                                return base.taskRecovery!.restoreTask(...args);
+                            },
+                        },
+                    };
+                    let controller = await start(state, host);
+                    t.after(async () => {
+                        release.resolve();
+                        await controller.close();
+                        await rm(state, { recursive: true, force: true });
+                    });
+                    const api = taskRetryTestClient(() => controller.url);
+                    const created = await api(
+                        '/tasks',
+                        'POST',
+                        taskRetryTestInput(),
+                        randomUUID(),
+                    );
+                    assert.equal(created.status, 202, created.text);
+                    const task = '/tasks/' + created.json().task.id;
+                    const runs = task + '/runs';
+                    await until(
+                        () => api(task),
+                        (r) => r.json().task.status === 'ready',
+                        'Task ready',
+                    );
+                    const first = await api(
+                        runs,
+                        'POST',
+                        { prompt: 'prior success' },
+                        randomUUID(),
+                    );
+                    assert.equal(first.status, 202, first.text);
+                    const prior = runs + '/' + first.json().run.id;
+                    await until(
+                        () => api(prior),
+                        (r) => r.json().run.status === 'succeeded',
+                        'Prior result',
+                    );
+                    const priorResult = (await api(prior + '/results')).text;
+                    const priorDiff = (
+                        await api(prior + '/results/1/diff?view=cumulative')
+                    ).text;
+                    const next = await api(
+                        runs,
+                        'POST',
+                        { prompt: 'partial failure' },
+                        randomUUID(),
+                    );
+                    assert.equal(next.status, 202, next.text);
+                    const source = next.json().run.id;
+                    const run = runs + '/' + source;
+                    const failed = await until(
+                        () => api(run),
+                        (r) => r.json().run.status === 'failed',
+                        'Safe failure',
+                    );
+                    assert.equal(failed.json().run.retryReason, null);
+                    assert(binding);
+                    const volumeBefore = snapshotSha256(
+                        await base.snapshot(binding),
+                    );
+                    const history = new DatabaseSync(
+                        join(state, 'history.sqlite'),
+                    );
+                    const business = new DatabaseSync(
+                        join(state, 'business.sqlite'),
+                    );
+                    t.after(() => {
+                        history.close();
+                        business.close();
+                    });
+                    const historyState = () => [
+                        history
+                            .prepare('SELECT * FROM sessions ORDER BY id')
+                            .all(),
+                        history
+                            .prepare('SELECT * FROM events ORDER BY id,seq')
+                            .all(),
+                        history
+                            .prepare(
+                                'SELECT * FROM history_restores ORDER BY attemptId',
+                            )
+                            .all(),
+                    ];
+                    const historyBefore = historyState();
+                    const key = randomUUID();
+                    const retry = () =>
+                        api(run + '/retry', 'POST', undefined, key);
+                    const accepted = await retry();
+                    assert.equal(accepted.status, 202, accepted.text);
+                    const attempt = accepted.json().retry;
+                    await held.promise;
+                    assert.equal(
+                        business
+                            .prepare(
+                                'SELECT phase FROM retry_attempts WHERE id=?',
+                            )
+                            .get(attempt.id)?.phase,
+                        'preparing',
+                    );
+                    const target =
+                        checkpoint === 'workspace' ? business : history;
+                    const table =
+                        checkpoint === 'workspace'
+                            ? 'task_run_checkpoints'
+                            : 'history_checkpoints';
+                    const column =
+                        checkpoint === 'workspace' ? 'workspace' : 'body';
+                    const mutation =
+                        fault === 'missing'
+                            ? target
+                                  .prepare(
+                                      'DELETE FROM ' + table + ' WHERE runId=?',
+                                  )
+                                  .run(source)
+                            : target
+                                  .prepare(
+                                      'UPDATE ' +
+                                          table +
+                                          ' SET ' +
+                                          column +
+                                          '=? WHERE runId=?',
+                                  )
+                                  .run(
+                                      fault === 'invalid files'
+                                          ? JSON.stringify([
+                                                {
+                                                    path: '../escape',
+                                                    text: 'invalid',
+                                                },
+                                            ])
+                                          : '{',
+                                      source,
+                                  );
+                    assert.equal(mutation.changes, 1);
+                    release.resolve();
+                    const blocked = await until(
+                        retry,
+                        (r) =>
+                            r.status === 200 &&
+                            r.json().retry.state === 'blocked',
+                        'Retry blocked',
+                    ).catch(async (error: Error) => {
+                        const current = business
+                            .prepare(
+                                'SELECT phase,lastConfirmedPhase FROM retry_attempts WHERE id=?',
+                            )
+                            .get(attempt.id);
+                        assert.fail(
+                            JSON.stringify({
+                                error: error.message,
+                                receipt: (await retry()).json().retry.state,
+                                ...current,
+                                queries,
+                                restores,
+                            }),
+                        );
+                    });
+                    assert.deepEqual(blocked.json().retry, {
+                        ...attempt,
+                        state: 'blocked',
+                    });
+                    const verifyBlocked = async () => {
+                        assert.deepEqual((await retry()).json().retry, {
+                            ...attempt,
+                            state: 'blocked',
+                        });
+                        assert.equal(
+                            (await api(runs + '/' + attempt.runId)).status,
+                            404,
+                        );
+                        const phase = business
+                            .prepare(
+                                'SELECT phase,lastConfirmedPhase FROM retry_attempts WHERE id=?',
+                            )
+                            .get(attempt.id);
+                        assert.equal(phase?.phase, 'blocked');
+                        assert.equal(phase?.lastConfirmedPhase, 'preparing');
+                        assert.equal((await api(runs)).json().items.length, 2);
+                        const continued = await api(
+                            runs,
+                            'POST',
+                            { prompt: 'must stay blocked' },
+                            randomUUID(),
+                        );
+                        assert.deepEqual(
+                            [continued.status, continued.json().error.code],
+                            [409, 'task_busy'],
+                        );
+                        const otherRetry = await api(
+                            run + '/retry',
+                            'POST',
+                            undefined,
+                            randomUUID(),
+                        );
+                        assert.deepEqual(
+                            [otherRetry.status, otherRetry.json().error.reason],
+                            [409, 'task_busy'],
+                        );
+                        assert.equal(queries, 1);
+                        assert.equal(restores, 0);
+                        assert.equal(
+                            snapshotSha256(await base.snapshot(binding!)),
+                            volumeBefore,
+                        );
+                        assert.deepEqual(historyState(), historyBefore);
+                        assert.equal(
+                            (await api(prior + '/results')).text,
+                            priorResult,
+                        );
+                        assert.equal(
+                            (
+                                await api(
+                                    prior + '/results/1/diff?view=cumulative',
+                                )
+                            ).text,
+                            priorDiff,
+                        );
+                    };
+                    await verifyBlocked();
+                    await controller.close();
+                    controller = await start(state, host);
+                    await verifyBlocked();
+                });
+            }
         }
     },
 );
