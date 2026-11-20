@@ -11,7 +11,7 @@ import type { AgentHandle } from '@deepseek-ai/dsh-agent';
 import { runDshWorker } from '@/apps/worker/dsh-worker.ts';
 import { remoteSessionPersistence } from '@/apps/worker/remote-session.ts';
 import type { Binding, WorkerRequest } from '@/apps/worker/protocol.ts';
-import { SingleHostExecution } from '@/apps/orchestrator/openshell/single-host.ts';
+import { SingleHostExecution } from '@/apps/orchestrator/src/openshell/single-host.ts';
 import {
     createOfficialRuntime,
     createWorkerBootstrapRuntime,

@@ -4,12 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { localHost } from '@/apps/orchestrator/execution-service/local.ts';
-import { Store } from '@/apps/orchestrator/execution-service/store.ts';
+import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
+import { Store } from '@/apps/orchestrator/src/execution-service/store.ts';
 import {
     type ExecutionHost,
     type WorkerRequest,
-} from '@/apps/orchestrator/execution-service/types.ts';
+} from '@/apps/orchestrator/src/execution-service/types.ts';
 import { reserveOperation } from '@/apps/worker/protocol.ts';
 import {
     barrier,

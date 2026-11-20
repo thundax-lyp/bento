@@ -4,9 +4,9 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { localHost } from '@/apps/orchestrator/execution-service/local.ts';
-import { type WorkerRequest } from '@/apps/orchestrator/execution-service/types.ts';
-import { processWorker } from '@/apps/orchestrator/execution-service/worker.ts';
+import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
+import { type WorkerRequest } from '@/apps/orchestrator/src/execution-service/types.ts';
+import { processWorker } from '@/apps/orchestrator/src/execution-service/worker.ts';
 import { reserveOperation } from '@/apps/worker/protocol.ts';
 import { fixtureSdk, rpc, start } from './service.ts';
 

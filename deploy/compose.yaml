@@ -130,7 +130,7 @@ services:
                 node,
                 --import,
                 /app/register-paths.mjs,
-                apps/orchestrator/execution-service/start.ts,
+                apps/orchestrator/src/execution-service/start.ts,
             ]
         volumes:
             - bento-execution-data:/data

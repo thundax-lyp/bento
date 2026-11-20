@@ -4,7 +4,7 @@ import { readFile, readlink, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { operationId, type Binding } from '@/apps/worker/protocol.ts';
-import { executionBindingDigest } from '@/apps/orchestrator/execution-service/types.ts';
+import { executionBindingDigest } from '@/apps/orchestrator/src/execution-service/types.ts';
 
 export type SqlValue = string | number | null;
 export type SqlRow = Record<string, SqlValue>;

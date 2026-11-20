@@ -18,8 +18,9 @@ COPY apps/worker/package.json ./apps/worker/
 RUN pnpm --filter @bento/orchestrator... install --prod --frozen-lockfile
 COPY register-paths.mjs ./
 COPY shared/text-snapshot.ts ./shared/
-COPY apps/orchestrator/execution-service/*.ts ./apps/orchestrator/execution-service/
-COPY apps/orchestrator/openshell/*.ts ./apps/orchestrator/openshell/
+COPY apps/orchestrator/index.ts ./apps/orchestrator/
+COPY apps/orchestrator/src/execution-service/*.ts ./apps/orchestrator/src/execution-service/
+COPY apps/orchestrator/src/openshell/*.ts ./apps/orchestrator/src/openshell/
 COPY apps/worker/*.ts ./apps/worker/
 COPY --from=go-build /out/bento-orchestrator /usr/local/bin/bento-orchestrator
 USER node

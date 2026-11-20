@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
-import { SingleHostExecution } from '@/apps/orchestrator/openshell/single-host.ts';
+import { SingleHostExecution } from '@/apps/orchestrator/src/openshell/single-host.ts';
 import { prepareReuseSdk } from '@/apps/orchestrator/acceptance/worker-reuse/sdk.ts';
 import { remoteSessionPersistence } from './remote-session.ts';
 import { runDshWorker } from './dsh-worker.ts';

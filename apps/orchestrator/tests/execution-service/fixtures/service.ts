@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 
 import { connect } from 'node:http2';
 import { setTimeout as delay } from 'node:timers/promises';
-import { serveExecution } from '@/apps/orchestrator/execution-service/service.ts';
+import { serveExecution } from '@/apps/orchestrator/src/execution-service/service.ts';
 import {
     type ExecutionHost,
     type FileText,
     type WorkerRequest,
-} from '@/apps/orchestrator/execution-service/types.ts';
+} from '@/apps/orchestrator/src/execution-service/types.ts';
 
 export const testToken = 'fixture-only-bento-service-bearer';
 export const readme = [{ path: 'README.md', text: '# Fixture\n' }];

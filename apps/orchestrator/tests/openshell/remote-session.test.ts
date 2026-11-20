@@ -16,8 +16,8 @@ import {
     HistoryCheckpointUnavailable,
     SessionHistory,
     type VerifiedStopProof,
-} from '@/apps/orchestrator/openshell/session-history.ts';
-import { PersistenceFence } from '@/apps/orchestrator/openshell/persistence-fence.ts';
+} from '@/apps/orchestrator/src/openshell/session-history.ts';
+import { PersistenceFence } from '@/apps/orchestrator/src/openshell/persistence-fence.ts';
 
 test('reconciliation retries with the same writer after a dropped RPC', async () => {
     const ctx = new Context();
