@@ -27,7 +27,7 @@
 个人端 API 读取独立构建的认证页面和样式。管理端和 Go Orchestrator 接管执行账本及受信执行路径仍待实现。当前 TypeScript 执行服务位于 `apps/orchestrator/src/execution-service/`，受信 OpenShell 控制面位于 `apps/orchestrator/src/openshell/`。TypeScript 公共入口保留在 `apps/orchestrator/index.ts`，TypeScript 测试按模块放在 `apps/orchestrator/tests/`。Go Temporal 控制端位于 `apps/orchestrator/src/control/`，同包 Go 测试随控制端源码放置。
 
 - Run 编排已接入 Temporal [单执行宿主模式](../../deploy/README.md#temporal-配置)。Temporal 持有调度历史，Bento 在 SQLite 持久化 Run 状态、Session、Workspace 绑定和执行授权。Activity 重投以持久 Run 状态决定派发或恢复。账号身份、密码哈希与注销清理状态使用 MySQL；执行宿主的 Run、Session、Workspace 和授权账本继续使用持久 SQLite。
-- [Web 部署](../../deploy/README.md#启动与检查)由 NGINX 同域提供静态前端并代理 Go Web API 入口。Go 提供 MySQL 账号仓储，现有 TypeScript task-entry 处理业务 API 与会话认证；浏览器直传 S3。
+- [Web 部署](../../deploy/README.md#启动与检查)由 NGINX 同域提供静态前端并代理 Go Web API 入口。Go 提供 MySQL 账号仓储，TypeScript task-entry 位于 `apps/workspace/api/src/`，负责业务 API 与会话认证，对应测试位于 `apps/workspace/api/tests/`。浏览器直传 S3。
 - 启用 Temporal 时，Go 控制面负责租户公平派发策略与 Temporal Client/Worker。TypeScript 执行宿主通过私有标准输入输出协议提供队列快照、原子预留和推进 Run 的能力，继续持有 generation fencing、OpenShell 绑定和恢复账本。Go 选出的 Run 必须经过宿主的容量和状态条件写入后才能发布 Workflow。
 
 个人端 Task 生命周期按 [Task 接口](../20-interfaces/WEB-INTERFACE.md#task-生命周期--目标契约) 增量接入。TS Orchestrator 的执行账本持有 Task、Run、会话和工作区绑定、停止证据与结果版本。个人端 API 管理空间来源意图和文件 pin。Worker 继续领用当次 Run 的授权。

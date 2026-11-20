@@ -7,10 +7,10 @@ import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
 import { serveExecution } from '@/apps/orchestrator/src/execution-service/service.ts';
 import { Store } from '@/apps/orchestrator/src/execution-service/store.ts';
 import { projectTaskChecks } from '@/apps/worker/task-projection.ts';
-import { mockAccounts } from '@/apps/workspace/api/account-store.ts';
-import { demoAccounts, sessionAuth } from '@/apps/workspace/api/auth.ts';
-import { httpBackend } from '@/apps/workspace/api/execution-service-http.ts';
-import { taskEntryServer } from '@/apps/workspace/api/server.ts';
+import { mockAccounts } from '@/apps/workspace/api/src/account-store.ts';
+import { demoAccounts, sessionAuth } from '@/apps/workspace/api/src/auth.ts';
+import { httpBackend } from '@/apps/workspace/api/src/execution-service-http.ts';
+import { taskEntryServer } from '@/apps/workspace/api/src/server.ts';
 
 // Synthetic execution and identity only. HTTP, DTO mapping and SQLite are production code.
 export const privateCanary = 'synthetic-terminal-private-diagnostic';

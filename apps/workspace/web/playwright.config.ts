@@ -12,7 +12,7 @@ export default defineConfig({
     webServer: [
         {
             command:
-                'node --import ./register-paths.mjs apps/workspace/api/main.ts',
+                'node --import ./register-paths.mjs apps/workspace/api/src/main.ts',
             cwd: root,
             url: apiOrigin + '/api/session',
             env: {

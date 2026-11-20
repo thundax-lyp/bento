@@ -72,7 +72,7 @@ esac
 
 bento-web-api &
 go_pid=$!
-node --import /app/register-paths.mjs apps/workspace/api/main.ts &
+node --import /app/register-paths.mjs apps/workspace/api/src/main.ts &
 api_pid=$!
 
 # Exit when any child stops so Docker can restart the service.

@@ -8,13 +8,13 @@ import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
 import { serveExecution } from '@/apps/orchestrator/src/execution-service/service.ts';
-import { mockAccounts } from '../account-store.ts';
-import { sessionAuth } from '../auth.ts';
-import { httpBackend } from '../execution-service-http.ts';
-import { taskEntryServer } from '../server.ts';
-import { RequestError } from '../protocol.ts';
-import { mySpace } from '../space.ts';
-import { spaceObjectKey, spaceStorage } from '../space-storage.ts';
+import { mockAccounts } from '../src/account-store.ts';
+import { sessionAuth } from '../src/auth.ts';
+import { httpBackend } from '../src/execution-service-http.ts';
+import { taskEntryServer } from '../src/server.ts';
+import { RequestError } from '../src/protocol.ts';
+import { mySpace } from '../src/space.ts';
+import { spaceObjectKey, spaceStorage } from '../src/space-storage.ts';
 
 test(
     'WEB-A07 focused frozen project inputs through both HTTP boundaries',

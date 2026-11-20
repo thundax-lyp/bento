@@ -4,12 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { mockAccounts } from '@/apps/workspace/api/account-store.ts';
-import { sessionAuth } from '@/apps/workspace/api/auth.ts';
-import { taskEntryServer } from '@/apps/workspace/api/server.ts';
-import { mockBackend } from '@/apps/workspace/api/mock.ts';
-import { mySpace } from '@/apps/workspace/api/space.ts';
-import { spaceStorage } from '@/apps/workspace/api/space-storage.ts';
+import { mockAccounts } from '@/apps/workspace/api/src/account-store.ts';
+import { sessionAuth } from '@/apps/workspace/api/src/auth.ts';
+import { taskEntryServer } from '@/apps/workspace/api/src/server.ts';
+import { mockBackend } from '@/apps/workspace/api/src/mock.ts';
+import { mySpace } from '@/apps/workspace/api/src/space.ts';
+import { spaceStorage } from '@/apps/workspace/api/src/space-storage.ts';
 
 export const recoveryDownload = 'https://fixture.invalid/download';
 
