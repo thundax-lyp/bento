@@ -18,6 +18,7 @@ import type { PreparedSdk } from '@/apps/orchestrator/openshell/binding-grants/s
 import { prepareReuseSdk } from './sdk.ts';
 import { createReuseFixture } from './fixture.ts';
 import { readWorkerProcesses, sha256 } from './observer.ts';
+import { createTraceReader, traceFailureCode } from './trace.ts';
 
 const root = resolve(fileURLToPath(new URL('../../../../', import.meta.url)));
 const here = dirname(fileURLToPath(import.meta.url));
@@ -179,15 +180,7 @@ async function harness(
     const stop = pool.warmWorker(lifetime.signal);
     const networkProofs = new Map<string, NetworkProof>();
     const monitorAbort = new AbortController();
-    async function traces(): Promise<Trace[]> {
-        const text = await fs.readFile(trace, 'utf8');
-        return text.trim()
-            ? text
-                  .trim()
-                  .split('\n')
-                  .map((line) => JSON.parse(line) as Trace)
-            : [];
-    }
+    const traces = createTraceReader<Trace>(trace);
     const counters = (): Counters => ({
         persistence: fixture.controlRequests.filter(
             (row) => row.interface === 'persistence',
@@ -212,6 +205,7 @@ async function harness(
     const seen = new Set<string>();
     const monitor = (async () => {
         while (!monitorAbort.signal.aborted) {
+            monitorPhase = 'poll';
             for (const row of await traces()) {
                 if (
                     !row.session ||
@@ -301,10 +295,13 @@ async function harness(
             }
             await delay(5, undefined, { signal: monitorAbort.signal });
         }
-    })().catch(() => {
+    })().catch((error: unknown) => {
         if (!monitorAbort.signal.aborted)
             problems.push(
-                'listener network observation failed at ' + monitorPhase,
+                'listener network observation failed at ' +
+                    monitorPhase +
+                    ': ' +
+                    traceFailureCode(error),
             );
     });
 
@@ -351,18 +348,34 @@ async function harness(
         async close() {
             if (closed) return;
             closed = true;
-            try {
-                await this.stop();
-            } finally {
-                monitorAbort.abort();
-                await monitor;
+            const errors: unknown[] = [];
+            const attempt = async (
+                action: () => unknown | Promise<unknown>,
+            ) => {
+                try {
+                    await action();
+                } catch (error) {
+                    errors.push(error);
+                }
+            };
+            await attempt(() => this.stop());
+            monitorAbort.abort();
+            await attempt(() => monitor);
+            await attempt(() => traces(true));
+            await attempt(async () => {
                 model.closeAllConnections();
                 await new Promise<void>((resolve, reject) =>
                     model.close((error) => (error ? reject(error) : resolve())),
                 );
                 assert.equal(model.listening, false);
-                await fixture.close();
-            }
+            });
+            await attempt(() => fixture.close());
+            if (errors.length === 1) throw errors[0];
+            if (errors.length)
+                throw new AggregateError(
+                    errors,
+                    'Reuse harness cleanup failed',
+                );
         },
     };
 }

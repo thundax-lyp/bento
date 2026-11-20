@@ -244,75 +244,78 @@
 - **四项与网络**：64轮真实wire凭据摘要/跨目标SDK7与persistence403、旧Context callback卸载、真实session close先于下轮、真实FsTarget namespace拒绝及当轮resolve/readText均通过；完整私有SQL行/receipt不变，历史和模型实际HTTP请求各自只含自身marker。旧事件窗口在新base创建前，父端真实persistence/operation/SDK stream与connection/upstream/model request与connection共7项计数，64轮before=after；整轮与轮间/关闭后继续核迟到请求，原始凭据/配置/日志不写公开证据。
 - **撤权、失败与关闭**：R在真实interactive输入仍打开时正式takeover；旧done/write拒绝、旧token重连grpc16且不触达上游，旧PID退出后新PID成功，邻Session不变。无沙盒退出独立证据故UNKNOWN/stopConfirmed=false。E真实base全部资源清理后模型disposer注入失败，无成功回执且更换PID成功。L pool关闭后Worker/SDK/model连接归零，同SQLite重开并完成新Session，旧events/receipts完整行不变；各fixture服务器await close后删除owned临时目录。
 - **本机门禁边界**：执行时HEAD为`ca8c086`、T6入口/文档为工作区待提交内容。controlled-local全入口中旧Orchestrator121PASS/2既有skip，新runtime14/14、reuse23/23、真实Temporal9/9无skip及pack均通过；仅新pack脚本URL/console显式导入遗漏导致最终Lint失败。该唯一脚本修正后全仓lint/format与实际installed-tree pack通过，生产/测试源码不变。三次本机`pnpm check`均exit1：default新SDK install失败（518857ms）、controlled末端Lint失败（596614ms）、controlled原A1 generate失败（284308ms）。不宣称本机聚合通过。原A1工具/来源/TLS/预算不改，也不扩大wrapper；不继续安装重跑。
-- **CI待完成**：MASTER定向裁定由最终同HEAD CI补齐聚合验证；CI无bundle变量，必须默认official-build、原六probe、新14单测与23复用/SDK校验，以及独立真实Temporal9项和其他适用门禁实际通过。Ready/Codex结论亦待获取。A6-05暂部分实现，A6父项部分，A6-01/04既有缺项不变。
+- **CI观测器补强**：首轮CI默认SDK与六probe、新runtime14/14通过；reuse22/23，长期约第57次Session前monitor泛化异常停止ACK，原始cause未记录，不能推断生产泄漏或无bug。已补齐完整newline字节cursor/EOF与脱敏错误分类；纯矩阵及真实文件边界加原fixture共3/3，短IPC1/1，受控完整五case5/5（325427.3755ms、PID8624、span315000.372666ms、64轮全true/七计数相等、EOF与cleanup通过）。原cause未证实，未将修复猜测写成根因结论。最终修复HEAD全部CI/Codex仍待通过。
+- **CI待完成**：MASTER定向裁定由最终同HEAD CI补齐聚合验证；CI无bundle变量，必须默认official-build、原六probe、新14单测与24复用/SDK校验，以及独立真实Temporal9项和其他适用门禁实际通过。Ready/Codex结论亦待获取。A6-05暂部分实现，A6父项部分，A6-01/04既有缺项不变。
 - **来源诊断边界**：最初活动runtime内100ms窗口会撞上正式RemoteSession已排队的200ms刷盘四RPC；一次明确不发旧emit的临时反事实仍出现四条当前摘要200，原源已恢复。此诊断不计T5通过；获审改为新base创建前的独立零网络窗口，并在完整五case中重验，未过滤请求或修改生产清理。
 - **Not Covered**：模型HTTP/文件helper/沙盒running观察均为本地fixture；不证明外部模型质量、真实OpenShell沙盒/卷退出或磁盘、任意不可信factory安全、多节点、升级排空或生产发布就绪。CI受控本地SDK正向与完整官方默认下载/build证据需分来源记录；A6生产依赖最终合并仍须MASTER确认A安全点。
 
-64个测量轮的分项结果（reference另计；单位ms；C/L/N/F依次为凭据、监听器、连接、文件namespace）：
+64个测量轮的分项结果（最新trace读取修订的受控本机五case；reference另计；单位ms；C/L/N/F依次为凭据、监听器、连接、文件namespace）：
 
 | 轮次 | 实际开始偏移ms | C    | L    | N    | F    | 7项网络计数前后相等 |
 | ---- | -------------: | ---- | ---- | ---- | ---- | ------------------- |
 | 0    |          0.000 | PASS | PASS | PASS | PASS | PASS                |
-| 1    |       5001.247 | PASS | PASS | PASS | PASS | PASS                |
-| 2    |      10000.327 | PASS | PASS | PASS | PASS | PASS                |
-| 3    |      15001.179 | PASS | PASS | PASS | PASS | PASS                |
-| 4    |      20000.884 | PASS | PASS | PASS | PASS | PASS                |
-| 5    |      25002.529 | PASS | PASS | PASS | PASS | PASS                |
-| 6    |      30000.868 | PASS | PASS | PASS | PASS | PASS                |
-| 7    |      35002.025 | PASS | PASS | PASS | PASS | PASS                |
-| 8    |      40000.816 | PASS | PASS | PASS | PASS | PASS                |
-| 9    |      45000.663 | PASS | PASS | PASS | PASS | PASS                |
-| 10   |      50001.970 | PASS | PASS | PASS | PASS | PASS                |
-| 11   |      55000.398 | PASS | PASS | PASS | PASS | PASS                |
-| 12   |      60000.755 | PASS | PASS | PASS | PASS | PASS                |
-| 13   |      65000.474 | PASS | PASS | PASS | PASS | PASS                |
-| 14   |      70000.987 | PASS | PASS | PASS | PASS | PASS                |
-| 15   |      75001.001 | PASS | PASS | PASS | PASS | PASS                |
-| 16   |      80000.692 | PASS | PASS | PASS | PASS | PASS                |
-| 17   |      85000.734 | PASS | PASS | PASS | PASS | PASS                |
-| 18   |      90000.545 | PASS | PASS | PASS | PASS | PASS                |
-| 19   |      95000.813 | PASS | PASS | PASS | PASS | PASS                |
-| 20   |     100000.357 | PASS | PASS | PASS | PASS | PASS                |
-| 21   |     105000.064 | PASS | PASS | PASS | PASS | PASS                |
-| 22   |     110001.861 | PASS | PASS | PASS | PASS | PASS                |
-| 23   |     115001.537 | PASS | PASS | PASS | PASS | PASS                |
-| 24   |     120000.944 | PASS | PASS | PASS | PASS | PASS                |
-| 25   |     125001.390 | PASS | PASS | PASS | PASS | PASS                |
-| 26   |     130000.699 | PASS | PASS | PASS | PASS | PASS                |
-| 27   |     135000.692 | PASS | PASS | PASS | PASS | PASS                |
-| 28   |     140000.319 | PASS | PASS | PASS | PASS | PASS                |
-| 29   |     145002.081 | PASS | PASS | PASS | PASS | PASS                |
-| 30   |     150000.530 | PASS | PASS | PASS | PASS | PASS                |
-| 31   |     155001.710 | PASS | PASS | PASS | PASS | PASS                |
-| 32   |     160002.111 | PASS | PASS | PASS | PASS | PASS                |
-| 33   |     165001.501 | PASS | PASS | PASS | PASS | PASS                |
-| 34   |     170000.266 | PASS | PASS | PASS | PASS | PASS                |
-| 35   |     175000.761 | PASS | PASS | PASS | PASS | PASS                |
-| 36   |     180000.367 | PASS | PASS | PASS | PASS | PASS                |
-| 37   |     185000.428 | PASS | PASS | PASS | PASS | PASS                |
-| 38   |     190000.586 | PASS | PASS | PASS | PASS | PASS                |
-| 39   |     195001.324 | PASS | PASS | PASS | PASS | PASS                |
-| 40   |     200001.574 | PASS | PASS | PASS | PASS | PASS                |
-| 41   |     205000.218 | PASS | PASS | PASS | PASS | PASS                |
-| 42   |     210000.254 | PASS | PASS | PASS | PASS | PASS                |
-| 43   |     215000.160 | PASS | PASS | PASS | PASS | PASS                |
-| 44   |     220000.833 | PASS | PASS | PASS | PASS | PASS                |
-| 45   |     225000.621 | PASS | PASS | PASS | PASS | PASS                |
-| 46   |     230000.064 | PASS | PASS | PASS | PASS | PASS                |
-| 47   |     235000.126 | PASS | PASS | PASS | PASS | PASS                |
-| 48   |     240002.189 | PASS | PASS | PASS | PASS | PASS                |
-| 49   |     245000.676 | PASS | PASS | PASS | PASS | PASS                |
-| 50   |     250000.241 | PASS | PASS | PASS | PASS | PASS                |
-| 51   |     255001.685 | PASS | PASS | PASS | PASS | PASS                |
-| 52   |     260000.560 | PASS | PASS | PASS | PASS | PASS                |
-| 53   |     265001.399 | PASS | PASS | PASS | PASS | PASS                |
-| 54   |     270000.775 | PASS | PASS | PASS | PASS | PASS                |
-| 55   |     275001.635 | PASS | PASS | PASS | PASS | PASS                |
-| 56   |     280001.182 | PASS | PASS | PASS | PASS | PASS                |
-| 57   |     285000.854 | PASS | PASS | PASS | PASS | PASS                |
-| 58   |     290000.203 | PASS | PASS | PASS | PASS | PASS                |
-| 59   |     295001.549 | PASS | PASS | PASS | PASS | PASS                |
-| 60   |     300001.029 | PASS | PASS | PASS | PASS | PASS                |
-| 61   |     305000.232 | PASS | PASS | PASS | PASS | PASS                |
-| 62   |     310002.345 | PASS | PASS | PASS | PASS | PASS                |
-| 63   |     315001.186 | PASS | PASS | PASS | PASS | PASS                |
+| 1    |       5000.018 | PASS | PASS | PASS | PASS | PASS                |
+| 2    |      10000.544 | PASS | PASS | PASS | PASS | PASS                |
+| 3    |      15000.205 | PASS | PASS | PASS | PASS | PASS                |
+| 4    |      20000.022 | PASS | PASS | PASS | PASS | PASS                |
+| 5    |      25001.223 | PASS | PASS | PASS | PASS | PASS                |
+| 6    |      30001.219 | PASS | PASS | PASS | PASS | PASS                |
+| 7    |      35000.339 | PASS | PASS | PASS | PASS | PASS                |
+| 8    |      40000.518 | PASS | PASS | PASS | PASS | PASS                |
+| 9    |      45000.712 | PASS | PASS | PASS | PASS | PASS                |
+| 10   |      50001.692 | PASS | PASS | PASS | PASS | PASS                |
+| 11   |      55001.057 | PASS | PASS | PASS | PASS | PASS                |
+| 12   |      60000.504 | PASS | PASS | PASS | PASS | PASS                |
+| 13   |      65000.944 | PASS | PASS | PASS | PASS | PASS                |
+| 14   |      70000.878 | PASS | PASS | PASS | PASS | PASS                |
+| 15   |      75000.926 | PASS | PASS | PASS | PASS | PASS                |
+| 16   |      80001.219 | PASS | PASS | PASS | PASS | PASS                |
+| 17   |      85001.547 | PASS | PASS | PASS | PASS | PASS                |
+| 18   |      90000.959 | PASS | PASS | PASS | PASS | PASS                |
+| 19   |      95000.955 | PASS | PASS | PASS | PASS | PASS                |
+| 20   |     100000.104 | PASS | PASS | PASS | PASS | PASS                |
+| 21   |     105000.787 | PASS | PASS | PASS | PASS | PASS                |
+| 22   |     110000.779 | PASS | PASS | PASS | PASS | PASS                |
+| 23   |     115001.388 | PASS | PASS | PASS | PASS | PASS                |
+| 24   |     120000.370 | PASS | PASS | PASS | PASS | PASS                |
+| 25   |     125000.912 | PASS | PASS | PASS | PASS | PASS                |
+| 26   |     130001.816 | PASS | PASS | PASS | PASS | PASS                |
+| 27   |     135001.620 | PASS | PASS | PASS | PASS | PASS                |
+| 28   |     140000.845 | PASS | PASS | PASS | PASS | PASS                |
+| 29   |     145000.444 | PASS | PASS | PASS | PASS | PASS                |
+| 30   |     150001.170 | PASS | PASS | PASS | PASS | PASS                |
+| 31   |     155001.760 | PASS | PASS | PASS | PASS | PASS                |
+| 32   |     160001.562 | PASS | PASS | PASS | PASS | PASS                |
+| 33   |     165000.783 | PASS | PASS | PASS | PASS | PASS                |
+| 34   |     170000.173 | PASS | PASS | PASS | PASS | PASS                |
+| 35   |     175001.671 | PASS | PASS | PASS | PASS | PASS                |
+| 36   |     180001.375 | PASS | PASS | PASS | PASS | PASS                |
+| 37   |     185000.198 | PASS | PASS | PASS | PASS | PASS                |
+| 38   |     190000.607 | PASS | PASS | PASS | PASS | PASS                |
+| 39   |     195000.758 | PASS | PASS | PASS | PASS | PASS                |
+| 40   |     200000.066 | PASS | PASS | PASS | PASS | PASS                |
+| 41   |     205001.192 | PASS | PASS | PASS | PASS | PASS                |
+| 42   |     210000.626 | PASS | PASS | PASS | PASS | PASS                |
+| 43   |     215000.018 | PASS | PASS | PASS | PASS | PASS                |
+| 44   |     220000.414 | PASS | PASS | PASS | PASS | PASS                |
+| 45   |     225001.431 | PASS | PASS | PASS | PASS | PASS                |
+| 46   |     230000.441 | PASS | PASS | PASS | PASS | PASS                |
+| 47   |     235001.117 | PASS | PASS | PASS | PASS | PASS                |
+| 48   |     240000.576 | PASS | PASS | PASS | PASS | PASS                |
+| 49   |     245000.822 | PASS | PASS | PASS | PASS | PASS                |
+| 50   |     250001.537 | PASS | PASS | PASS | PASS | PASS                |
+| 51   |     255001.348 | PASS | PASS | PASS | PASS | PASS                |
+| 52   |     260000.878 | PASS | PASS | PASS | PASS | PASS                |
+| 53   |     265000.564 | PASS | PASS | PASS | PASS | PASS                |
+| 54   |     270002.075 | PASS | PASS | PASS | PASS | PASS                |
+| 55   |     275001.260 | PASS | PASS | PASS | PASS | PASS                |
+| 56   |     280000.769 | PASS | PASS | PASS | PASS | PASS                |
+| 57   |     285001.763 | PASS | PASS | PASS | PASS | PASS                |
+| 58   |     290000.858 | PASS | PASS | PASS | PASS | PASS                |
+| 59   |     295001.757 | PASS | PASS | PASS | PASS | PASS                |
+| 60   |     300001.980 | PASS | PASS | PASS | PASS | PASS                |
+| 61   |     305000.771 | PASS | PASS | PASS | PASS | PASS                |
+| 62   |     310001.133 | PASS | PASS | PASS | PASS | PASS                |
+| 63   |     315000.373 | PASS | PASS | PASS | PASS | PASS                |
+
+受测源码SHA256：`trace.ts`：`961d6a23d3fb913c2864ea8fc6b738705a3f0d221a71bedad14f71e4fdcbeb0d`；`fixture.test.ts`：`76e4db3a5511d490f109d9a11e180e6d5c7368d39b408e0ba69b8a66ff710ca5`；`real-reuse.test.ts`：`4d4562b3980a31307c9213b5042befb8965496fab248009c83baa23db0870511`。

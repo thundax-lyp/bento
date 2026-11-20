@@ -93,6 +93,7 @@ const sources = [
         'sdk.test.ts',
         'fixture.ts',
         'observer.ts',
+        'trace.ts',
         'fixture.test.ts',
         'model-adapter.ts',
         'observed-bootstrap.ts',

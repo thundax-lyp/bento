@@ -268,19 +268,13 @@ export function isolateVerifiedSdkFiles(
 
 测试concurrency=false、各test120000、无skip；真实SDK选择与数据IO单测分开记录结果。原T2五项transport测试在同来源SDK上完整执行，CI默认是真实Linux SDK build→六探针→实际HTTP/2 RPC，不依赖Mac路径。本地使用受控输入时只证明该显式来源，全量默认网络准备失败事实保留；日志不写原始路径/token/header。T6将wrapper单测加入默认test:worker-reuse，CI不注入BENTO_A6_WORKER_REUSE_SDK_BUNDLE、不改workflow、不打包本地bundle/cache或历史manifest；本轮不为跨平台输入增加canonical inventory或新发布流程。
 
-## T6a：追加 trace 的完整记录读取与脱敏错误分类（作者修订待MASTER审核）
-
-起点为PR73 HEAD2bfb88e。首次CI官方SDK/六probe、新runtime14/14已通过，reuse22/23；长期约第57次Session前monitor停止ACK。最后已记录网络before=after且trace有后续完整轮，但原catch只保留旧phase，未保存实际error类别，根因未证实；不推断为生产网络泄漏或已证明无bug。
-
-允许修改：`apps/orchestrator/acceptance/worker-reuse/trace.ts`（新）、`fixture.test.ts`、`real-reuse.test.ts`、`check-package.mjs`、`public-files.json`、Readiness、本文（7）；只读专核`observed-bootstrap.ts`（共8）。不得改生产路径、SDK工具、IPC预算或任何正式清理。
+### Trace 追加记录读取契约
 
 trace.ts固定提供纯数据TraceCursor和createTraceReader。TraceCursor按字节snapshot/文件identity维护完整newline偏移与已读记录，只解析完整newline行，UTF8严格解码；JSON须为非array对象且kind为非空string/pid为正安全整数。尾片保留到下次有界poll，不提前当坏JSON；EOF仍有尾片则trace-incomplete-eof硬失败。完整坏JSON/编码/record均固定类别错误，不忽略完成记录。相同snapshot不重复追加；可见长度缩短、前缀改写或文件identity改变分别拒绝。合同为fixture内同inode append-only单writer trace，不声称不可观察的相同字节重建可被识别。
 
 createTraceReader串行化所有read请求（monitor与断言不可乱序提交snapshot）；用O_RDONLY|O_NOFOLLOW打开，只接受regular/nlink1/≤4MiB，比较读取前后handle及命名路径的dev/ino，换inode拒绝；读取Buffer并交cursor，fd finally关闭。I/O错误只保留经过白名单字符约束的code，JSON/记录/截断/替换/EOF/断言使用固定脱敏类别，不抄原数据、path、token或cause对象。返回完整已完成记录快照，现有seen/session/phase继续防重复处理。
 
 fixture.test在原两case外增加一个纯数据矩阵test（复用既有SDK before，不新增网络来源）：半行→完整行、分多段/UTF8尾字节、重复snapshot、多个完整行加尾片、完整坏JSON/坏record/坏UTF8、EOF尾片、截断/改写/换identity均断言。real-reuse用同reader替换traces全JSON.parse，在monitor catch保存固定category+phase；case关闭停止monitor、等真实Worker退出后以EOF读取确认无尾片，即使EOF失败仍继续全部owned model/server/fixture清理并聚合错误，不替代生产runtime清理。所有model/SDK/SQL/PID/四面网络及cursor旧断言保留，五个真实case仍恰5；总SDK/fixture/reuse suite变为24项。
-
-先focused该纯数据矩阵与两Session短IPC（临时短验源须hash恢复，不计P0或64轮证据），成功后完整原五case/64轮≥315s；仅显式获审controlled SDK来源，不重新本机默认安装/完整pnpm check。Worker/Orchestrator类型、变更源Lint/格式、pack精确新增trace源、链接/diff检查通过后提交本步实际7允许路径，移除本段但保留append-only观察契约与本轮证据。新HEAD触发全部适用CI/默认SDK及Codex；即使本地通过也不标T6完成，直到全CI门禁通过。根因未确认/完整记录错误继续显式报出，禁止把错误统统吞成空记录或重跑碰运气。
 
 ## T6：默认门禁、证据与删除
 
@@ -392,3 +386,9 @@ R真实open-input RPC撤权后done/write拒绝，旧PID退出后新PID成功；E
 获批再跑controlled-local完整入口exit1/wall284308ms，旧A1 prepareSdk generate失败，旧123 tests中111PASS/10hookFailed/2skip，后续新套件与Temporal未执行。有限只读原源及4份准确npm日志核实原工具用本次临时独立cache，catch删除其日志；全局gen日志只证exit1，没有本轮Buf缺失具体cause，不能按历史推断或用全局cache修复。未新GET/预热/安装/修改旧工具。MASTER明确停止本机完整重跑，采用上述定向证据+最终CI实际默认路径门禁；本段不是本机聚合成功声明。
 
 T6本地准备提交包含正式默认脚本、实际installed-tree pack、配置/部署/证据说明及public白名单；Readiness仍部分实现且CI待验证，本文保留。该提交不标T6 PASS，不替代后续CI结果。
+
+## T6a Trace 修订实际通过记录
+
+2026-11-20，按MASTER批准97a1219交付测试专用trace reader及脱敏分类，不改生产路径。原CI monitor异常cause未保留，仍未证实；新矩阵确定性覆盖原whole-JSON读取无法处理的合法追加尾片，不把该复现说成原CI根因已证。完整坏行/坏UTF8/坏record、EOF尾片、可见截断/改写/换inode均硬失败，真实文件序列化read、同字节换文件、hardlink/symlink也验证；fixture3/3 fail0skip0 duration1548.921291ms。最初TypeScript参数属性不被Node strip-only支持，已改显式字段后重验通过，该失败不计PASS。
+
+短IPC专门诊断1/1通过2251.010833ms且恢复原五case源hash；最终受控来源原五case5/5 fail0skip0，duration325427.3755ms，actualPID8624、span315000.372666ms、64条四flag全true/7计数before=after，所有case EOF及owned cleanup完成。实际3源hash与私有manifest一致。Orchestrator/Worker类型、变更源Lint/格式、pack新增trace源码、链接/diff通过后提交。此修订只增加fixture纯矩阵一项，SDK/fixture/reuse默认总24，真实case仍5。最终修复HEAD CI默认官方SDK及全部适用门禁/Codex仍待，T6未PASS。

@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { dirname, join } from 'node:path';
+import fs from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { after, before, test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -11,6 +13,7 @@ import { createRunSdkTransport } from '@/apps/worker/sdk-transport.ts';
 import { createReuseFixture } from './fixture.ts';
 import { sha256 } from './observer.ts';
 import { prepareReuseSdk } from './sdk.ts';
+import { TraceCursor, createTraceReader, traceFailureCode } from './trace.ts';
 
 let sdk: PreparedSdk;
 type Interactive = {
@@ -291,3 +294,127 @@ test(
         }
     },
 );
+
+test('append-only trace keeps partial records pending and rejects corruption at EOF', async () => {
+    type Row = { kind: string; pid: number };
+    const row = { kind: '事件', pid: 1 };
+    const full = Buffer.from(JSON.stringify(row) + '\n');
+    const reader = new TraceCursor<Row>();
+    assert.deepEqual(reader.consume(full.subarray(0, 12), 'file-1'), []);
+    assert.deepEqual(
+        reader.consume(full.subarray(0, full.length - 1), 'file-1'),
+        [],
+    );
+    assert.deepEqual(reader.consume(full, 'file-1'), [row]);
+    assert.deepEqual(reader.consume(full, 'file-1'), [row]);
+    const second = Buffer.from('{"kind":"next","pid":2}\n');
+    assert.deepEqual(
+        reader.consume(Buffer.concat([full, second.subarray(0, 5)]), 'file-1'),
+        [row],
+    );
+    assert.deepEqual(
+        reader.consume(Buffer.concat([full, second]), 'file-1', true),
+        [row, { kind: 'next', pid: 2 }],
+    );
+    const rejects = (action: () => unknown, code: string) =>
+        assert.throws(
+            action,
+            (error: unknown) => traceFailureCode(error) === code,
+        );
+    rejects(
+        () => new TraceCursor<Row>().consume(Buffer.from('{'), 'x', true),
+        'trace-incomplete-eof',
+    );
+    rejects(
+        () => new TraceCursor<Row>().consume(Buffer.from('{bad}\n'), 'x'),
+        'trace-json',
+    );
+    rejects(
+        () =>
+            new TraceCursor<Row>().consume(
+                Buffer.from('{"kind":"x","pid":0}\n'),
+                'x',
+            ),
+        'trace-record',
+    );
+    rejects(
+        () => new TraceCursor<Row>().consume(Buffer.from('[]\n'), 'x'),
+        'trace-record',
+    );
+    rejects(
+        () => new TraceCursor<Row>().consume(Buffer.from([255, 10]), 'x'),
+        'trace-utf8',
+    );
+    rejects(() => reader.consume(full, 'file-1'), 'trace-truncated');
+    rejects(
+        () => reader.consume(Buffer.concat([full, second]), 'file-2'),
+        'trace-replaced',
+    );
+    const rewrite = new TraceCursor<Row>();
+    rewrite.consume(full, 'x');
+    const changed = Buffer.from(full);
+    changed[0] = 32;
+    rejects(() => rewrite.consume(changed, 'x'), 'trace-rewritten');
+    assert.equal(
+        traceFailureCode(
+            Object.assign(new Error('private-path-and-token'), {
+                code: 'ENOENT',
+            }),
+        ),
+        'trace-io-ENOENT',
+    );
+    assert.equal(
+        traceFailureCode(new Error('private-path-and-token')),
+        'trace-unknown',
+    );
+    const directory = await fs.mkdtemp(join(tmpdir(), 'bento-trace-unit-'));
+    await fs.chmod(directory, 0o700);
+    const path = join(directory, 'events');
+    try {
+        await fs.writeFile(path, full, { mode: 0o600 });
+        const read = createTraceReader<Row>(path);
+        assert.deepEqual(await read(), [row]);
+        await fs.appendFile(path, second.subarray(0, 5));
+        assert.deepEqual(await read(), [row]);
+        await fs.appendFile(path, second.subarray(5));
+        const snapshots = await Promise.all([read(), read()]);
+        assert.deepEqual(snapshots[0], [row, { kind: 'next', pid: 2 }]);
+        assert.deepEqual(snapshots[1], snapshots[0]);
+        assert.deepEqual(await read(true), snapshots[0]);
+        await fs.rename(path, path + '.old');
+        await fs.writeFile(path, Buffer.concat([full, second]), {
+            mode: 0o600,
+        });
+        await assert.rejects(
+            read(),
+            (error: unknown) => traceFailureCode(error) === 'trace-replaced',
+        );
+        const truncated = createTraceReader<Row>(path);
+        await truncated();
+        await fs.truncate(path, full.length);
+        await assert.rejects(
+            truncated(),
+            (error: unknown) => traceFailureCode(error) === 'trace-truncated',
+        );
+        await fs.link(path, path + '.hard');
+        await assert.rejects(
+            createTraceReader<Row>(path)(),
+            (error: unknown) => traceFailureCode(error) === 'trace-file',
+        );
+        await fs.unlink(path + '.hard');
+        await fs.symlink(path, path + '.link');
+        await assert.rejects(
+            createTraceReader<Row>(path + '.link')(),
+            (error: unknown) => traceFailureCode(error) === 'trace-io-ELOOP',
+        );
+        await fs.writeFile(path, '{private-record-never-echoed}\n');
+        await assert.rejects(
+            createTraceReader<Row>(path)(),
+            (error: unknown) =>
+                traceFailureCode(error) === 'trace-json' &&
+                !String(error).includes('private-record-never-echoed'),
+        );
+    } finally {
+        await fs.rm(directory, { recursive: true, force: true });
+    }
+});
