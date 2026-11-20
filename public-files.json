@@ -130,6 +130,7 @@
         "apps/workspace/api/tests/space-file-deletion.test.ts",
         "apps/workspace/api/tests/space-files.test.ts",
         "apps/workspace/api/tests/space-project-deletion.test.ts",
+        "apps/workspace/api/tests/space-task-input.test.ts",
         "apps/workspace/api/space-path-integrity.test.ts",
         "apps/workspace/api/space-object-integrity.test.ts",
         "apps/workspace/api/space-deletion-states.test.ts",
