@@ -258,11 +258,23 @@ export function isolateVerifiedSdkFiles(
 
 测试concurrency=false、各test120000、无skip；真实SDK选择与数据IO单测分开记录结果。原T2五项transport测试在同来源SDK上完整执行，CI默认是真实Linux SDK build→六探针→实际HTTP/2 RPC，不依赖Mac路径。本地使用受控输入时只证明该显式来源，全量默认网络准备失败事实保留；日志不写原始路径/token/header。T6将wrapper单测加入默认test:worker-reuse，CI不注入BENTO_A6_WORKER_REUSE_SDK_BUNDLE、不改workflow、不打包本地bundle/cache或历史manifest；本轮不为跨平台输入增加canonical inventory或新发布流程。
 
+## T5a：补齐旧监听器的全部 fixture 网络观察（作者定向修订，待MASTER审核）
+
+起点为T4提交3a4f149，T5三新源仍未提交。此前两次完整五case结果只覆盖原SDK/模型观察范围，不判定本修订的T5完成。允许修改：`apps/orchestrator/acceptance/worker-reuse/fixture.ts`、`observed-bootstrap.ts`、`real-reuse.test.ts`、本文（4）；专核：同目录`observer.ts`（共5）。禁止改生产处理器、正式bootstrap/loop/provider或额外清理。
+
+固定方案：fixture在原persistence/operation server追加只读request监听器，保留逐请求interface、Bearer摘要、path、父端performance时间，仅返回数组getter；不读取/保存原始token/body、不回复请求、不改handler。SDK沿原wire/upstream计数，模型沿父端实际HTTP请求计数，统一由父端取样。
+
+observed-bootstrap仅在存在真实前驱的agent/request阶段发出trace `old-event-ready`；父端独立观察四类服务端计数100ms不变后，向既有私有trace文件旁的`.ack`写0600 JSON `{session,phase:'ready'}`。Worker等该session/phase的ACK后才调用真实旧ctx.emit，验证旧callback不增，等待100ms（用当前payload.signal可取消）并写trace `old-event-ended`。父端核与baseline计数相同，再连续观察100ms不变，写phase=`done`的ACK。Worker见done后才继续原样next及正式provider正向探针。两端ACK仅本测试IPC，不带grant、URL、模型或请求替身；单阶段最长5s，检查signal/父端停止条件；失败抛错并继续原正式finally清理，不在清理阶段等ACK，不自行dispose任何生产资源。
+
+父端watcher只读trace、实际server计数并写ACK；有异常保存脱敏fixture错误，测试必须失败，case finally停止/等待watcher后关闭原owned资源。父端从每轮dispatch前一直检查到receipt后：persistence/operation新观察行均须为当前grant摘要；SDK沿原当轮摘要断言、模型仍仅当前Session一次。父端跨绑定HTTP负测精确产生1条旧摘要HTTP记录，额外条目失败；各轮间等待及最终shutdown后核观察cursor无额外旧请求。这个更宽区间用来捕获ACK短窗口后迟到的旧身份请求，不能仅验证100ms窗口后忽略其余记录。所有长期64轮记录listener网络分项及各面counter前后值，未有真实前驱不得填true。
+
+验证：完整执行原T5五case命令（含64轮≥315s、严格逐轮startedMs），Orchestrator/Worker typecheck、focused ESLint/Prettier、diff检查；核所有新源≤1000行。PASS后只提交本步4允许路径中实际改动及RUNBOOK（observer保持只读），移除T5a说明，把T5前置改为该产物提交。T5仍需原3新源/public与剩余RUNBOOK单独提交并记录最终代码身份；不得把两次旧网络范围测试写成本修订PASS。任意计数变化、IPC超时、额外请求或需要改生产文件均STOP回MASTER。
+
 ## T5：同生产 base 的长期四项隔离与补位
 
 前置状态：T4已实现生产ingress/mTLS fixture与独立observer，下方记录本地受控SDK来源fixture两项2/2无skip；本步以前一T4产物提交为基线。
 允许修改：新目录 `model-adapter.ts`、`observed-bootstrap.ts`、`real-reuse.test.ts`、`public-files.json`、本文（5）。
-专核：`apps/worker/base-bootstrap.ts`、`apps/worker/sdk-transport.ts`、`apps/worker/run-worker.ts`、`apps/orchestrator/execution-service/warm-worker.ts`（共9）。
+专核：`apps/worker/base-bootstrap.ts`、`apps/worker/sdk-transport.ts`、`apps/worker/run-worker.ts`、`apps/orchestrator/execution-service/warm-worker.ts`、`apps/worker/dsh-worker.ts`（共10；MASTER定向批准新增正式loop只读专核）。
 禁止修改：全部专核文件、生产测试探针/临时endpoint、旧验收。
 
 执行：实现P0/P1+P2/R/E/L共五个独立测试（P1与P2同一个长期case，先1个reference预热后64个测量轮，保留逐轮四项分项结果）。observed facade只观察，实际返回字段逐一委托生产base；PID由父端独立进程/socket证据交叉确认，不仅相信worker自报。model-adapter只持有当次模型HTTP请求。每轮RPC与历史独立核对。轮次/时间/无串Session均assert，不将warning或计数代替。测试失败输出case+轮次+四项失败名及残留计数，不能输出原始request/config/header。finally不改变失败结论，清理失败同样失败。
