@@ -9,6 +9,7 @@ import {
     createSecureServer,
     type ClientHttp2Session,
     type ServerHttp2Session,
+    type ServerHttp2Stream,
     type Http2Server,
     type Http2SecureServer,
 } from 'node:http2';
@@ -86,9 +87,16 @@ export async function createGrantFixture(sdk: PreparedSdk) {
     const clients = new Map<ClientHttp2Session, Promise<void>>();
     const sessions = new Map<ServerHttp2Session, Promise<void>>();
     const failures: unknown[] = [];
+    const upstreamSessions = new Map<ServerHttp2Session, Promise<void>>();
+    const sdkStreams = new Map<ServerHttp2Stream, Promise<void>>();
+    let stopCalls = 0;
+    let startCalls = 0;
+    let revokeBarrier:
+        | { resolve(): void; reject(error: unknown): void; deadline: number }
+        | undefined;
     let requests = 0;
     let stdin = 0;
-    let running = true;
+    const running = true;
     const observation = () => ({
         sandbox: binding.sandbox,
         volume: binding.volume,
@@ -97,13 +105,23 @@ export async function createGrantFixture(sdk: PreparedSdk) {
     });
     const sandbox = {
         async stop() {
-            running = false;
+            stopCalls++;
+            assert(revokeBarrier);
+            const row = snapshot();
+            assert.equal(row.revoked, 1);
+            assert.equal(row.generation, 1);
+            assert.equal(row.state, 'UNKNOWN');
+            for (const [key, value] of Object.entries(binding))
+                assert.equal(row[key], value);
+            assert.equal(fence().revoked, true);
+            revokeBarrier.resolve();
         },
         async stopped() {
-            return !running;
+            return false;
         },
         async start() {
-            running = true;
+            startCalls++;
+            throw new Error('A1-03 cannot start without stop proof');
         },
         async running() {
             return observation();
@@ -116,7 +134,16 @@ export async function createGrantFixture(sdk: PreparedSdk) {
     let sdkUrl = '';
     let operationUrl = '';
     let disposal: Promise<void> | undefined;
-    function track(server: Http2Server | Http2SecureServer) {
+    function track(server: Http2Server | Http2SecureServer, ingress = false) {
+        if (ingress)
+            server.on('stream', (stream) => {
+                sdkStreams.set(
+                    stream,
+                    new Promise<void>((resolve) =>
+                        stream.once('close', resolve),
+                    ),
+                );
+            });
         server.on('sessionError', () => {});
         server.on('session', (session) => {
             sessions.set(session, closed(session));
@@ -138,6 +165,22 @@ export async function createGrantFixture(sdk: PreparedSdk) {
         assert.equal(rows.length, 1);
         return rows[0]!;
     }
+    function fence() {
+        const rows = query(
+            paths.history,
+            'SELECT epoch,owner,handle FROM sessions WHERE id=?',
+        );
+        assert(rows.length <= 1);
+        const row = rows[0];
+        return {
+            hasHistory: !!row,
+            revoked:
+                !row ||
+                (row.epoch === 1 &&
+                    row.owner === 'bento:revoked' &&
+                    row.handle === null),
+        };
+    }
     function history() {
         return {
             sessions: query(
@@ -158,6 +201,35 @@ export async function createGrantFixture(sdk: PreparedSdk) {
             ),
         };
     }
+    async function closeNetwork() {
+        const errors: unknown[] = [];
+        async function attempt(action: () => unknown | Promise<unknown>) {
+            try {
+                await action();
+            } catch (error) {
+                errors.push(error);
+            }
+        }
+        for (const [client, done] of clients) {
+            client.destroy();
+            await attempt(() => bounded(done, 5000, 'client close'));
+        }
+        for (const server of [sdkServer, upstream, operationServer]) {
+            if (!server?.listening) continue;
+            const done = new Promise<void>((resolve, reject) =>
+                server.close((error?: Error) =>
+                    error ? reject(error) : resolve(),
+                ),
+            );
+            if ('closeAllConnections' in server) server.closeAllConnections();
+            for (const session of sessions.keys()) session.destroy();
+            await attempt(() => bounded(done, 5000, 'server close'));
+        }
+        for (const done of sessions.values())
+            await attempt(() => bounded(done, 5000, 'accepted session close'));
+        if (errors.length)
+            throw new AggregateError(errors, 'Grant network cleanup failed');
+    }
     async function dispose() {
         disposal ??= (async () => {
             const errors: unknown[] = [...failures];
@@ -168,26 +240,7 @@ export async function createGrantFixture(sdk: PreparedSdk) {
                     errors.push(error);
                 }
             }
-            for (const [client, done] of clients) {
-                client.destroy();
-                await attempt(() => bounded(done, 5000, 'client close'));
-            }
-            for (const server of [sdkServer, upstream, operationServer]) {
-                if (!server?.listening) continue;
-                const done = new Promise<void>((resolve, reject) =>
-                    server.close((error?: Error) =>
-                        error ? reject(error) : resolve(),
-                    ),
-                );
-                if ('closeAllConnections' in server)
-                    server.closeAllConnections();
-                for (const session of sessions.keys()) session.destroy();
-                await attempt(() => bounded(done, 5000, 'server close'));
-            }
-            for (const done of sessions.values())
-                await attempt(() =>
-                    bounded(done, 5000, 'accepted session close'),
-                );
+            await attempt(closeNetwork);
             await attempt(() => controller?.close());
             await attempt(() => rm(folder, { recursive: true, force: true }));
             if (errors.length)
@@ -197,6 +250,93 @@ export async function createGrantFixture(sdk: PreparedSdk) {
                 );
         })();
         return disposal;
+    }
+    function beginRevoke() {
+        assert(controller);
+        const current = controller;
+        const before = snapshot();
+        const deadline = performance.now() + 10_000;
+        let resolveRevoked!: () => void;
+        let rejectRevoked!: (error: unknown) => void;
+        const revoked = new Promise<void>((resolve, reject) => {
+            resolveRevoked = resolve;
+            rejectRevoked = reject;
+        });
+        void revoked.catch(() => {});
+        revokeBarrier = {
+            resolve: resolveRevoked,
+            reject: rejectRevoked,
+            deadline,
+        };
+        const remaining = () => {
+            const ms = deadline - performance.now();
+            if (ms <= 0) throw new Error('Revocation deadline exceeded');
+            return ms;
+        };
+        const operation = current.takeover(binding.session, 1);
+        void operation.catch((error: unknown) => {
+            if (stopCalls === 0) rejectRevoked(error);
+        });
+        const settled = (async () => {
+            try {
+                await bounded(
+                    assert.rejects(operation, (error: unknown) => {
+                        assert(error instanceof Error);
+                        assert.equal(
+                            error.message,
+                            'old execution unconfirmed',
+                        );
+                        return true;
+                    }),
+                    remaining(),
+                    'expected takeover rejection',
+                );
+                await bounded(
+                    Promise.all([
+                        ...sdkStreams.values(),
+                        ...upstreamSessions.values(),
+                    ]),
+                    remaining(),
+                    'revoked endpoint close',
+                );
+                const row = snapshot();
+                assert.equal(row.state, 'UNKNOWN');
+                assert.equal(row.generation, 1);
+                assert.equal(row.revoked, 1);
+                assert.equal(row.run, before.run);
+                for (const [key, value] of Object.entries(binding))
+                    assert.equal(row[key], value);
+                assert.equal(fence().revoked, true);
+                assert.equal(stopCalls, 1);
+                assert.equal(startCalls, 0);
+                return {
+                    state: 'UNKNOWN' as const,
+                    generation: 1 as const,
+                    revoked: true as const,
+                    stopConfirmed: false as const,
+                    error: 'old execution unconfirmed' as const,
+                };
+            } catch (error) {
+                rejectRevoked(error);
+                for (const session of sessions.keys()) session.destroy();
+                try {
+                    await bounded(
+                        operation.catch(() => {}),
+                        5000,
+                        'failed revocation cleanup',
+                    );
+                } catch (cleanupError) {
+                    throw new AggregateError(
+                        [error, cleanupError],
+                        'Revocation and cleanup failed',
+                        { cause: cleanupError },
+                    );
+                }
+                throw error;
+            }
+        })();
+        void settled.catch(() => {});
+        return { revoked, settled };
     }
     try {
         async function openssl(args: string[]) {
@@ -270,89 +410,100 @@ export async function createGrantFixture(sdk: PreparedSdk) {
         await chmod(join(folder, 'ca.crt'), 0o600);
         const read = (name: string) => readFile(join(folder, name));
         const ca = await read('ca.crt');
-        upstream = createSecureServer({
+        const upstreamOptions = {
             ca,
             cert: await read('server.crt'),
             key: await read('server.key'),
             requestCert: true,
             rejectUnauthorized: true,
-        });
-        track(upstream);
-        upstream.on('stream', (stream, headers) => {
-            stream.on('error', () => {});
-            try {
-                assert.equal(
-                    (stream.session!.socket as TLSSocket).authorized,
-                    true,
-                );
-                const method = methods.find(
-                    (name) => headers[':path'] === rpcPrefix + name,
-                );
-                assert(method);
-                requests++;
-                let buffer = Buffer.alloc(0);
-                let started = false;
-                stream.on('data', (chunk: Buffer) => {
-                    try {
-                        buffer = Buffer.concat([buffer, chunk]);
-                        while (buffer.length >= 5) {
-                            const size = buffer.readUInt32BE(1);
-                            assert.equal(buffer[0], 0);
-                            assert(size <= 1024 * 1024);
-                            if (buffer.length < size + 5) break;
-                            const decoded = sdk.decode(
-                                method,
-                                buffer.subarray(5, size + 5),
-                            );
-                            if (!started) {
-                                assert.notEqual(decoded, 'stdin');
-                                assert(typeof decoded !== 'string');
-                                assert.equal(decoded.sandbox, binding.sandbox);
-                                assert.equal(decoded.workspace, 'default');
-                                started = true;
-                            } else {
-                                assert.equal(decoded, 'stdin');
-                                stdin++;
+        };
+        function makeUpstream() {
+            const server = createSecureServer(upstreamOptions);
+            track(server);
+            server.on('session', (session) =>
+                upstreamSessions.set(session, sessions.get(session)!),
+            );
+            server.on('stream', (stream, headers) => {
+                stream.on('error', () => {});
+                try {
+                    assert.equal(
+                        (stream.session!.socket as TLSSocket).authorized,
+                        true,
+                    );
+                    const method = methods.find(
+                        (name) => headers[':path'] === rpcPrefix + name,
+                    );
+                    assert(method);
+                    requests++;
+                    let buffer = Buffer.alloc(0);
+                    let started = false;
+                    stream.on('data', (chunk: Buffer) => {
+                        try {
+                            buffer = Buffer.concat([buffer, chunk]);
+                            while (buffer.length >= 5) {
+                                const size = buffer.readUInt32BE(1);
+                                assert.equal(buffer[0], 0);
+                                assert(size <= 1024 * 1024);
+                                if (buffer.length < size + 5) break;
+                                const decoded = sdk.decode(
+                                    method,
+                                    buffer.subarray(5, size + 5),
+                                );
+                                if (!started) {
+                                    assert.notEqual(decoded, 'stdin');
+                                    assert(typeof decoded !== 'string');
+                                    assert.equal(
+                                        decoded.sandbox,
+                                        binding.sandbox,
+                                    );
+                                    assert.equal(decoded.workspace, 'default');
+                                    started = true;
+                                } else {
+                                    assert.equal(decoded, 'stdin');
+                                    stdin++;
+                                }
+                                buffer = buffer.subarray(size + 5);
                             }
-                            buffer = buffer.subarray(size + 5);
+                        } catch (error) {
+                            failures.push(error);
+                            stream.destroy();
                         }
-                    } catch (error) {
-                        failures.push(error);
-                        stream.destroy();
-                    }
-                });
-                stream.on('end', () => {
-                    try {
-                        assert(started);
-                        assert.equal(buffer.length, 0);
-                        stream.respond(
-                            {
-                                ':status': 200,
-                                'content-type': 'application/grpc',
-                            },
-                            { waitForTrailers: true },
-                        );
-                        stream.once('wantTrailers', () =>
-                            stream.sendTrailers({ 'grpc-status': '0' }),
-                        );
-                        stream.end(
-                            frame(
-                                method === 'GetSandbox'
-                                    ? new Uint8Array()
-                                    : sdk.exit(0),
-                            ),
-                        );
-                    } catch (error) {
-                        failures.push(error);
-                        stream.destroy();
-                    }
-                });
-            } catch (error) {
-                failures.push(error);
-                stream.destroy();
-            }
-        });
-        const upstreamPort = await listen(upstream);
+                    });
+                    stream.on('end', () => {
+                        try {
+                            assert(started);
+                            assert.equal(buffer.length, 0);
+                            stream.respond(
+                                {
+                                    ':status': 200,
+                                    'content-type': 'application/grpc',
+                                },
+                                { waitForTrailers: true },
+                            );
+                            stream.once('wantTrailers', () =>
+                                stream.sendTrailers({ 'grpc-status': '0' }),
+                            );
+                            stream.end(
+                                frame(
+                                    method === 'GetSandbox'
+                                        ? new Uint8Array()
+                                        : sdk.exit(0),
+                                ),
+                            );
+                        } catch (error) {
+                            failures.push(error);
+                            stream.destroy();
+                        }
+                    });
+                } catch (error) {
+                    failures.push(error);
+                    stream.destroy();
+                }
+            });
+            return server;
+        }
+        upstream = makeUpstream();
+        let upstreamPort = await listen(upstream);
         controller = new SingleHostExecution(paths, sandbox);
         controller.bind(binding, observation());
         const grant = controller.admit(
@@ -361,21 +512,27 @@ export async function createGrantFixture(sdk: PreparedSdk) {
             randomUUID(),
             300_000,
         );
-        sdkServer = controller.sdkIngress({
-            upstream: new URL('https://127.0.0.1:' + upstreamPort),
-            credentials: {
-                ca,
-                cert: await read('client.crt'),
-                key: await read('client.key'),
-            },
-            workspace: 'default',
-            decode: sdk.decode,
-            decodeExecEvent: sdk.decodeExecEvent,
-        });
-        track(sdkServer);
-        sdkUrl = 'http://127.0.0.1:' + (await listen(sdkServer));
-        operationServer = controller.operationIngress();
-        operationUrl = 'http://127.0.0.1:' + (await listen(operationServer));
+        const credentials = {
+            ca,
+            cert: await read('client.crt'),
+            key: await read('client.key'),
+        };
+        async function openIngresses() {
+            assert(controller);
+            sdkServer = controller.sdkIngress({
+                upstream: new URL('https://127.0.0.1:' + upstreamPort),
+                credentials,
+                workspace: 'default',
+                decode: sdk.decode,
+                decodeExecEvent: sdk.decodeExecEvent,
+            });
+            track(sdkServer, true);
+            sdkUrl = 'http://127.0.0.1:' + (await listen(sdkServer));
+            operationServer = controller.operationIngress();
+            operationUrl =
+                'http://127.0.0.1:' + (await listen(operationServer));
+        }
+        await openIngresses();
         return {
             get controller() {
                 assert(controller);
@@ -440,7 +597,18 @@ export async function createGrantFixture(sdk: PreparedSdk) {
                     upstreamCalls: requests,
                 };
             },
+            beginRevoke,
+            revoke: async () => await beginRevoke().settled,
+            async reopen() {
+                await closeNetwork();
+                controller!.close();
+                controller = new SingleHostExecution(paths, sandbox);
+                upstream = makeUpstream();
+                upstreamPort = await listen(upstream);
+                await openIngresses();
+            },
             snapshot,
+            fence,
             history,
             counts: () => ({ requests, stdin }),
             operations: () =>

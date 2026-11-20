@@ -2,8 +2,8 @@
 
 ## 状态、工作边界与执行者契约
 
-- 建立/修订日期：2026-11-19；状态：作者草稿，待 MASTER 审核，未提交，**尚非 Executable**。
-- 唯一 checkout：`/Volumes/storage/workspace/bento-b`；起点 `main=origin/main=b08cd93c8667ca524450289733e2992e3b7bbfe2`。当前只有本文未跟踪；未建任务分支、未实施业务。
+- 建立日期：2026-11-19；本轮修订：2026-11-20。状态：T3 作者修订待 MASTER 对新 SHA 复审，尚未获本轮实施授权。T1/T2 已按规则提交并删步，T3 未通过，保留现场。
+- 唯一 checkout：`/Volumes/storage/workspace/bento-b`；起点 `main=origin/main=b08cd93c8667ca524450289733e2992e3b7bbfe2`。当前分支 codex/a1-revoked-grants，HEAD/最后 PASS 为046ff51b69ded8edb499ec42e8d76f4eb16d5bb4；T3 两处源未提交，本文本轮修订也未提交。
 - MASTER 已裁决缩为 A1-03，批准作者在仓库外做纯本地官方 SDK 工具准备；该准备已通过下述探针。T1–T6 仍需同版本 `Executable`、单独计划提交核对及显式 `$bento-runbook-worker RUNBOOK-A1-BINDING-GRANTS.md` 后才能执行。
 - 执行分支固定 `codex/a1-revoked-grants`。MASTER 对同一草稿 SHA 评为 Executable 后，才按其指令创建该分支并仅提交本文；回读分支、计划 commit/blob、完整文件清单和干净状态，由 MASTER 核对后再等显式 worker 调用。当前不得提前创建分支。
 - 执行者仅能按固定顺序修改列出的文件、运行命令、核对断言或 STOP；不得选择新产品范围、放宽断言、替换 SDK、跳过网络失败或扩大共享生产修改。
@@ -17,6 +17,14 @@
 测试范围固定为本地单宿主 SingleHostExecution 的 persistence HTTP、operation HTTP 和 SDK HTTP2 三 RPC。mTLS upstream 为独立受控服务器，不是外部 OpenShell Server；SDK wire 与生产 decoder 真实，模型和 sandbox 观察是 fixture。该本地证据不声明真实外部部署、真实模型或实际 Docker 进程已停止。Happy Path 是本项负例的前置控制，不等于 A1-01 的账号到完整部署绑定链。
 
 不修改生产源码、原 A2 五场景或时序、不修改依赖清单/lock、workflow、根 package.files。禁止 A 的远端 Docker/OpenShell/IdP/S3/模型、其代理及其他 checkout 写操作。禁止 service.ts retryReason/advanceTaskRetry、旧 service retry suite、业务 history checkpoint/restore。需要进入共享生产源码时必须先 STOP 给 MASTER 排序。
+
+### 2026-11-20 作者诊断事实与复审门禁
+
+在昨日失败源字节未改变的前提下，今天仅运行一个 N GetSandbox 观测例，原 this/args/返回值保持；未增加重试或修改停止布尔。合法 RPC 完成后，初始 observeStop 为false/false/true/true；第一次 confirm 为true/false/true/true，第二次（原有唯一重调）仍为true/false/true/true，四项顺序依次 stopped/channelsClosed/credentialsRevoked/writesRevoked。原 upstream server session 先 close，第二次 confirm 仍channelsClosed=false；原 ingress→upstream client session close及原WorkerGate.channel Promise fulfilled发生在第二次失败之后。真实未满足项是channelsClosed；不能用一次setImmediate或上游先close保证内部channel已清理。
+
+诊断结果私有摘要 SHA256=`34ccc2f09b3444ce27830dbaef3cd5fed0268c10801cc8b61a44ba62ca70dd00`。仅保留脱敏布尔、事件顺序与相对时间；这不是A1-03验收通过。只用一轮实际观测，未运行第二轮。工具/fixture已清理。此次作者批次涉及sdk-ingress/worker-gate/management/authority/single-host/fixture/sdk与仓库外observer，不扩大机械T3预算。
+
+最小修订只移除本项多余的“完整takeover成功/READY”前置：SDK/O/I采用无独立停止证明的stopped=false，精确期待生产fail-closed UNKNOWN错误且只调用一次；拒绝状态码、真实controller入口、官方wire、无upstream新增/历史与operation保护、独立SQL/reopen全保留。不能把UNKNOWN标READY或借本项关闭A3。新SHA由MASTER复审后才修改两处T3源并重验；当前不实施、不提交半步。
 
 ### A1-02 暂缓的正式裁决
 
@@ -88,7 +96,7 @@ node --import /Volumes/storage/workspace/bento-b/register-paths.mjs --experiment
 
 1. `apps/orchestrator/openshell/binding-grants/sdk.ts`：唯一 SDK 准备器，`prepareSdk():Promise<PreparedSdk>`；`PreparedSdk={raw:string,encode(method:SdkMethod,input:'start'|'stdin',sandbox:string):Uint8Array,exit(code:number):Uint8Array,decode:SdkIngressOptions['decode'],decodeExecEvent:NonNullable<SdkIngressOptions['decodeExecEvent']>,dispose():Promise<void>}`；SdkMethod 为上述三字面量。start 的 sandbox 由 encode 第三参数传入，workspace 固定 default；stdin 固定 Uint8Array([65])。prepareSdk 每次 mkdtemp(tmpdir/bento-a103-sdk-)并chmod0700，只在该目录下载/解包/安装/生成，成功返回 dispose，失败先清理再抛；禁止通过环境变量传入任意 raw.js 或以 dist 存在跳过来源校验。官方包作为动态导入的工具依赖，不加入仓库 package/lock。
 2. `apps/orchestrator/openshell/binding-grants/sdk-probe.ts`：`probeSdk(sdk:PreparedSdk):void` 完成上述6断言和schema导出检查；直接 CLI 时 prepare→probe→finally dispose。导入模块不启动下载，CLI 判定比较 process.argv[1]与fileURLToPath(import.meta.url)。
-3. `apps/orchestrator/openshell/binding-grants/fixture.ts`：`createGrantFixture(sdk:PreparedSdk):Promise<GrantFixture>`。GrantFixture 返回 controller、binding、grant、sdkUrl/operationUrl（reopen 后返回新端口的只读 getter）、connect():ClientHttp2Session、request(client,method,hold?:boolean):Promise<RpcResult>、openInteractive(client):Promise<HeldRpc>、revoke():Promise<void>、beginRevoke():{revoked:Promise<void>,settled:Promise<void>}、snapshot():AuthoritySnapshot、history():HistorySnapshot、reopen():Promise<void>、dispose():Promise<void>；RpcResult={status:string,upstreamCalls:number}；HeldRpc={sendStdin():void,status:Promise<string>,closed:Promise<void>,upstreamClosed:Promise<void>}。签名使用来自生产/Node 的真实类型；snapshot投影采用上文明确字段；history固定四表；计数为独立upstream总收到请求/完整stdin帧数，两项暴露 `counts():{requests:number,stdin:number}`。
+3. `apps/orchestrator/openshell/binding-grants/fixture.ts`：`createGrantFixture(sdk:PreparedSdk):Promise<GrantFixture>`。GrantFixture 返回 controller、binding、grant、sdkUrl/operationUrl（reopen 后返回新端口的只读 getter）、connect():ClientHttp2Session、request(client,method,hold?:boolean):Promise<RpcResult>、openInteractive(client):Promise<HeldRpc>、revoke():Promise<Revocation>、beginRevoke():{revoked:Promise<void>,settled:Promise<Revocation>}、snapshot():AuthoritySnapshot、fence():{hasHistory:boolean,revoked:boolean}、history():HistorySnapshot、reopen():Promise<void>、dispose():Promise<void>；RpcResult={status:string,upstreamCalls:number}；HeldRpc={sendStdin():void,status:Promise<string>,closed:Promise<void>,upstreamClosed:Promise<void>}。签名使用来自生产/Node 的真实类型；snapshot投影采用上文明确字段；history固定四表；计数为独立upstream总收到请求/完整stdin帧数，两项暴露 `counts():{requests:number,stdin:number}`。
 4. `apps/orchestrator/openshell/binding-grants.test.ts`：固定 suite，后文每场景独立 test，禁止 skip。通过 suite before/after 准备/处置一次 SDK；每 case 独立 fixture/controller/grant。before hook timeout600000ms，每业务 test timeout60000ms，concurrency=false。
 5. `apps/orchestrator/openshell/binding-grants/check-package.mjs`：根路径由 import.meta.url 获取，实际 npm pack dry-run 白名单正负断言。不得改旧 temporal-retry/check-package.mjs。
 
@@ -96,11 +104,23 @@ fixture 行为唯一固定：两库同目录；binding={tenant:'a103-tenant',pro
 
 TLS 生成固定为独立 CA、server、client 三对 RSA2048 密钥：CA 用 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=a103-ca -addext basicConstraints=critical,CA:TRUE；server/client 分别用 req -new -newkey rsa:2048 -nodes -subj /CN=a103-server 与 /CN=a103-client；再用 x509 -req -CA ca.crt -CAkey ca.key -CAcreateserial -days 1 签发。server.ext 固定 basicConstraints=CA:FALSE、subjectAltName=IP:127.0.0.1、extendedKeyUsage=serverAuth；client.ext 固定 basicConstraints=CA:FALSE、extendedKeyUsage=clientAuth。文件名固定 ca/server/client 的 .key/.csr/.crt 和两 .ext；全部在 fixture 0700目录，写入文件 mode0600，每次 openssl timeout30000ms。HTTP2 server 显式 ca=ca.crt、cert=server.crt、key=server.key、requestCert=true、rejectUnauthorized=true；ingress credentials 使用 ca.crt/client.crt/client.key。正常连接必须 server-side socket.authorized=true，否则 STOP。HTTP与HTTP2请求/close各timeout5000ms、case内barrier等待timeout10000ms，超时不重试请求。
 
-`beginRevoke()` 在同一调用内记录deadline=performance.now()+10000，启动 `controller.takeover(binding.session,1)`；revoked在fixture sandbox.stop被调用时resolve，此时独立SQL必须revoked=true。stop先标记fixture running=false，再等待本例所有已记录SDK上游transport.close，全部完成才返回；无持有transport时立即返回。I在await revoked后同步尝试旧流stdin，随后等待header7及两侧close。所有barrier沿用该剩余总deadline，不能每次重置10秒。
+### 撤权完成与停止未证实：唯一 fixture 语义
 
-settled封装唯一有界算法：首次takeover成功直接resolve；首次抛错时仅当 `error instanceof Error && error.message==='old execution unconfirmed'` 才进入一次恢复检查。检查必须在原deadline内确认全部已记录SDK transport已close，独立inspect为同Session/generation1/stateUNKNOWN且capabilityNULL，再await一次setImmediate让gate.channel.finally完成；随后仅重调一次 `controller.takeover(binding.session,1)`。最多两次takeover调用；第二次任意错误原样reject，不再循环。首次其他错误、SQL不符、剩余时间不足、任何close超时都立即reject并触发STOP。不得在仍活跃transport时重调，不重发stop命令，不吞非指定错误，不修改SQL或operations.UNKNOWN。
+本项不要求 A3 的停止证明与 READY；SDK/O/I fixture 固定验证已撤权但停止未证实的安全 UNKNOWN，不再强制完整接管成功。P 原官方独立 fixture 维持原契约，不受此修订影响。
 
-`revoke()` 仅执行 `await beginRevoke().settled`。创建settled即安装拒绝观察器避免unhandled rejection，但保留其原始拒绝向test传播；若takeover在stop前失败，revoked也以同一错误reject。10秒deadline触发时拒绝fixture本地barrier，destroy精确记录transport、在额外且仅用于清理的5000ms内等待takeover Promise settle并聚合清理错误；清理也超时则STOP并保留精确资源报告，不再启动任何恢复调用；不遗留无人等待的后台takeover。`reopen()` 关闭clients/listeners/controller，以原两库路径重建controller、sdkIngress和operationIngress，旧grant不变，绝不bind/admit。
+`Revocation` 唯一返回结构为 `{state:'UNKNOWN',generation:1,revoked:true,stopConfirmed:false,error:'old execution unconfirmed'}`，所有字段 required。它表示独立 SQL 和精确预期错误已证实的结果，不将 takeover 失败伪装成成功。新 grant 不签发，原 Run 保留，五字段绑定不变。
+
+SDK fixture 的 sandbox.stop 只记一次受信 stop 调用并 resolve revoked barrier，不设置 running=false，也不提供停止证明；sandbox.stopped 固定返回 false。sandbox.start 固定抛 `A1-03 cannot start without stop proof`（生产正常应永不调用），内部 start 调用计数必须0。bind 的初始 running/installed 观察仅为合法种子，不混作撤权后的停止证据。
+
+`beginRevoke()` 同步建立共享总 deadline=performance.now()+10000，且只启动 **一次** 原样 `controller.takeover(binding.session,1)`；没有重调、setImmediate 或轮询。revoked 在 sandbox.stop 被调用时 resolve，此时另建 readOnly SQL 验证 capabilityNULL、generation1、stateUNKNOWN、五字段不变，fence().revoked=true。若 takeover 在 stop 前拒绝，revoked 以该原错误 reject；Promise 创建时装拒绝观察器，原失败仍传给测试。
+
+settled 在同一剩余 deadline 内用 assert.rejects 精确断言原 takeover 为 Error 且 message===`old execution unconfirmed`；意外 resolve、其他错误或超时均 STOP。随后等待 SDK ingress 每一已记录 ServerHttp2Stream 的真实 close Promise 和每一 upstream ServerHttp2Session 的真实 close Promise，均在该剩余 deadline 内完成。仅添加公开事件观察器，不包装/替换 grantFor、WorkerGate、Authority、原 transport 或其返回值；不销毁工作端同 HTTP2 session，N 仍须在该连接上创建新 stream。两端 close 不等于内部 gate Promise 已 settle；本项不据此推进 READY。
+
+结束前再读独立 SQL：Session stateUNKNOWN/generation1/revoked1、原run/五字段绑定不变，stop调用恰1/start调用0、历史与 operation 未被人工修补，然后返回上述 Revocation。`revoke()` 仅 return await beginRevoke().settled。I 在 await revoked 后同步尝试旧 stdin，再等待 status7 与两侧 close/settled；不等待停止成功或重调控制器。
+
+`fence()` 另建 readOnly 连接，固定 SQL `SELECT epoch,owner,handle FROM sessions WHERE id=?`，最多一行。无历史行时返回 `{hasHistory:false,revoked:true}`，这与生产 PersistenceFence.isRevoked 的无历史契约一致，只声明无历史可写；不声称观察到了历史行撤销。存在历史行时 revoked 只在 epoch=grant.generation、owner='bento:revoked' 且 handle IS NULL 时 true。P 独立官方链必须真实有历史行，并在其现有 takeover 后另建 SQL 确认这三个撤销字段，明确补齐真实历史栅栏证据。
+
+10秒 deadline 触发或非预期错误时仅清理本任务资源，精确 destroy 已记录 transports，在另5秒清理期限内等待原 takeover settle并聚合错误；不启动第二次 takeover，不修改 UNKNOWN、不伪造 STOPPED/READY。`reopen()` 关闭clients/listeners/controller，以原两库路径重建controller、sdkIngress和operationIngress；旧grant不变，绝不bind/admit/takeover，SQL仍generation1/UNKNOWN/revoked1，旧token仍header16/O403。
 
 正常/失败 dispose 统一聚合：停止测试发送→destroy所有记录的ClientHttp2Session及streams→close/closeAllConnections HTTP、close HTTP2 servers且destroy其已记录sessions→controller.close→关闭只读SQL句柄→删目录。每关闭Promise限定5000ms；failures使用AggregateError保留原错误。不得未等待close即删证书或DB。
 
@@ -110,7 +130,7 @@ SDK子进程使用spawn且保留精确ChildProcess句柄，detached进程组仅�
 
 fixture仅启动真实 `controller.operationIngress()` 返回的HTTP server，不传allow或acceptTaskEvents，不增加代理鉴权逻辑。O例在fixture创建时生成 `operationPrefix='a103:'+randomUUID()`，三个id分别为prefix+':before'、prefix+':after'、prefix+':reopen'；均长度≤256，input固定字符串 `'a103-operation-input-v1'`。每次实际fetch(new URL('/operations',operationUrl),{method:'POST',headers:{authorization:'Bearer '+grant.token,'content-type':'application/json'},body:JSON.stringify({id,input:'a103-operation-input-v1'}),signal:AbortSignal.timeout(5000)})，消费或cancel响应body。
 
-只读SQL观察器 `operations()` 运行 `SELECT session,generation,id,digest,state FROM operations WHERE session=? ORDER BY id`，参数为binding.session；每次新建readOnly连接并finally close。O不执行SDK RPC，避免无关SDK operation污染：第一次合法POST之前投影为空；before请求201后恰有一行(session=binding.session,generation=1,id=prefix+':before',digest=SHA256('a103-operation-input-v1'),state='UNKNOWN')，该行是合法持久预留，不清理为成功。记录此projection为O基线；await revoke完成后再确认相同projection与SQL撤权，然后after请求必须403且projection与基线deepEqual。reopen原库后再次先确认原projection及revoked，再发reopen请求403，随后projection仍deepEqual；明确断言after/reopen两个id都不存在。其他H中的operation成功控制使用同样body形状、独立随机prefix与真实入口，不能调用reserveOperation替代HTTP。
+只读SQL观察器 `operations()` 运行 `SELECT session,generation,id,digest,state FROM operations WHERE session=? ORDER BY id`，参数为binding.session；每次新建readOnly连接并finally close。O不执行SDK RPC，避免无关SDK operation污染：第一次合法POST之前投影为空；before请求201后恰有一行(session=binding.session,generation=1,id=prefix+':before',digest=SHA256('a103-operation-input-v1'),state='UNKNOWN')，该行是合法持久预留，不清理为成功。记录此projection为O基线；await revoke精确得到UNKNOWN/generation1/stopConfirmed=false结果后再确认相同projection与SQL撤权，然后after请求必须403且projection与基线deepEqual。reopen原库后再次先确认原projection及revoked，再发reopen请求403，随后projection仍deepEqual；明确断言after/reopen两个id都不存在。其他H中的operation成功控制使用同样body形状、独立随机prefix与真实入口，不能调用reserveOperation替代HTTP。
 
 ## 不变量与验证矩阵
 
@@ -126,7 +146,7 @@ fixture仅启动真实 `controller.operationIngress()` 返回的HTTP server，�
 
 I的post-revoke stdin允许本地write在已关闭stream上抛错，但仍必须另行断言下游header7、两侧实际close及upstream未收帧，不以本地异常或reset单独通过。撤权前计数必须等完整frame被upstream解析后再取baseline，防止把预先排队stdin算在撤权后。入口断流不声明正在运行的子进程已停止；保留A3缺口。
 
-P固定复用 `createProviderFixture` 及其公开 runtime API，禁止改旧fixture/runtime：start(1)→create→turn（内置等待200ms auto-flush及inflight quiescence）→保存writer与合法events→controller.takeover→snapshot baseline→writer.append(events.slice(0,1))拒绝→trace stage403/四表不变→expectRevokedDispose→fixture.reopen→独立SQL capability NULL与generation2→fixture.dispose。不手工造官方handle、mock append或过滤事件。SDK与Provider是两组明确标注的本地子链，不拼成A5同轮真实部署证据。
+P固定复用 `createProviderFixture` 及其公开 runtime API，禁止改旧fixture/runtime：start(1)→create→turn（内置等待200ms auto-flush及inflight quiescence）→保存writer与合法events→controller.takeover→snapshot baseline→writer.append(events.slice(0,1))拒绝→trace stage403/四表不变→expectRevokedDispose→fixture.reopen→独立SQL capability NULL与generation2；另读历史行epoch1/owner='bento:revoked'/handleNULL→fixture.dispose。不手工造官方handle、mock append或过滤事件。SDK与Provider是两组明确标注的本地子链，不拼成A5同轮真实部署证据。
 
 ## 必要代码规模（仅 A1-03）
 
@@ -144,51 +164,19 @@ P固定复用 `createProviderFixture` 及其公开 runtime API，禁止改旧fix
 | apps/worker/remote-session.ts                       | 1–110                   |     105 |
 | 合计                                                | 8不同代码文件，不含新增 |     996 |
 
-## T0：作者前置与 MASTER 放行
+## T0：已核验前置与本轮修订放行
 
-前置状态：仅作者阶段，SDK工具probe已PASS，业务未实施。
-允许修改：本文。专门核对：本文、AGENTS、RUNBOOK-RULES、command-host、SDK官方package-lock/buf.gen/raw、原provider fixture，共8文件。
-禁止修改：任何生产/测试/依赖/CI。
+原计划b4c3e0fc6345efab59d9fa2bea130c57fc23ee00已独立审核/仅计划提交/显式worker启动，T1/T2已有PASS提交。本轮不重建分支。恢复已核对HANDOFF、HEAD046ff51及两处源字节；诊断事实见上节。
 
-执行：核对上述工具证据；MASTER只读审核同一草稿。审批前不建分支。获同SHA Executable后才按MASTER指令新建codex/a1-revoked-grants，仅提交本文；回读commit SHA、计划blob与获审字节一致、提交文件仅本文、分支及基线和干净状态，由MASTER核对，再等显式worker调用。
-
-验证（仓库根）：
-
-```bash
-git status --short
-git rev-parse HEAD origin/main
-pnpm exec prettier --check docs/30-designs/RUNBOOK-A1-BINDING-GRANTS.md
-git diff --check
-```
-
-PASS：只有本文未跟踪，基线相同，链接/格式通过；官方探针6项已实测，MASTER对同SHA评Executable并核对计划提交。当前尚缺最后审核/提交/worker调用。
-STOP：来源/基线/共享窗口变化或审核未通过；不能把本工具探针当业务PASS。
-
-## T3：旧 capability 的新 stream 与重连
-
-前置状态：binding-grants.test.ts 的 H 合法当次授权控制已执行1例PASS/skip0（2026-11-19，真实官方SDK、mTLS upstream三RPC、operation201及独立SQL），typecheck/lint通过。
-允许修改：本文、binding-grants.test.ts、fixture.ts。专门读取authority.ts、single-host.ts、sdk-ingress.ts、persistence-fence.ts、sdk.ts，共8文件。
-禁止修改：production/UNKNOWN对账/停止生命周期。
-
-执行：新增3方法×2连接方式的6独立 `A1-03 N METHOD` / `A1-03 R METHOD` tests，每例先成功再takeover，再发送合法官方wire旧token请求。每例新请求header grpc16、upstream不增、SQL capabilityNULL/五字段不变；关闭重开原两库后同旧token再次header16。O独立test严格使用Operation HTTP精确前后控制章节的三个id/body、真实controller.operationIngress和只读projection；before201，撤权后after403，原库reopen后reopen403，两个拒绝后projection与唯一UNKNOWN预留基线deepEqual。snapshot比较以撤权完成后的状态为baseline，避免错误要求generation不变。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='A1-03 (N |R |O )' apps/orchestrator/openshell/binding-grants.test.ts
-pnpm --filter @bento/orchestrator typecheck
-```
-
-PASS：7目标tests全部通过；6+6次SDK拒绝独立观察，O前后/reopen均拒；SQL与upstream证据不缺。
-STOP：任一方法遗漏、upstream新增、SQL撤销未生效、原路径reopen不成立；不改Gate或放宽status。
+本轮只允许改本文并送新SHA。MASTER对同一修订明确Executable后，才沿现有分支恢复T3，先落实唯一UNKNOWN语义；不先删除T3，不混入未通过源的计划提交。基线或正式范围有影响变化先回MASTER复审。
 
 ## T4：持有 interactive 通道撤权
 
-前置状态：T3通过，真实旧grant拒绝可回读。
+前置状态：N3/R3/O共7例于2026-11-20 focused全部PASS、skip0；仅一次takeover精确拒绝并保持UNKNOWN/gen1；新流/重连/原库reopen均header16、O403且SQL/历史无新增；typecheck/lint通过。
 允许修改：本文、fixture.ts、binding-grants.test.ts。专门读取sdk-ingress.ts、worker-gate.ts、single-host.ts，共6文件。
 禁止修改：A3真实进程停止、READY保护或其他执行入口。
 
-执行：增加唯一 `A1-03 I held interactive rejects post-revoke stdin`；先成功结束一条interactive控制，再打开hold流，start/stdin完整解析计数后baseline；takeover触发stop barrier时独立SQL已NULL，尝试旧流stdin，等待下游header7及两侧实际关闭，无新增stdin；完成takeover后同client新stream与重连都header16；重开原库仍header16。hold请求可留下UNKNOWN operation，不篡改其state。
+执行：增加唯一 `A1-03 I held interactive rejects post-revoke stdin`；先成功结束一条interactive控制，再打开hold流，start/stdin完整解析计数后baseline；takeover触发stop barrier时独立SQL已NULL，尝试旧流stdin，等待下游header7及两侧实际关闭，无新增stdin；原takeover精确拒绝且撤权闭流观测完成后，同client新stream与重连都header16；重开原库仍header16。hold请求可留下UNKNOWN operation，不篡改其state。
 
 验证：
 
@@ -198,7 +186,7 @@ pnpm --filter @bento/orchestrator typecheck
 ```
 
 PASS：目标1例通过，成功前置/独立撤销/持有流header7/两侧关闭/无post-revoke帧/后续拒绝及cleanup全部有断言。
-STOP：只观察100ms timer或只本地write错误、停流未观测、真实takeover无法对账；不伪造停止证据。
+STOP：只观察100ms timer或只本地write错误、停流未观测、原takeover未得到精确预期错误、错误映射或双侧close观测不符；不伪造停止证据。
 
 ## T5：旧官方 Provider 独立拒绝与固定打包门禁
 
