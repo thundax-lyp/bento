@@ -47,4 +47,6 @@ pnpm format
 
 浏览器安装使用 Ubuntu 官方 HTTPS 软件源，保留 Chromium 与系统依赖校验。
 
+Temporal 重投与 package 契约在独立的 `Temporal retry acceptance` job 执行；`Repository checks` 使用 `pnpm --filter @bento/orchestrator check:core` 验证类型、常规测试和 Go。上述拆分不改变本地 `pnpm check` 的完整验收范围。
+
 使用 ESLint 与 Prettier，统一 4 空格缩进。
