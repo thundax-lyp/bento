@@ -182,7 +182,11 @@
         "apps/orchestrator/openshell/binding-grants/sdk-probe.ts",
         "apps/orchestrator/openshell/binding-grants/fixture.ts",
         "apps/orchestrator/openshell/binding-grants.test.ts",
-        "apps/orchestrator/openshell/binding-grants/check-package.mjs"
+        "apps/orchestrator/openshell/binding-grants/check-package.mjs",
+        "apps/worker/sdk-transport.ts",
+        "apps/worker/sdk-transport.test.ts",
+        "apps/orchestrator/acceptance/worker-reuse/sdk.ts",
+        "apps/orchestrator/acceptance/worker-reuse/sdk.test.ts"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",
