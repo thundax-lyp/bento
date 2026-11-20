@@ -170,30 +170,9 @@ P固定复用 `createProviderFixture` 及其公开 runtime API，禁止改旧fix
 
 本轮只允许改本文并送新SHA。MASTER对同一修订明确Executable后，才沿现有分支恢复T3，先落实唯一UNKNOWN语义；不先删除T3，不混入未通过源的计划提交。基线或正式范围有影响变化先回MASTER复审。
 
-## T5：旧官方 Provider 独立拒绝与固定打包门禁
-
-前置状态：I持有interactive用例于2026-11-20 focused 1例PASS/skip0：先合法控制与upstream首帧，再真实撤权barrier后尝试stdin，明确header7/两侧close/计数不增，同连接新stream/重连/reopen均header16且UNKNOWN/gen1保护；typecheck/lint通过。不改既有A2时序。
-允许修改：本文、binding-grants.test.ts、check-package.mjs、Orchestrator package.json、public-files.json。专门读取provider-lifecycle/fixture.ts、runtime.ts、旧temporal-retry/check-package.mjs、根package.json，共9文件。
-禁止修改：原A2 tests/fixture/runtime、根files、public patterns、workflow。
-
-执行：按P固定调用新增 `A1-03 P old provider cannot append after controller revocation`，不另造Provider；追加readOnly SQL/reopen撤销读回。suite仍由既有openshell/*.test.ts自动纳入。新增check-package并精确登记其源；Orchestrator check只在原命令尾追加 `&& node openshell/binding-grants/check-package.mjs`，保留Temporal9项与原pack检查。
-
-check-package固定：assert根package.files与旧check-package同approved数组完全相同、patterns原3项相同；5个新增源各在public files一次、实际npm pack files一次；npm pack --dry-run --json在真实已安装依赖树运行，timeout120000/maxBuffer8MiB。逐文件拒绝node_modules、.pem/.key/.crt/.sqlite及wal/shm/.db/.log/.tgz/.tar.gz、debug-workspace、bento-a103-sdk-*目录；输出仅计数与正负断言PASS。不得修改/遮蔽安装树使打包检查变绿。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='A1-03 P ' apps/orchestrator/openshell/binding-grants.test.ts
-node apps/orchestrator/openshell/binding-grants/check-package.mjs
-pnpm --filter @bento/orchestrator typecheck
-```
-
-PASS：P目标1例、stage403/OwnershipLost/four-table不变及reopen独立NULL通过；真实包正负检查通过、typecheck0。
-STOP：自动flush竞态、关闭异步错误、pack依赖/私钥泄漏、公共白名单扩大；保留STEP，不改原五断言。
-
 ## T6：完整验证、证据迁移与删除
 
-前置状态：H1、N3、R3、O1、I1、P1共10独立业务tests已实现；SDK工具6探针不是业务tests。
+前置状态：H1/N3/R3/O1/I1/P1均已有适用focused通过证据，P于2026-11-20经MASTER批准仅单命令继承现有系统代理后PASS/skip0，Provider历史/receipt/真实行栅栏与撤销SQL/reopen均核对；typecheck/lint及真实安装树pack正负检查PASS。5新源精确公开，固定check追加pack gate，原Temporal9项保留；SDK工具6探针不是业务tests。
 允许修改：本文、Readiness、APPLICATION-BOUNDARIES-DESIGN.md。专门读取binding-grants.test.ts、sdk.ts、fixture.ts、check-package.mjs、Orchestrator package.json、public-files.json，共9文件。
 禁止修改：A1父及01/02/04/05状态、A的验收证据与生产源码。
 

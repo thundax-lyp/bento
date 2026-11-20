@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { after, before, test } from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
+import { SessionOwnershipLostError } from '@deepseek-ai/dsh-session-persistence';
+import { createProviderFixture } from './provider-lifecycle/fixture.ts';
 import {
     bounded,
     createGrantFixture,
@@ -291,6 +294,90 @@ test(
             assert.deepEqual(fixture.operations(), operations);
             assert.deepEqual(fixture.history(), history);
             assert.deepEqual(fixture.counts(), counts);
+        } finally {
+            await fixture.dispose();
+        }
+    },
+);
+
+test(
+    'A1-03 P old provider cannot append after controller revocation',
+    { timeout: 60_000, concurrency: false },
+    async () => {
+        const fixture = await createProviderFixture();
+        try {
+            function authority() {
+                const db = new DatabaseSync(fixture.authorityPath, {
+                    readOnly: true,
+                });
+                try {
+                    return db
+                        .prepare(
+                            'SELECT generation,state,capability IS NULL AS revoked FROM execution_sessions WHERE session=?',
+                        )
+                        .get(fixture.session);
+                } finally {
+                    db.close();
+                }
+            }
+            function fence() {
+                const db = new DatabaseSync(fixture.historyPath, {
+                    readOnly: true,
+                });
+                try {
+                    return db
+                        .prepare(
+                            'SELECT epoch,owner,handle FROM sessions WHERE id=?',
+                        )
+                        .get(fixture.session);
+                } finally {
+                    db.close();
+                }
+            }
+            const runtime = await fixture.start(1);
+            const handle = await runtime.create();
+            const events = await runtime.turn();
+            assert.deepEqual(handle.agent.session.snapshotEvents(), events);
+            assert(runtime.writer);
+            assert(events.length > 0);
+            assert(fixture.snapshot().events.length > 0);
+            assert(fixture.snapshot().receipts.length > 0);
+            assert.equal(authority()?.revoked, 0);
+            const writer = runtime.writer;
+            runtime.trace.length = 0;
+            await fixture.controller.takeover(fixture.session, 1);
+            const revoked = authority();
+            assert.deepEqual(revoked && { ...revoked }, {
+                generation: 2,
+                state: 'READY',
+                revoked: 1,
+            });
+            const fenced = fence();
+            assert.deepEqual(fenced && { ...fenced }, {
+                epoch: 1,
+                owner: 'bento:revoked',
+                handle: null,
+            });
+            const before = fixture.snapshot();
+            await assert.rejects(
+                writer.append(events.slice(0, 1)),
+                SessionOwnershipLostError,
+            );
+            assert.deepEqual(
+                runtime.trace.map((row) => ({
+                    method: row.method,
+                    status: row.status,
+                })),
+                [{ method: 'stage', status: 403 }],
+            );
+            assert.deepEqual(fixture.snapshot(), before);
+            assert.deepEqual(authority(), revoked);
+            assert.deepEqual(fence(), fenced);
+            await runtime.expectRevokedDispose();
+            await fixture.reopen();
+            assert.deepEqual(authority(), revoked);
+            assert.deepEqual(fence(), fenced);
+            assert.deepEqual(fixture.snapshot(), before);
         } finally {
             await fixture.dispose();
         }
