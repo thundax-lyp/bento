@@ -45,6 +45,8 @@ pnpm format
 
 可按工程运行 `pnpm check:workspace`（个人端认证、API 和 Web）、`pnpm check:orchestrator`（Run 编排与执行宿主）或 `pnpm check:worker`（独立 Worker）。
 
+执行服务场景测试位于 [`apps/orchestrator/tests/execution-service/`](apps/orchestrator/tests/execution-service/)，可通过 `pnpm --filter @bento/orchestrator test` 运行。
+
 CI 按完整变更范围选择检查：Web 常规回归、空间完整性和队列隔离分别触发；Orchestrator 或 Worker 变更同时触发使用其真实执行宿主的队列验收。公共配置和未知路径执行全量检查。浏览器安装使用 Ubuntu 官方 HTTPS 软件源，保留 Chromium 与系统依赖校验。
 
 Temporal 重投与 package 契约在独立的 `Temporal retry acceptance` job 执行；`Repository checks` 使用 `pnpm --filter @bento/orchestrator check:core` 验证类型、常规测试和 Go。CI 以仅下载步骤可见的只读 GitHub token 预取官方固定 Temporal CLI 1.5.1 Linux amd64 归档，120秒上限，核对大小/SHA后通过既有 `BENTO_A6_TEMPORAL_ARCHIVE` 入口再次校验成员、binary和版本并执行九项真实验收；测试进程不接收该token，私有归档在job结束时清理。这条路径不覆盖工具默认无输入下载分支。上述拆分不改变本地 `pnpm check` 的完整验收范围。

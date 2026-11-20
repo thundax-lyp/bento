@@ -4,7 +4,7 @@
     "type": "module",
     "scripts": {
         "typecheck": "tsc --noEmit",
-        "test": "node --import ../../register-paths.mjs --experimental-strip-types --test execution-service/service.test.ts execution-service/task-submission.test.ts openshell/*.test.ts",
+        "test": "node --import ../../register-paths.mjs --experimental-strip-types --test tests/execution-service/*.test.ts execution-service/task-submission.test.ts openshell/*.test.ts",
         "check": "pnpm check:core && pnpm test:temporal-retry && node acceptance/temporal-retry/check-package.mjs",
         "check:core": "pnpm typecheck && pnpm test && go test ./... && go vet ./... && node openshell/binding-grants/check-package.mjs && pnpm test:worker-runtime && pnpm test:worker-reuse && node acceptance/worker-reuse/check-package.mjs",
         "test:temporal-retry": "node --import ../../register-paths.mjs --experimental-strip-types --test --test-concurrency=1 --test-timeout=1200000 acceptance/temporal-retry/real-retry.test.ts",
