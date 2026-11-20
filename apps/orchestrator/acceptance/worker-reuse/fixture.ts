@@ -24,6 +24,7 @@ import type { PreparedSdk } from '@/apps/orchestrator/openshell/binding-grants/s
 import type { WorkerRequest } from '@/apps/worker/protocol.ts';
 import {
     observeSdk,
+    sha256,
     readReuseSnapshot,
     readWorkerProcesses,
     type ReusePaths,
@@ -83,6 +84,12 @@ export async function createReuseFixture(
     const upstreamStreams = new Set<ServerHttp2Stream>();
     const held = new Map<number, ServerHttp2Stream>();
     const problems: string[] = [];
+    const controlRequests: {
+        interface: 'persistence' | 'operation';
+        tokenSha256: string;
+        path: string;
+        at: number;
+    }[] = [];
     let upstreamCalls = 0;
     let authenticatedSessions = 0;
     let closing: Promise<void> | undefined;
@@ -462,6 +469,28 @@ export async function createReuseFixture(
                     });
             persistence = controller.persistenceIngress();
             operation = controller.operationIngress();
+            for (const [name, server] of [
+                ['persistence', persistence],
+                ['operation', operation],
+            ] as const) {
+                server.on('request', (request) => {
+                    const path = request.url?.split('?')[0];
+                    controlRequests.push({
+                        interface: name,
+                        tokenSha256: sha256(
+                            String(request.headers.authorization ?? '').replace(
+                                /^Bearer /,
+                                '',
+                            ),
+                        ),
+                        path:
+                            path === '/rpc' || path === '/operations'
+                                ? path
+                                : 'other',
+                        at: performance.now(),
+                    });
+                });
+            }
             ingress = controller.sdkIngress({
                 upstream: new URL('https://127.0.0.1:' + upstreamPort),
                 credentials,
@@ -523,6 +552,9 @@ export async function createReuseFixture(
             request,
             quiescent,
             revocations,
+            get controlRequests() {
+                return controlRequests;
+            },
             get wire() {
                 return observed!.wire;
             },

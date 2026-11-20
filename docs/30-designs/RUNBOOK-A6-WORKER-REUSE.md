@@ -182,6 +182,17 @@ SDK取得统一调用下节`prepareReuseSdk`：无显式本地输入时原样委
 
 五个独立test严格为P0、P1+P2、R、E、L，无skip。P0/R/E/L各用`{timeout:120000,concurrency:false}`；P1+P2仅一个`test`，用`{timeout:600000,concurrency:false}`，在同一个callback内create fixture→64轮正向/四项负测→finally close，不能拆成两个test隐式共享fixture或依赖执行顺序。P2生成64条分项结果：P1+P2先在同一常驻Worker执行request(64)这一reference Session，取得真实旧ctx/listener/fsTarget/token；它不计64个测量轮但必须与随后64轮同PID。测量轮0使用该reference，轮1..63使用真实前一测量轮，因而64轮都有实际前驱可逐项负测，不用首轮空对象/缺省true代替。P1+P2显式createReuseFixture(sdk,65)；P0/R/E/L与fixture.test各用createReuseFixture(sdk,2)，不共享fixture。SDK在before hook准备、timeout=600000，仅共享只读SDK制品；每个case独立fixture/DB/pool，after仅清理SDK，不能代清case资源制造PASS。全文件`--test-timeout=1200000`。没有墙钟跨度/同PID/正向SDK调用的证据则不能判长期复用PASS。
 
+### 监听器的全部 fixture 网络观察契约
+
+固定方案：fixture在原persistence/operation server追加只读request监听器，保留逐请求interface、Bearer摘要、path、父端performance时间，仅返回数组getter；不读取/保存原始token/body、不回复请求、不改handler。SDK沿原wire/upstream计数，模型沿父端实际HTTP请求计数，统一由父端取样。
+
+只读HTTP观察器已由T5a独立交付；下列IPC和整轮断言在T5允许文件实现。
+
+observed-bootstrap仅在存在真实前驱的agent/request阶段发出trace `old-event-ready`；父端独立观察四类服务端计数100ms不变后，向既有私有trace文件旁的`.ack`写0600 JSON `{session,phase:'ready'}`。Worker等该session/phase的ACK后才调用真实旧ctx.emit，验证旧callback不增，等待100ms（用当前payload.signal可取消）并写trace `old-event-ended`。父端核与baseline计数相同，再连续观察100ms不变，写phase=`done`的ACK。Worker见done后才继续原样next及正式provider正向探针。两端ACK仅本测试IPC，不带grant、URL、模型或请求替身；单阶段最长5s，检查signal/父端停止条件；失败抛错并继续原正式finally清理，不在清理阶段等ACK，不自行dispose任何生产资源。
+
+父端watcher只读trace、实际server计数并写ACK；有异常保存脱敏fixture错误，测试必须失败，case finally停止/等待watcher后关闭原owned资源。父端从每轮dispatch前一直检查到receipt后：persistence/operation新观察行均须为当前grant摘要；SDK沿原当轮摘要断言、模型仍仅当前Session一次。父端跨绑定HTTP负测精确产生1条旧摘要HTTP记录，额外条目失败；各轮间等待及最终shutdown后核观察cursor无额外旧请求。这个更宽区间用来捕获ACK短窗口后迟到的旧身份请求，不能仅验证100ms窗口后忽略其余记录。所有长期64轮记录listener网络分项及各面counter前后值，未有真实前驱不得填true。
+
+
 ## 已核实前置状态
 
 T0已于2026-11-20通过：计划提交`7b829986238e4a6b9f10b3773d1dcc492d03fbd0`仅本文、parent=`fe12c24ddb6d2a061559173e623419d5aa97b99b`、获审blob=`7f25770725298fb54c793f0b7ff362d9a76eec88`；提交后clean，远端main同基线。Worker typecheck exit0；原Orchestrator check:core在B既有系统回环代理下exit0，wall=137110ms，123 tests中121通过/0失败/2既有条件skip，Go test/vet及原pack检查通过。代理值仅本地私有使用，未写入Git。初次未注入代理的baseline进程树已取消，最终采用完整代理运行结果，不把取消运行算PASS。T0不包含本任务新单测/长期case/九项真实Temporal，后续仍须执行完整固定门禁。独立本地实施已授权，最终merge仍等待MASTER确认A安全点。
@@ -258,23 +269,9 @@ export function isolateVerifiedSdkFiles(
 
 测试concurrency=false、各test120000、无skip；真实SDK选择与数据IO单测分开记录结果。原T2五项transport测试在同来源SDK上完整执行，CI默认是真实Linux SDK build→六探针→实际HTTP/2 RPC，不依赖Mac路径。本地使用受控输入时只证明该显式来源，全量默认网络准备失败事实保留；日志不写原始路径/token/header。T6将wrapper单测加入默认test:worker-reuse，CI不注入BENTO_A6_WORKER_REUSE_SDK_BUNDLE、不改workflow、不打包本地bundle/cache或历史manifest；本轮不为跨平台输入增加canonical inventory或新发布流程。
 
-## T5a：补齐 fixture 控制面 HTTP 观察（作者定向修订，待MASTER审核）
-
-起点为T4提交3a4f149，T5三新源仍未提交。此前两次完整五case结果只覆盖原SDK/模型观察范围，不判定本修订的T5完成。允许修改：`apps/orchestrator/acceptance/worker-reuse/fixture.ts`、`fixture.test.ts`、本文（3）；专核：同目录`observer.ts`（共4）。禁止改生产处理器、正式bootstrap/loop/provider或额外清理。
-
-固定方案：fixture在原persistence/operation server追加只读request监听器，保留逐请求interface、Bearer摘要、path、父端performance时间，仅返回数组getter；不读取/保存原始token/body、不回复请求、不改handler。SDK沿原wire/upstream计数，模型沿父端实际HTTP请求计数，统一由父端取样。
-
-T5a只交只读HTTP观察器和独立fixture.test原有SDK/撤权case中的HTTP计数断言，既有跨Session persistence POST实际403对应恰1条记录；再发送无效空对象operations POST，实际拒绝且对应恰1条operation记录，完整私有SQL不变。不把尚未提交的T5观测源拆出依赖闭包。下列IPC和整轮断言由后续原T5允许文件实现。
-
-observed-bootstrap仅在存在真实前驱的agent/request阶段发出trace `old-event-ready`；父端独立观察四类服务端计数100ms不变后，向既有私有trace文件旁的`.ack`写0600 JSON `{session,phase:'ready'}`。Worker等该session/phase的ACK后才调用真实旧ctx.emit，验证旧callback不增，等待100ms（用当前payload.signal可取消）并写trace `old-event-ended`。父端核与baseline计数相同，再连续观察100ms不变，写phase=`done`的ACK。Worker见done后才继续原样next及正式provider正向探针。两端ACK仅本测试IPC，不带grant、URL、模型或请求替身；单阶段最长5s，检查signal/父端停止条件；失败抛错并继续原正式finally清理，不在清理阶段等ACK，不自行dispose任何生产资源。
-
-父端watcher只读trace、实际server计数并写ACK；有异常保存脱敏fixture错误，测试必须失败，case finally停止/等待watcher后关闭原owned资源。父端从每轮dispatch前一直检查到receipt后：persistence/operation新观察行均须为当前grant摘要；SDK沿原当轮摘要断言、模型仍仅当前Session一次。父端跨绑定HTTP负测精确产生1条旧摘要HTTP记录，额外条目失败；各轮间等待及最终shutdown后核观察cursor无额外旧请求。这个更宽区间用来捕获ACK短窗口后迟到的旧身份请求，不能仅验证100ms窗口后忽略其余记录。所有长期64轮记录listener网络分项及各面counter前后值，未有真实前驱不得填true。
-
-验证：T5a完整执行fixture.test两case（无skip）、Orchestrator typecheck、focused ESLint/Prettier、diff检查，保留原SDK/mTLS及SQL安全断言；PASS后只提交fixture.ts/fixture.test.ts与RUNBOOK并删除T5a步骤，把T5前置补充为只读HTTP观察器通过提交。T5在原10文件预算内实现上述IPC与整轮断言，完整执行原五case（64轮≥315s与startedMs）、Worker/Orchestrator类型、Lint/格式、diff，核新源≤1000行，再提交model/observed/real-test/public/RUNBOOK自洽闭包。两次旧网络范围测试不计作修订后T5 PASS。计数变化、IPC超时、额外请求或需改生产文件均STOP回MASTER。
-
 ## T5：同生产 base 的长期四项隔离与补位
 
-前置状态：T4已实现生产ingress/mTLS fixture与独立observer，下方记录本地受控SDK来源fixture两项2/2无skip；本步以前一T4产物提交为基线。
+前置状态：T4已实现生产ingress/mTLS fixture与独立observer，下方记录本地受控SDK来源fixture两项2/2无skip；本步以前一T4及下方T5a只读HTTP观察器通过提交为基线。
 允许修改：新目录 `model-adapter.ts`、`observed-bootstrap.ts`、`real-reuse.test.ts`、`public-files.json`、本文（5）。
 专核：`apps/worker/base-bootstrap.ts`、`apps/worker/sdk-transport.ts`、`apps/worker/run-worker.ts`、`apps/orchestrator/execution-service/warm-worker.ts`、`apps/worker/dsh-worker.ts`（共10；MASTER定向批准新增正式loop只读专核）。
 禁止修改：全部专核文件、生产测试探针/临时endpoint、旧验收。
@@ -370,3 +367,7 @@ PY
 独立撤权用例在interactive输入未closeInput/cancel时观察到上游held stream；controller.takeover因沙盒退出未证实而拒绝，记录UNKNOWN/stopConfirmed=false。实际既有RPC结束、官方done拒绝、后续write拒绝、上游held消失；新连接旧token返回grpc16且不触达上游，邻Session新token正向成功。SDK transport主动关闭后父端quiescent断言全部连接/stream归零、原生Worker子进程为空，断言先于fixture finally清理。
 
 Orchestrator typecheck、三源focused ESLint/Prettier、public-files格式与git diff检查通过；三个新源分别低于1000行。fixture仅本地合成helper/沙盒运行契约，不是真实沙盒进程或磁盘；不证明沙盒已停止、不证明真实外部模型、长期跨Session同PID/四项隔离/Worker失败补位或默认网络SDK构建已恢复。A6-05仍待T5/T6。
+
+## T5a 实际通过记录
+
+2026-11-20，本条所属提交按MASTER批准b18e78ef39e4260528b9ffa0aeb4e96273bf6a76交付fixture只读persistence/operation HTTP观察器，不改生产handler。独立fixture两case最终2/2、fail0/skip0、duration1627.842458ms；真实跨Session persistence POST403/无效operations POST403分别恰1条对应面/原grant SHA摘要/path记录，完整私有SQL原行及脱敏snapshot不变，SDK/撤权原断言保持。首次误将operations空对象预期400，实际正式入口403；修正为精确403后完整重验，不计首次失败为PASS。Orchestrator typecheck、两源ESLint/Prettier与diff通过，新fixture639行、fixture.test289行。该小步不计T5完整网络负测已通过；剩余IPC及迟到请求检查仍须在原T5完整五case重验。

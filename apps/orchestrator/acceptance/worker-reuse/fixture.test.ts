@@ -173,6 +173,31 @@ test(
             });
             assert.equal(denied.status, 403);
             await denied.arrayBuffer();
+            assert.equal(fixture.controlRequests.length, 1);
+            assert.equal(fixture.controlRequests[0]!.interface, 'persistence');
+            assert.equal(
+                fixture.controlRequests[0]!.tokenSha256,
+                sha256(first.grant.token),
+            );
+            assert.equal(fixture.controlRequests[0]!.path, '/rpc');
+            const invalid = await fetch(
+                new URL('/operations', first.operationUrl),
+                {
+                    method: 'POST',
+                    headers: { authorization: 'Bearer ' + first.grant.token },
+                    body: '{}',
+                    signal: AbortSignal.timeout(5000),
+                },
+            );
+            assert.equal(invalid.status, 403);
+            await invalid.arrayBuffer();
+            assert.equal(fixture.controlRequests.length, 2);
+            assert.equal(fixture.controlRequests[1]!.interface, 'operation');
+            assert.equal(
+                fixture.controlRequests[1]!.tokenSha256,
+                sha256(first.grant.token),
+            );
+            assert.equal(fixture.controlRequests[1]!.path, '/operations');
             assert(
                 isDeepStrictEqual(sqlRows(fixture), rows),
                 'Denied probes changed private SQL rows',
