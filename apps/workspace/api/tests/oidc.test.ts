@@ -15,19 +15,19 @@ import {
     snapshotSha256,
 } from '@/apps/orchestrator/src/execution-service/service.ts';
 import test from 'node:test';
-import { mockAccounts } from './account-store.ts';
-import { sessionAuth } from './auth.ts';
-import { httpBackend } from './execution-service-http.ts';
-import { mockBackend } from './mock.ts';
+import { mockAccounts } from '../account-store.ts';
+import { sessionAuth } from '../auth.ts';
+import { httpBackend } from '../execution-service-http.ts';
+import { mockBackend } from '../mock.ts';
 import {
     oidcFixtureClient,
     oidcFixtureEmail,
     startOidcFixture,
-} from './oidc-fixture.ts';
-import { keycloakAuth } from './oidc.ts';
-import { taskEntryServer } from './server.ts';
-import { mySpace } from './space.ts';
-import { spaceObjectKey, spaceStorage } from './space-storage.ts';
+} from './fixtures/oidc-fixture.ts';
+import { keycloakAuth } from '../oidc.ts';
+import { taskEntryServer } from '../server.ts';
+import { mySpace } from '../space.ts';
+import { spaceObjectKey, spaceStorage } from '../space-storage.ts';
 
 test('built auth pages retain the OIDC login, logout and account closure contract', async (t) => {
     const fixture = await startOidcFixture();
@@ -112,7 +112,7 @@ test('built auth pages retain the OIDC login, logout and account closure contrac
         const body = Buffer.from(await result.arrayBuffer());
         assert.deepEqual(
             body,
-            await readFile(new URL('../auth/dist/' + file, import.meta.url)),
+            await readFile(new URL('../../auth/dist/' + file, import.meta.url)),
         );
         return body.toString('utf8');
     }
@@ -304,12 +304,12 @@ test(
         const origin = 'http://127.0.0.1:8080';
         const controllerPath = fileURLToPath(
             new URL(
-                '../../orchestrator/tests/execution-service/fixtures/controller.ts',
+                '../../../orchestrator/tests/execution-service/fixtures/controller.ts',
                 import.meta.url,
             ),
         );
         const registerPaths = fileURLToPath(
-            new URL('../../../register-paths.mjs', import.meta.url),
+            new URL('../../../../register-paths.mjs', import.meta.url),
         );
         const child = spawn(
             process.execPath,

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import { test } from 'node:test';
-import { openSpaceIntegrityFixture } from './space-integrity-fixture.ts';
+import { openSpaceIntegrityFixture } from './fixtures/space-integrity-fixture.ts';
 
 test('space integrity physical HTTP fixture saves and downloads original bytes once', async () => {
     const f = await openSpaceIntegrityFixture();

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
-import { httpBackend } from './execution-service-http.ts';
+import { httpBackend } from '../execution-service-http.ts';
 
 test('cancel proxy keeps owner, route, status and detail projection', async () => {
     const view = {

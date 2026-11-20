@@ -9,11 +9,11 @@ import { test, type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { executionHttp } from '@/apps/orchestrator/src/execution-service/http.ts';
 import { Store } from '@/apps/orchestrator/src/execution-service/store.ts';
-import { httpBackend } from './execution-service-http.ts';
+import { httpBackend } from '../execution-service-http.ts';
 import {
     openSpaceIntegrityFixture,
     type SpaceIntegrityFixture,
-} from './space-integrity-fixture.ts';
+} from './fixtures/space-integrity-fixture.ts';
 
 const hexSHA256 = (text: string) =>
     createHash('sha256').update(text).digest('hex');

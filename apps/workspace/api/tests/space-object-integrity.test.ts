@@ -5,7 +5,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import {
     openSpaceIntegrityFixture,
     type SpaceIntegrityFixture,
-} from './space-integrity-fixture.ts';
+} from './fixtures/space-integrity-fixture.ts';
 
 const chunks = [Buffer.alloc(16777216, 1), Buffer.alloc(3, 2)];
 const total = 16777219;

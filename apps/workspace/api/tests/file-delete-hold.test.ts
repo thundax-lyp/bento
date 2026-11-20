@@ -4,9 +4,9 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { httpBackend } from './execution-service-http.ts';
-import { mockBackend } from './mock.ts';
-import { RequestError } from './protocol.ts';
+import { httpBackend } from '../execution-service-http.ts';
+import { mockBackend } from '../mock.ts';
+import { RequestError } from '../protocol.ts';
 
 test('file delete hold uses the private HTTP methods and validates the receipt', async () => {
     const requests: unknown[] = [];

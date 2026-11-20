@@ -6,13 +6,16 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
-import { mockAccounts } from './account-store.ts';
-import { demoAccounts, sessionAuth } from './auth.ts';
-import { mockBackend } from './mock.ts';
-import type { Backend } from './protocol.ts';
-import { taskEntryServer } from './server.ts';
-import { spaceObjectKey, spaceStorage } from './space-storage.ts';
-import { mySpace } from './space.ts';
+import { mockAccounts } from '@/apps/workspace/api/account-store.ts';
+import { demoAccounts, sessionAuth } from '@/apps/workspace/api/auth.ts';
+import { mockBackend } from '@/apps/workspace/api/mock.ts';
+import type { Backend } from '@/apps/workspace/api/protocol.ts';
+import { taskEntryServer } from '@/apps/workspace/api/server.ts';
+import {
+    spaceObjectKey,
+    spaceStorage,
+} from '@/apps/workspace/api/space-storage.ts';
+import { mySpace } from '@/apps/workspace/api/space.ts';
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type Row = Record<string, SQLOutputValue>;
