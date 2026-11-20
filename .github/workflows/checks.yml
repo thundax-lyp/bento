@@ -23,6 +23,9 @@ jobs:
             orchestrator: ${{ steps.paths.outputs.orchestrator }}
             worker: ${{ steps.paths.outputs.worker }}
             browser: ${{ steps.paths.outputs.browser }}
+            space: ${{ steps.paths.outputs.space }}
+            queue: ${{ steps.paths.outputs.queue }}
+            temporal: ${{ steps.paths.outputs.temporal }}
         steps:
             - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
               with:
@@ -37,52 +40,75 @@ jobs:
                   orchestrator=false
                   worker=false
                   browser=false
+                  space=false
+                  queue=false
+                  temporal=false
 
                   changed_paths=$(mktemp)
-                  # Use the checked-out merge result for PRs and the pushed tip for main.
-                  # Treat renames as a deletion and addition to check both areas.
+                  # PRs compare the complete merge result; main compares the pushed range.
+                  # Renames check both the old and new paths.
                   if git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
                       git diff --no-renames --name-only -z "$BASE_SHA" HEAD -- > "$changed_paths"
                       while IFS= read -r -d '' path; do
                           case "$path" in
                               *.md|assets/*|public-files.json) ;;
-                              apps/workspace/*|deploy/workspace/*|deploy/keycloak/*)
+                              apps/workspace/web/acceptance/web-space-integrity.spec.ts|apps/workspace/web/acceptance/space-integrity-fixture.ts|apps/workspace/web/playwright.web-space-integrity.config.ts)
+                                  workspace=true
+                                  space=true
+                                  ;;
+                              apps/workspace/web/acceptance/web-queue-isolation.spec.ts|apps/workspace/web/acceptance/queue-*-fixture.ts|apps/workspace/web/playwright.web-queue-isolation.config.ts)
+                                  workspace=true
+                                  queue=true
+                                  ;;
+                              apps/workspace/web/e2e/*|apps/workspace/web/playwright.config.ts)
                                   workspace=true
                                   browser=true
                                   ;;
+                              apps/workspace/*|deploy/workspace/*|deploy/keycloak/*)
+                                  workspace=true
+                                  browser=true
+                                  space=true
+                                  queue=true
+                                  ;;
                               apps/orchestrator/*|deploy/orchestrator/*)
-                                  # Workspace API integration tests import Orchestrator.
+                                  # API tests and queue acceptance import Orchestrator.
                                   workspace=true
                                   orchestrator=true
+                                  queue=true
+                                  temporal=true
                                   ;;
                               apps/worker/*|deploy/worker/*)
-                                  # Orchestrator imports Worker and is exercised by Workspace API tests.
                                   workspace=true
                                   orchestrator=true
                                   worker=true
+                                  queue=true
+                                  temporal=true
                                   ;;
                               *)
                                   workspace=true
                                   orchestrator=true
                                   worker=true
                                   browser=true
+                                  space=true
+                                  queue=true
+                                  temporal=true
                                   ;;
                           esac
                       done < "$changed_paths"
                   else
-                      # A new ref or unavailable base leaves the scope unknown.
+                      # Unknown scope must run every check.
                       workspace=true
                       orchestrator=true
                       worker=true
                       browser=true
+                      space=true
+                      queue=true
+                      temporal=true
                   fi
 
-                  {
-                      printf 'workspace=%s\n' "$workspace"
-                      printf 'orchestrator=%s\n' "$orchestrator"
-                      printf 'worker=%s\n' "$worker"
-                      printf 'browser=%s\n' "$browser"
-                  } >> "$GITHUB_OUTPUT"
+                  for check in workspace orchestrator worker browser space queue temporal; do
+                      printf '%s=%s\n' "$check" "${!check}" >> "$GITHUB_OUTPUT"
+                  done
 
     repository:
         name: Repository checks
@@ -113,7 +139,7 @@ jobs:
             - run: pnpm install --frozen-lockfile
             - run: pnpm check:workspace
               if: ${{ needs.changes.outputs.workspace == 'true' }}
-            - run: pnpm check:orchestrator
+            - run: pnpm --filter @bento/orchestrator check:core
               if: ${{ needs.changes.outputs.orchestrator == 'true' }}
             - run: pnpm check:worker
               if: ${{ needs.changes.outputs.worker == 'true' }}
@@ -127,7 +153,10 @@ jobs:
     browser:
         name: Web Chromium E2E
         needs: changes
-        if: ${{ needs.changes.outputs.browser == 'true' }}
+        if: >-
+            ${{ needs.changes.outputs.browser == 'true' ||
+                needs.changes.outputs.space == 'true' ||
+                needs.changes.outputs.queue == 'true' }}
         runs-on: ubuntu-24.04
         timeout-minutes: 15
         steps:
@@ -140,7 +169,36 @@ jobs:
                   node-version: 22.x
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
+            - name: Use Ubuntu HTTPS package mirrors
+              shell: bash
+              run: |
+                  # Regional HTTP mirrors caused multi-minute apt downloads in recent runs.
+                  sudo sed -i -E \
+                      's|http://([a-z0-9.-]+\.)?archive.ubuntu.com/ubuntu/?|https://archive.ubuntu.com/ubuntu/|g; s|http://security.ubuntu.com/ubuntu/?|https://security.ubuntu.com/ubuntu/|g' \
+                      /etc/apt/sources.list.d/ubuntu.sources
             - run: pnpm --filter @bento/web exec playwright install --with-deps --only-shell chromium
             - run: pnpm --filter @bento/web test:e2e
+              if: ${{ needs.changes.outputs.browser == 'true' }}
             - run: pnpm --filter @bento/web test:space-integrity
+              if: ${{ needs.changes.outputs.space == 'true' }}
             - run: pnpm --filter @bento/web test:queue-isolation
+              if: ${{ needs.changes.outputs.queue == 'true' }}
+
+    temporal:
+        name: Temporal retry acceptance
+        needs: changes
+        if: ${{ needs.changes.outputs.temporal == 'true' }}
+        runs-on: ubuntu-24.04
+        timeout-minutes: 30
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  persist-credentials: false
+            - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: 22.x
+                  cache: pnpm
+            - run: pnpm install --frozen-lockfile
+            - run: pnpm --filter @bento/orchestrator test:temporal-retry
+            - run: node apps/orchestrator/acceptance/temporal-retry/check-package.mjs
