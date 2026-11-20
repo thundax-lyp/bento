@@ -82,7 +82,7 @@ func TestTemporalRetryAfterCompletedRun(t *testing.T) {
 	const name = "Temporal Activity retries a completed Run without repeating its effect"
 	cmd := exec.CommandContext(ctx, "node", "--import", "../../register-paths.mjs",
 		"--experimental-strip-types", "--test", "--test-reporter=tap",
-		"--test-name-pattern=^"+name+"$", "tests/execution-service/service.test.ts")
+		"--test-name-pattern=^"+name+"$", "tests/execution-service/reconciliation.test.ts")
 	cmd.Env = append(os.Environ(), "BENTO_TEST_TEMPORAL_BINARY="+binary)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
