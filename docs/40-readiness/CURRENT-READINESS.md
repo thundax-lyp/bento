@@ -47,7 +47,7 @@
 | `A6-02`      | 调度与池化                                                                                     | Activity 重试                              | 已实现       | 真实 Temporal Server 1.29.1、生产 Go Workflow/Activity 和 TS 宿主链路九项必需测试 9/9，无 skip；成功回包丢失后原执行重投、宿主/Worker 与原 server DB 重启均复用持久尝试、原回执，独立文件副作用一次。见[2026-11-19 证据](#a6-02-真实-temporal-重投)。                                                                                                                                                                                          |
 | `A6-03`      | 调度与池化                                                                                     | 失联或超时                                 | 待核验       | 待验真实心跳、失联和退出后的派发。                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `A6-04`      | 调度与池化                                                                                     | 容量耗尽                                   | 部分实现     | 本地验证 429 和双槽（`6e3515f`）；完整资源上限待验。                                                                                                                                                                                                                                                                                                                                                                                           |
-| `A6-05`      | 调度与池化                                                                                     | 跨会话池重用                               | 待核验       | 待核对长期池复用的四项隔离。                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `A6-05`      | 调度与池化                                                                                     | 跨会话池重用                               | 已实现       | 生产base与64轮跨Session四项隔离通过；同HEAD默认官方SDK、完整CI及Codex通过。见[证据](#a6-05-worker-长期池复用)。                                                                                                                                                                                                                                                                                                                                |
 | `A6-06`      | 调度与池化                                                                                     | 升级遇到活跃执行                           | 待核验       | 待验升级排空。                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | **`A7`**     | [部署等级](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a7-部署等级)              | **需求汇总**                               | **部分实现** | 隔离 Node.js 22.23.2 停服演练通过。单库（`84cb251`）验证终态 Run 和幂等回执，三库（`715b303`）验证会话历史、代次和继续执行。[演练命令](../../deploy/README.md#单节点执行宿主停服备份还原演练)。待验真实卷、外部依赖、生产与在线恢复、多节点及 RPO/RTO。                                                                                                                                                                                        |
 | `A7-01`      | 部署等级                                                                                       | 声明部署范围并备份还原                     | 部分实现     | 单库与三库停服还原通过（`84cb251`、`715b303`）；真实卷与外部依赖待验。                                                                                                                                                                                                                                                                                                                                                                         |
@@ -236,3 +236,88 @@
 - **旧 fixture 收敛**：聚合期间旧 A2 stale-flush 曾失败，原日志未展开内部 cause。独立受控时序证实自动 flush 的真实旧 200 回包可跨 takeover 混入 trace，造成原严格单一 403 断言及默认 cleanup 失败；不追认原失败必为同一 cause。仅在原 fixture 的 turn 中观察最近事件+200ms timer截止与真实 flush Promise 全部 settled（10 秒上限），保持原 Promise/错误、旧五项断言、共享 runtime 与生产 RemoteSession 不变。受控 barrier 证明 200 未释放时 turn 不返回，释放后原严格 flush403/SQL/authority 不变；原 Provider5+SIGKILL4 回归 9/9。原失败、受控诊断及修复后完整通过日志分别保留。
 - **证据摘要**：三例 CaseReport 均为上述代码 SHA、workerExecutions=1、before/after 摘要相同且 cleanup 四项为 true；按 happy/lost-host/lost-server-host 顺序的 canonical reports JSON（含末尾换行）SHA-256=`74f2573eff5a24591a79e3e6ced91dea8cba47ad43f92ce7a2ecc220427517a9`。完整根检查日志 SHA-256=`aba5d7eba1084532a85b983846321180e1149f0baa9d5519628a8cf9c55a7ac8`，受控收敛屏障报告 SHA-256=`c741b052edf4584c2212c35d5a92ff4a4ca695194e972f6911a692a87052663b`。原始 history、SQL、文件/回执与私有运行材料留在受控目录，不随源码发布。
 - **Not Covered**：正常派发只作为本轮重投前置，A6-01 的审批/取消/完整资源/受控复用、A6-03 的真实心跳失联与双侧独立停止、A6-04 全资源上限、A6-05 长期池隔离、A6-06 升级排空未在本轮闭合。真实模型/OpenShell/不可信用户代码、未知在途副作用恢复、根 runner 被外部 SIGKILL/机器掉电、多节点与生产发布就绪均不由这些 fixture 结果证明。A6 父项保持部分实现。
+
+## A6-05 Worker 长期池复用
+
+- **日期与代码**：2026-11-20，生产装配/transport/官方DSH依赖及T5验收代码提交`51704456067ab6666fbfed7feb8b3f7955204063`，前置`4ab80f6`。正式base由run-worker显式加载，旧warm pool与正式loop未替换。官方DSH 0.2.1-rc.4、Cordis4.0.5、Connect2.1.2，OpenShell SDK源码`ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47`。本次T5为获审controlled-local SDK身份、原六probe真实执行，不宣称默认网络准备已恢复。
+- **命令与结果**：根目录`node --import ./register-paths.mjs --test --test-concurrency=1 --test-timeout=1200000 apps/orchestrator/acceptance/worker-reuse/real-reuse.test.ts`在上述显式来源下五case5/5、fail0/skip0，duration342406.328208ms。P0无观测包装两轮成功；P1/P2一个reference加64测量Session、8tenant，父端ps与trace同PID77309、span315001.185667ms；每轮startedMs断言不早于round×5000。
+- **四项与网络**：64轮真实wire凭据摘要/跨目标SDK7与persistence403、旧Context callback卸载、真实session close先于下轮、真实FsTarget namespace拒绝及当轮resolve/readText均通过；完整私有SQL行/receipt不变，历史和模型实际HTTP请求各自只含自身marker。旧事件窗口在新base创建前，父端真实persistence/operation/SDK stream与connection/upstream/model request与connection共7项计数，64轮before=after；整轮与轮间/关闭后继续核迟到请求，原始凭据/配置/日志不写公开证据。
+- **撤权、失败与关闭**：R在真实interactive输入仍打开时正式takeover；旧done/write拒绝、旧token重连grpc16且不触达上游，旧PID退出后新PID成功，邻Session不变。无沙盒退出独立证据故UNKNOWN/stopConfirmed=false。E真实base全部资源清理后模型disposer注入失败，无成功回执且更换PID成功。L pool关闭后Worker/SDK/model连接归零，同SQLite重开并完成新Session，旧events/receipts完整行不变；各fixture服务器await close后删除owned临时目录。
+- **本机门禁边界**：执行时HEAD为`ca8c086`、T6入口/文档为工作区待提交内容。controlled-local全入口中旧Orchestrator121PASS/2既有skip，新runtime14/14、reuse23/23、真实Temporal9/9无skip及pack均通过；仅新pack脚本URL/console显式导入遗漏导致最终Lint失败。该唯一脚本修正后全仓lint/format与实际installed-tree pack通过，生产/测试源码不变。三次本机`pnpm check`均exit1：default新SDK install失败（518857ms）、controlled末端Lint失败（596614ms）、controlled原A1 generate失败（284308ms）。不宣称本机聚合通过。原A1工具/来源/TLS/预算不改，也不扩大wrapper；不继续安装重跑。
+- **CI观测器补强**：首轮CI默认SDK与六probe、新runtime14/14通过；reuse22/23，长期约第57次Session前monitor泛化异常停止ACK，原始cause未记录，不能推断生产泄漏或无bug。已补齐完整newline字节cursor/EOF与脱敏错误分类；纯矩阵及真实文件边界加原fixture共3/3，短IPC1/1，受控完整五case5/5（325427.3755ms、PID8624、span315000.372666ms、64轮全true/七计数相等、EOF与cleanup通过）。原cause未证实，未将修复猜测写成根因结论。后续同HEAD CI已通过，见下方聚合证据。
+- **CI来源**：原官方API403/rate_limit导致Temporal九项before未执行。按MASTER审核61835f5，现仅Temporal CI用step-only只读GitHub token认证预取固定官方v1.5.1 Linux amd64归档，120秒上限、私有0700目录/0600文件，大小50408448与SHA256 `ddc95e08b0b076efd4ea9733a3f488eb7d2be875f8834e616cd2a37358b4852d`通过后交原tool再次核成员、binary与版本；测试不接收token，失败/always仅清理owned目录。实际预取及清理均通过，不宣称Temporal默认无输入下载分支已恢复；本机stub只证控制流。
+- **CI聚合证据**：2026-11-20，PR #73 head `a913bfb883e2c9f7d41d90321c37fc269eb68487`，Actions测试合并树`325017918eacfe244d535e27cc14dcc97ae774de`，[run44716026168](https://github.com/thundax-lyp/bento/actions/runs/44716026168)全部适用检查通过。Repository实际默认SDK `source=official-build/probes=6`，新runtime14/14、SDK/fixture/reuse24/24均fail0skip0；旧Orchestrator121PASS/2既有可选skip（不计本次验收）、Workspace API55/55、Go test/vet、类型、pack、lint/format通过，Web Chromium及空间/队列验收通过。独立Temporal9/9无skip，CLI1.5.1/Server1.29.1，happy/lost-host/lost-server-host三报告均通过且四项cleanup全true。Codex当前head明确completed、无finding及未决线程。T6完成，临时RUNBOOK删除；交付合并仍等MASTER A安全点。A6-05已实现，A6父项部分、A6-01/04缺项不变。
+- **可回读摘要**：Repository job136219608645，实际PID13435、64轮span315000.144770ms，每轮四flag及7计数相等均通过，五case/EOF/owned清理无skip；64轮canonical JSON（含末尾换行）SHA256 `5f51ff77be7b4d62da5654ca3e085ac0aeced1ebb0d6d4a262bd52a73eeda8e0`，完整日志SHA256 `8f7943efb070a7c9a90b3dacd62a9a264ee14392a8173214ca5a16e526cf0461`。Temporal job136219608590完整日志SHA256 `698794e397933d9ea88e60c79a3da46f38d7d46b86ee9254380f3bb629ea18bf`；原始私有运行材料不发布。以上证据对应明确head，最终文档收口提交仍需其自身全部适用CI/Codex。
+- **来源诊断边界**：最初活动runtime内100ms窗口会撞上正式RemoteSession已排队的200ms刷盘四RPC；一次明确不发旧emit的临时反事实仍出现四条当前摘要200，原源已恢复。此诊断不计T5通过；获审改为新base创建前的独立零网络窗口，并在完整五case中重验，未过滤请求或修改生产清理。
+- **Not Covered**：模型HTTP/文件helper/沙盒running观察均为本地fixture；不证明外部模型质量、真实OpenShell沙盒/卷退出或磁盘、任意不可信factory安全、多节点、升级排空或生产发布就绪。CI受控本地SDK正向未覆盖，SDK默认官方build与Temporal认证归档证据分来源记录；A6生产依赖最终合并仍须MASTER确认A安全点。
+
+64个测量轮的分项结果（a913bfb官方SDK Linux CI；reference另计；单位ms；C/L/N/F依次为凭据、监听器、连接、文件namespace）：
+
+| 轮次 | 实际开始偏移ms | C    | L    | N    | F    | 7项网络计数前后相等 |
+| ---- | -------------: | ---- | ---- | ---- | ---- | ------------------- |
+| 0    |          0.000 | PASS | PASS | PASS | PASS | PASS                |
+| 1    |       5000.757 | PASS | PASS | PASS | PASS | PASS                |
+| 2    |      10000.972 | PASS | PASS | PASS | PASS | PASS                |
+| 3    |      15000.311 | PASS | PASS | PASS | PASS | PASS                |
+| 4    |      20000.225 | PASS | PASS | PASS | PASS | PASS                |
+| 5    |      25000.946 | PASS | PASS | PASS | PASS | PASS                |
+| 6    |      30001.109 | PASS | PASS | PASS | PASS | PASS                |
+| 7    |      35000.282 | PASS | PASS | PASS | PASS | PASS                |
+| 8    |      40000.741 | PASS | PASS | PASS | PASS | PASS                |
+| 9    |      45001.570 | PASS | PASS | PASS | PASS | PASS                |
+| 10   |      50000.774 | PASS | PASS | PASS | PASS | PASS                |
+| 11   |      55002.406 | PASS | PASS | PASS | PASS | PASS                |
+| 12   |      60001.611 | PASS | PASS | PASS | PASS | PASS                |
+| 13   |      65000.654 | PASS | PASS | PASS | PASS | PASS                |
+| 14   |      70001.648 | PASS | PASS | PASS | PASS | PASS                |
+| 15   |      75001.216 | PASS | PASS | PASS | PASS | PASS                |
+| 16   |      80000.220 | PASS | PASS | PASS | PASS | PASS                |
+| 17   |      85000.674 | PASS | PASS | PASS | PASS | PASS                |
+| 18   |      90001.377 | PASS | PASS | PASS | PASS | PASS                |
+| 19   |      95000.513 | PASS | PASS | PASS | PASS | PASS                |
+| 20   |     100001.843 | PASS | PASS | PASS | PASS | PASS                |
+| 21   |     105000.787 | PASS | PASS | PASS | PASS | PASS                |
+| 22   |     110000.249 | PASS | PASS | PASS | PASS | PASS                |
+| 23   |     115000.474 | PASS | PASS | PASS | PASS | PASS                |
+| 24   |     120001.148 | PASS | PASS | PASS | PASS | PASS                |
+| 25   |     125001.085 | PASS | PASS | PASS | PASS | PASS                |
+| 26   |     130000.605 | PASS | PASS | PASS | PASS | PASS                |
+| 27   |     135001.486 | PASS | PASS | PASS | PASS | PASS                |
+| 28   |     140000.668 | PASS | PASS | PASS | PASS | PASS                |
+| 29   |     145001.066 | PASS | PASS | PASS | PASS | PASS                |
+| 30   |     150000.434 | PASS | PASS | PASS | PASS | PASS                |
+| 31   |     155001.167 | PASS | PASS | PASS | PASS | PASS                |
+| 32   |     160000.826 | PASS | PASS | PASS | PASS | PASS                |
+| 33   |     165000.782 | PASS | PASS | PASS | PASS | PASS                |
+| 34   |     170001.089 | PASS | PASS | PASS | PASS | PASS                |
+| 35   |     175001.667 | PASS | PASS | PASS | PASS | PASS                |
+| 36   |     180001.059 | PASS | PASS | PASS | PASS | PASS                |
+| 37   |     185001.068 | PASS | PASS | PASS | PASS | PASS                |
+| 38   |     190001.051 | PASS | PASS | PASS | PASS | PASS                |
+| 39   |     195000.938 | PASS | PASS | PASS | PASS | PASS                |
+| 40   |     200000.411 | PASS | PASS | PASS | PASS | PASS                |
+| 41   |     205000.060 | PASS | PASS | PASS | PASS | PASS                |
+| 42   |     210000.555 | PASS | PASS | PASS | PASS | PASS                |
+| 43   |     215001.110 | PASS | PASS | PASS | PASS | PASS                |
+| 44   |     220001.746 | PASS | PASS | PASS | PASS | PASS                |
+| 45   |     225001.243 | PASS | PASS | PASS | PASS | PASS                |
+| 46   |     230001.828 | PASS | PASS | PASS | PASS | PASS                |
+| 47   |     235001.040 | PASS | PASS | PASS | PASS | PASS                |
+| 48   |     240001.523 | PASS | PASS | PASS | PASS | PASS                |
+| 49   |     245000.856 | PASS | PASS | PASS | PASS | PASS                |
+| 50   |     250001.284 | PASS | PASS | PASS | PASS | PASS                |
+| 51   |     255000.527 | PASS | PASS | PASS | PASS | PASS                |
+| 52   |     260001.171 | PASS | PASS | PASS | PASS | PASS                |
+| 53   |     265000.759 | PASS | PASS | PASS | PASS | PASS                |
+| 54   |     270000.423 | PASS | PASS | PASS | PASS | PASS                |
+| 55   |     275001.182 | PASS | PASS | PASS | PASS | PASS                |
+| 56   |     280001.673 | PASS | PASS | PASS | PASS | PASS                |
+| 57   |     285001.587 | PASS | PASS | PASS | PASS | PASS                |
+| 58   |     290000.330 | PASS | PASS | PASS | PASS | PASS                |
+| 59   |     295000.393 | PASS | PASS | PASS | PASS | PASS                |
+| 60   |     300000.649 | PASS | PASS | PASS | PASS | PASS                |
+| 61   |     305000.167 | PASS | PASS | PASS | PASS | PASS                |
+| 62   |     310000.696 | PASS | PASS | PASS | PASS | PASS                |
+| 63   |     315000.145 | PASS | PASS | PASS | PASS | PASS                |
+
+受测源码SHA256：`trace.ts`：`961d6a23d3fb913c2864ea8fc6b738705a3f0d221a71bedad14f71e4fdcbeb0d`；`fixture.test.ts`：`76e4db3a5511d490f109d9a11e180e6d5c7368d39b408e0ba69b8a66ff710ca5`；`real-reuse.test.ts`：`4d4562b3980a31307c9213b5042befb8965496fab248009c83baa23db0870511`。
