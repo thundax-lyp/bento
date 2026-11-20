@@ -6,15 +6,15 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
 import { serveExecution } from '@/apps/orchestrator/src/execution-service/service.ts';
-import { mockAccounts } from '@/apps/workspace/api/account-store.ts';
-import { demoAccounts, sessionAuth } from '@/apps/workspace/api/auth.ts';
-import { httpBackend } from '@/apps/workspace/api/execution-service-http.ts';
-import { taskEntryServer } from '@/apps/workspace/api/server.ts';
-import { mySpace } from '@/apps/workspace/api/space.ts';
+import { mockAccounts } from '@/apps/workspace/api/src/account-store.ts';
+import { demoAccounts, sessionAuth } from '@/apps/workspace/api/src/auth.ts';
+import { httpBackend } from '@/apps/workspace/api/src/execution-service-http.ts';
+import { taskEntryServer } from '@/apps/workspace/api/src/server.ts';
+import { mySpace } from '@/apps/workspace/api/src/space.ts';
 import {
     spaceObjectKey,
     spaceStorage,
-} from '@/apps/workspace/api/space-storage.ts';
+} from '@/apps/workspace/api/src/space-storage.ts';
 
 // Identity, saved object bytes and Worker are synthetic; API, freezing and SQLite are production.
 export async function startTaskSubmissionFixture() {

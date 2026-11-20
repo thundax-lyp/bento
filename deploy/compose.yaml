@@ -45,7 +45,7 @@ services:
                 COPY --from=api-dependencies /app/node_modules ./node_modules
                 COPY --from=api-dependencies /app/apps/workspace/api/package.json ./apps/workspace/api/
                 COPY --from=api-dependencies /app/apps/workspace/api/node_modules ./apps/workspace/api/node_modules
-                COPY apps/workspace/api/*.ts ./apps/workspace/api/
+                COPY apps/workspace/api/src/*.ts ./apps/workspace/api/src/
                 COPY --from=auth-build /app/apps/workspace/auth/dist/ ./apps/workspace/auth/dist/
                 COPY register-paths.mjs ./
                 COPY shared/text-snapshot.ts ./shared/

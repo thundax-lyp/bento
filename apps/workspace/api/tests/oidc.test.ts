@@ -15,19 +15,19 @@ import {
     snapshotSha256,
 } from '@/apps/orchestrator/src/execution-service/service.ts';
 import test from 'node:test';
-import { mockAccounts } from '../account-store.ts';
-import { sessionAuth } from '../auth.ts';
-import { httpBackend } from '../execution-service-http.ts';
-import { mockBackend } from '../mock.ts';
+import { mockAccounts } from '../src/account-store.ts';
+import { sessionAuth } from '../src/auth.ts';
+import { httpBackend } from '../src/execution-service-http.ts';
+import { mockBackend } from '../src/mock.ts';
 import {
     oidcFixtureClient,
     oidcFixtureEmail,
     startOidcFixture,
 } from './fixtures/oidc-fixture.ts';
-import { keycloakAuth } from '../oidc.ts';
-import { taskEntryServer } from '../server.ts';
-import { mySpace } from '../space.ts';
-import { spaceObjectKey, spaceStorage } from '../space-storage.ts';
+import { keycloakAuth } from '../src/oidc.ts';
+import { taskEntryServer } from '../src/server.ts';
+import { mySpace } from '../src/space.ts';
+import { spaceObjectKey, spaceStorage } from '../src/space-storage.ts';
 
 test('built auth pages retain the OIDC login, logout and account closure contract', async (t) => {
     const fixture = await startOidcFixture();

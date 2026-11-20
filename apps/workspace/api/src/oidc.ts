@@ -56,9 +56,15 @@ export async function keycloakAuth({
         throw new Error('Invalid Keycloak settings');
     }
     const [loginHtml, accountHtml, styleCss] = await Promise.all([
-        readFile(new URL('../auth/dist/login.html', import.meta.url), 'utf8'),
-        readFile(new URL('../auth/dist/account.html', import.meta.url), 'utf8'),
-        readFile(new URL('../auth/dist/style.css', import.meta.url), 'utf8'),
+        readFile(
+            new URL('../../auth/dist/login.html', import.meta.url),
+            'utf8',
+        ),
+        readFile(
+            new URL('../../auth/dist/account.html', import.meta.url),
+            'utf8',
+        ),
+        readFile(new URL('../../auth/dist/style.css', import.meta.url), 'utf8'),
     ]).catch((cause: unknown) => {
         throw new WorkspaceAuthArtifactsError(
             'Workspace auth build artifacts are unavailable',
