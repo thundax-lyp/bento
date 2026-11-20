@@ -2,8 +2,8 @@ FROM golang:1.25-bookworm AS go-build
 WORKDIR /build
 COPY apps/orchestrator/go.mod apps/orchestrator/go.sum ./
 RUN go mod download
-COPY apps/orchestrator/*.go ./
-RUN CGO_ENABLED=0 go build -trimpath -o /out/bento-orchestrator .
+COPY apps/orchestrator/src/control/main.go apps/orchestrator/src/control/temporal.go ./src/control/
+RUN CGO_ENABLED=0 go build -trimpath -o /out/bento-orchestrator ./src/control
 
 FROM node:22-bookworm-slim
 WORKDIR /app
