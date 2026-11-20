@@ -30,6 +30,17 @@ export const methods: readonly SdkMethod[] = [
 const rpcPrefix = '/openshell.v1.OpenShell/';
 const exec = promisify(execFile);
 
+function deferred<T>() {
+    let resolve!: (value: T) => void;
+    let reject!: (error: unknown) => void;
+    const promise = new Promise<T>((yes, no) => {
+        resolve = yes;
+        reject = no;
+    });
+    void promise.catch(() => {});
+    return { promise, resolve, reject };
+}
+
 export async function bounded<T>(
     promise: Promise<T>,
     ms: number,
@@ -93,6 +104,12 @@ export async function createGrantFixture(sdk: PreparedSdk) {
     let startCalls = 0;
     let revokeBarrier:
         | { resolve(): void; reject(error: unknown): void; deadline: number }
+        | undefined;
+    let nextHeld:
+        | {
+              ready: ReturnType<typeof deferred<void>>;
+              upstreamClosed: ReturnType<typeof deferred<void>>;
+          }
         | undefined;
     let requests = 0;
     let stdin = 0;
@@ -434,6 +451,16 @@ export async function createGrantFixture(sdk: PreparedSdk) {
                         (name) => headers[':path'] === rpcPrefix + name,
                     );
                     assert(method);
+                    const held =
+                        method === 'ExecSandboxInteractive'
+                            ? nextHeld
+                            : undefined;
+                    if (held) {
+                        nextHeld = undefined;
+                        stream.session!.once('close', () =>
+                            held.upstreamClosed.resolve(),
+                        );
+                    }
                     requests++;
                     let buffer = Buffer.alloc(0);
                     let started = false;
@@ -461,6 +488,7 @@ export async function createGrantFixture(sdk: PreparedSdk) {
                                 } else {
                                     assert.equal(decoded, 'stdin');
                                     stdin++;
+                                    held?.ready.resolve();
                                 }
                                 buffer = buffer.subarray(size + 5);
                             }
@@ -470,6 +498,7 @@ export async function createGrantFixture(sdk: PreparedSdk) {
                         }
                     });
                     stream.on('end', () => {
+                        if (held) return;
                         try {
                             assert(started);
                             assert.equal(buffer.length, 0);
@@ -595,6 +624,76 @@ export async function createGrantFixture(sdk: PreparedSdk) {
                     status: status!,
                     headerStatus,
                     upstreamCalls: requests,
+                };
+            },
+            async openInteractive(client: ClientHttp2Session) {
+                assert.equal(nextHeld, undefined);
+                const held = {
+                    ready: deferred<void>(),
+                    upstreamClosed: deferred<void>(),
+                };
+                nextHeld = held;
+                const stream = client.request({
+                    ':method': 'POST',
+                    ':path': rpcPrefix + 'ExecSandboxInteractive',
+                    'content-type': 'application/grpc',
+                    te: 'trailers',
+                    authorization: 'Bearer ' + grant.token,
+                });
+                const status = deferred<string>();
+                const done = new Promise<void>((resolve) =>
+                    stream.once('close', resolve),
+                );
+                stream.on('response', (headers) => {
+                    const value = headers['grpc-status'];
+                    status.resolve(
+                        typeof value === 'string' ? value : 'missing',
+                    );
+                });
+                stream.on('error', status.reject);
+                // A denied bidirectional response ends before its caller's send side.
+                stream.once('end', () => stream.close());
+                stream.resume();
+                stream.write(
+                    frame(
+                        sdk.encode(
+                            'ExecSandboxInteractive',
+                            'start',
+                            binding.sandbox,
+                        ),
+                    ),
+                );
+                stream.write(
+                    frame(
+                        sdk.encode(
+                            'ExecSandboxInteractive',
+                            'stdin',
+                            binding.sandbox,
+                        ),
+                    ),
+                );
+                await bounded(
+                    held.ready.promise,
+                    5000,
+                    'held start and stdin upstream',
+                );
+                return {
+                    sendStdin() {
+                        if (stream.closed || stream.destroyed)
+                            throw new Error('Held stream already closed');
+                        stream.write(
+                            frame(
+                                sdk.encode(
+                                    'ExecSandboxInteractive',
+                                    'stdin',
+                                    binding.sandbox,
+                                ),
+                            ),
+                        );
+                    },
+                    status: status.promise,
+                    closed: done,
+                    upstreamClosed: held.upstreamClosed.promise,
                 };
             },
             beginRevoke,

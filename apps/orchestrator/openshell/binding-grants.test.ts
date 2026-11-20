@@ -213,3 +213,86 @@ test(
         }
     },
 );
+
+test(
+    'A1-03 I held interactive rejects post-revoke stdin',
+    { timeout: 60_000, concurrency: false },
+    async () => {
+        const fixture = await createGrantFixture(sdk);
+        try {
+            const client = fixture.connect();
+            assert.equal(
+                (await fixture.request(client, 'ExecSandboxInteractive'))
+                    .status,
+                '0',
+            );
+            const held = await fixture.openInteractive(client);
+            const counts = fixture.counts();
+            assert.deepEqual(counts, { requests: 2, stdin: 1 });
+            const operations = fixture.operations();
+            assert.equal(operations.length, 2);
+            assert.equal(
+                operations.filter((row) => row.state === 'UNKNOWN').length,
+                1,
+            );
+            const history = fixture.history();
+            const revocation = fixture.beginRevoke();
+            await bounded(revocation.revoked, 10_000, 'revocation barrier');
+            const revoked = fixture.snapshot();
+            assert.equal(revoked.revoked, 1);
+            assert.equal(revoked.state, 'UNKNOWN');
+            assert.equal(revoked.generation, 1);
+            assert.equal(fixture.fence().revoked, true);
+            try {
+                held.sendStdin();
+            } catch (error) {
+                assert(error instanceof Error);
+                assert.equal(error.message, 'Held stream already closed');
+            }
+            const [status, , , result] = await bounded(
+                Promise.all([
+                    held.status,
+                    held.closed,
+                    held.upstreamClosed,
+                    revocation.settled,
+                ]),
+                10_000,
+                'held revocation evidence',
+            );
+            assert.equal(status, '7');
+            assert.deepEqual(result, {
+                state: 'UNKNOWN',
+                generation: 1,
+                revoked: true,
+                stopConfirmed: false,
+                error: 'old execution unconfirmed',
+            });
+            assert.deepEqual(fixture.counts(), counts);
+            assert.deepEqual(fixture.operations(), operations);
+            assert.deepEqual(fixture.history(), history);
+            assert.deepEqual(fixture.snapshot(), revoked);
+            assert.equal(client.destroyed, false);
+            for (const connection of [client, fixture.connect()]) {
+                const denied = await fixture.request(
+                    connection,
+                    'ExecSandboxInteractive',
+                );
+                assert.equal(denied.headerStatus, '16');
+                assert.equal(denied.status, '16');
+            }
+            await fixture.reopen();
+            assert.deepEqual(fixture.snapshot(), revoked);
+            const denied = await fixture.request(
+                fixture.connect(),
+                'ExecSandboxInteractive',
+            );
+            assert.equal(denied.headerStatus, '16');
+            assert.equal(denied.status, '16');
+            assert.deepEqual(fixture.operations(), operations);
+            assert.deepEqual(fixture.history(), history);
+            assert.deepEqual(fixture.counts(), counts);
+        } finally {
+            await fixture.dispose();
+        }
+    },
+);

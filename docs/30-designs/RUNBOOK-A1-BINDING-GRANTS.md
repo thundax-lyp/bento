@@ -170,27 +170,9 @@ P固定复用 `createProviderFixture` 及其公开 runtime API，禁止改旧fix
 
 本轮只允许改本文并送新SHA。MASTER对同一修订明确Executable后，才沿现有分支恢复T3，先落实唯一UNKNOWN语义；不先删除T3，不混入未通过源的计划提交。基线或正式范围有影响变化先回MASTER复审。
 
-## T4：持有 interactive 通道撤权
-
-前置状态：N3/R3/O共7例于2026-11-20 focused全部PASS、skip0；仅一次takeover精确拒绝并保持UNKNOWN/gen1；新流/重连/原库reopen均header16、O403且SQL/历史无新增；typecheck/lint通过。
-允许修改：本文、fixture.ts、binding-grants.test.ts。专门读取sdk-ingress.ts、worker-gate.ts、single-host.ts，共6文件。
-禁止修改：A3真实进程停止、READY保护或其他执行入口。
-
-执行：增加唯一 `A1-03 I held interactive rejects post-revoke stdin`；先成功结束一条interactive控制，再打开hold流，start/stdin完整解析计数后baseline；takeover触发stop barrier时独立SQL已NULL，尝试旧流stdin，等待下游header7及两侧实际关闭，无新增stdin；原takeover精确拒绝且撤权闭流观测完成后，同client新stream与重连都header16；重开原库仍header16。hold请求可留下UNKNOWN operation，不篡改其state。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='A1-03 I ' apps/orchestrator/openshell/binding-grants.test.ts
-pnpm --filter @bento/orchestrator typecheck
-```
-
-PASS：目标1例通过，成功前置/独立撤销/持有流header7/两侧关闭/无post-revoke帧/后续拒绝及cleanup全部有断言。
-STOP：只观察100ms timer或只本地write错误、停流未观测、原takeover未得到精确预期错误、错误映射或双侧close观测不符；不伪造停止证据。
-
 ## T5：旧官方 Provider 独立拒绝与固定打包门禁
 
-前置状态：T4通过，不改既有A2时序。
+前置状态：I持有interactive用例于2026-11-20 focused 1例PASS/skip0：先合法控制与upstream首帧，再真实撤权barrier后尝试stdin，明确header7/两侧close/计数不增，同连接新stream/重连/reopen均header16且UNKNOWN/gen1保护；typecheck/lint通过。不改既有A2时序。
 允许修改：本文、binding-grants.test.ts、check-package.mjs、Orchestrator package.json、public-files.json。专门读取provider-lifecycle/fixture.ts、runtime.ts、旧temporal-retry/check-package.mjs、根package.json，共9文件。
 禁止修改：原A2 tests/fixture/runtime、根files、public patterns、workflow。
 
