@@ -1,0 +1,358 @@
+# A6-05 生产运行时与跨 Session 池重用
+
+## 状态与执行者契约
+
+- 建立日期：2026-11-20。状态：作者草稿，待 MASTER 审核；未实施，T0 尚未执行。
+- 唯一 checkout：`/Volumes/storage/workspace/bento-b`。调查基线：`fe12c24ddb6d2a061559173e623419d5aa97b99b`；此 SHA 不是未来验收通过声明。
+- 本轮授权仅作者调查、设计及送审。收到同内容版本 `Executable`、MASTER 指定分支与开工指令前，不执行 T1，不改依赖。
+- 实施继承 WORKER 全流程授权；按 [Worker Skill](../../.agents/skills/bento-runbook-worker/SKILL.md)逐步验证、删除已完成步骤并提交。每步文件数包含本文、允许修改及专门核对的文件，最多 10。
+- PASS 必须同时满足实际退出码、断言与版本；缺项、skip、版本漂移、隐藏选择、额外依赖均 STOP。STOP 保留现场，回报最后通过步骤、SHA、复现命令、脱敏结果和所需决定。
+- A 冻结当前候选的 Worker 镜像生产依赖。B 可在独立 checkout 实施、本地安装和验证新闭包，不触碰 A 的锁文件、镜像或候选；合入 main 前必须等 A 冻结 T5/T6 安全点并取得 MASTER 显式顺序放行。不预设 B 先合入，不要求 A 当前候选因 B 本地工作提前重建。
+
+## 目标、正式依据与当前断点
+
+正式依据：[A6-05](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a6-05-bad-case-跨会话池重用)规定长期重用后凭据、监听器、连接、缓存不串 Session；[架构](../00-governance/ARCHITECTURE.md#架构决策)规定共享 Worker、当次授权、可信 harness 在沙盒外；[部署手册预热约定](../../deploy/README.md#配置执行服务)要求每轮独立 runtime，回执前关闭 Agent、连接和监听器。引用锚点已按当前标题核对。
+
+交付一条生产链：可信配置 → `apps/worker/base-bootstrap.ts` → 每轮官方 Cordis/DSH runtime、真实 OpenShell provider 与当次 SDK client → 正常 `run-worker.ts --warm` → 原 `prewarmedWorker` → 下一 Session 同 PID；旧授权撤销后拒绝，review/异常则旧 PID 退出后补位。
+
+| 当前入口                                                                                 | 已确认事实                                                          | 本次处理                                  |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------- |
+| `apps/orchestrator/execution-service/command-host.ts::commandHost`                       | `prewarmWorker` 选择生产 `prewarmedWorker`                          | 只读，不改宿主及 retry                    |
+| `apps/orchestrator/execution-service/warm-worker.ts::startSlot/warmSlot/prewarmedWorker` | 正常回执保留进程；review/异常等待退出后补位                         | 保持语义，用真实生产子进程验收            |
+| `apps/worker/run-worker.ts::main`、`dsh-worker.ts::runDshWorkerLoop/runDshWorker`        | 每轮 bootstrap，finally 等 dispose 后才回执                         | 只读；bootstrap/dispose 抛错不能回成功    |
+| `apps/orchestrator/openshell/provider-lifecycle/runtime.ts::createOfficialRuntime`       | A2 官方装配，无 OpenShell provider/client；不构成 execute 生产 base | 只读参考，禁止改共享 runtime              |
+| `apps/worker/task-bootstrap.ts`                                                          | 加载私有 base；缺投影时 Task fail closed                            | 保持；本次 base 不承诺 Task 投影/工具目录 |
+| `apps/worker/provider.ts::installOpenShellProvider`                                      | 固定 rc.1 provider 每次装配；工作目录注入修正在此                   | 原样复用，不复制和修改安全原语            |
+
+A6-01/04 暂缓：`service.ts::reviewRun` 是 UNKNOWN 恢复复核，不能当正常审批；槽位、排队和输出限制不能代替 CPU/内存/PID/磁盘上限。两项 Readiness 不改。A6-05 单独验收，不要求把 A6-01 一并判为已实现。
+
+## Scope 与 Non-goals
+
+Scope：补交正式 Worker base、明确官方 SDK 连接所有权、正常同 PID 多 Session 长期重用、四项独立证据、撤权及清理失败后的安全退出补位、默认门禁和打包验证。
+
+Non-goals：A 的镜像/私有 bootstrap/远端资源；`service.ts`、`store.ts`、`remote-session.ts`、checkpoint、OpenShell 生产安全原语的修改；新增模型厂商协议、模型选择、通用工具目录、Task 投影、PTY/SSH、CPU 等资源治理、多节点、容器/真实 OpenShell 进程停止证明。模型与远程 helper 为受控服务器，不能据此宣称 A5 或真实部署就绪。禁止改 CI、TLS、安全策略或降低既有九项真实 Temporal 门禁。
+
+## 固定官方依据与连接选择
+
+以下版本源码已作者核对，不猜测 `client.close()`：
+
+- [OpenShell client.ts](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/sdk/typescript/src/client.ts)：公开 `new SandboxClient(transport)`；`execInteractive` 返回 `closeInput()`、`cancel()`、`done`。`OpenShellClient.connect()` 没有公开 close。
+- [官方 transport.ts](https://github.com/NVIDIA/OpenShell/blob/ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47/sdk/typescript/src/transport.ts)：bearer 是 interceptor 的逐请求 header；固定 SDK package-lock 的 Connect/connect-node 均 `2.1.2`。
+- [Connect transport](https://github.com/connectrpc/connect-es/blob/v2.1.2/packages/connect-node/src/node-transport-options.ts)：`createGrpcTransport` 接受公开 `sessionManager`。
+- [manager 结构接口](https://github.com/connectrpc/connect-es/blob/v2.1.2/packages/connect-node/src/node-universal-client.ts)：仅 `authority`、`request(method,path,headers,options):Promise<ClientHttp2Stream>`、`notifyResponseByteRead(stream):void`。
+- [官方 manager](https://github.com/connectrpc/connect-es/blob/v2.1.2/packages/connect-node/src/http2-session-manager.ts)：`abort(reason?):void` 不等于等待 session close。因此本次只实现上述公开结构接口，持有单个原生 Node HTTP/2 session 并等待其 close，不读取官方 manager 私有字段，不复制其重连算法。
+- 固定 `dsh-sandbox-openshell@0.1.0-rc.1`：`OpenShellSubprocessRuntime` 的 fiber teardown 终止 interactive handle 并等 `transportClosed`；filesystem 有每实例 `namespace/paths`，旧 targetKey 在新实例 `processPath` 拒绝。连接配置的 interactiveClient 由调用方拥有。
+- 固定 Cordis `4.0.5`：`on()` 由 fiber.effect 持有，dispose 移除 listener；固定 SessionStore 的 `get/list` 可查询存活 Session。
+
+SDK 源码以官方 `ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47` 为唯一版本，接受现有 `openshell/binding-grants/sdk.ts::prepareSdk` 校验的完整归档 SHA、lock、生成配置及官方 build；验收从返回 `raw` 的同目录取得 `index.js`。生产部署配置引用该已准备的只读模块；本次不把尚未发行的 SDK 当作 npm 固定版本，不把版本声明字段当源码完整性证明。
+
+## 生产 API、配置及数据所有权
+
+新增 `apps/worker/sdk-transport.ts`：
+
+```ts
+export function createRunSdkTransport(
+    gateway: string,
+    token: string,
+): {
+    transport: import('@connectrpc/connect').Transport;
+    close(): Promise<void>;
+};
+```
+
+- gateway 必须精确为 `http://127.0.0.1:<port>`，port 为 1..65535；URL 不含 username/password/path（除 `/`）、query、fragment。输入必须是可信 WorkerRequest 的 gateway，不读 Gateway/mTLS/用户传入 URL。现生产 `service.ts::listen` 正是此格式。其他协议/host/端口一律拒绝；不设置 insecure TLS 或外部代理。
+- token 仅捕获当次 grant.token，校验无控制字符；interceptor 每次覆盖 `authorization=Bearer <token>`。没有配置级服务 bearer、mTLS 或刷新 token API。
+- 私有 manager 每轮只持有一个 `node:http2.connect(origin)` session，禁止关闭后重连。状态仅 opening/open/closing/closed；connect/stream error 使在途 promise 拒绝，不吞错伪装 completed。
+- ready 最长 5 秒。`request` 等 ready，再检查未 closing，调用原 session.request，并跟踪 stream close；`notifyResponseByteRead` 为无 keepalive 的空操作，不缓存用户数据。GOAWAY 后新请求拒绝，不自动新建连接。
+- close 单次 promise：先置 closing 拒绝新请求，销毁仍在途 stream，session.close；2 秒仍未关闭则 destroy，5 秒仍无 close 以资源残留错误拒绝。必须观察真正 session 的 close，不能以调用 close/destroy 或 manager.state 代替。错误只含阶段、stream 数、closed 布尔值，不含 URL/token/header。
+
+新增 `apps/worker/base-bootstrap.ts` 默认导出 `DshWorkerBootstrap`，并导出 `BaseBootstrapConfig`、`ModelAdapterFactory` 类型：
+
+```ts
+export type BaseBootstrapConfig = {
+    schema: 1;
+    sdkModule: string;
+    modelAdapterModule: string;
+    provider: string;
+    model: string;
+    workspaceRoot: string;
+    helper: string;
+    fileSystemHelper: string;
+    node: string;
+};
+export type ModelAdapterFactory = (options: {
+    provider: string;
+    model: string;
+}) => Promise<{
+    adapter: import('@deepseek-ai/dsh-llm').LlmAdapter;
+    dispose(): Promise<void> | void;
+}>;
+```
+
+所有字段 required、非 nullable、无默认；schema 固定 1。`BENTO_DSH_RUNTIME_CONFIG` 是可信、只读 JSON 的绝对路径；未知字段拒绝。sdkModule/modelAdapterModule 是绝对现存文件，provider/model 非空；后三个 helper/node 与 workspaceRoot 都是沙盒内绝对路径，无 NUL/CR/LF。配置不能指定 Session/Run/tenant/sandbox/token/gateway；它们唯一来自 WorkerRequest。sdkModule 必须导出函数型 SandboxClient，modelAdapterModule 默认导出 factory；不提供任意 ctx/plugin/runtime/provider 替换接口。
+
+Model factory 每轮调用，只收到 provider/model；必须返回新 LlmAdapter 和该轮 disposer，不能返回 singleton、跨轮缓存或未关闭传输。base 用 WeakSet 拒绝重复 adapter 实例（不强引用旧实例/授权），拒绝多余返回字段。模型凭据由受信 adapter 自己读取并持有到本轮清理，不把 grant 交给 factory。验收厂商/模型响应为 fixture，此扩展契约不能证明任意第三方恶意 factory 的内部安全性；生产部署必须选满足该契约的 adapter。
+
+每轮 owner 与调用顺序固定：
+
+1. 校验 config/request 的 binding.session===grant.session、run 非空、generation 为正整数；配置错误在创建资源前拒绝。recover 不创建 SDK transport，不安装 provider，不调用模型 factory。
+2. 每轮新 Context、AgentHandle Set。execute 创建 transport、官方 SandboxClient；provider 固定 helper/node/workspaceRoot、`defaultMode='workspace-write'`、`requireFullEnforcement=true`，sandbox 来自 binding；SDK 调用必须携带既有 provider 强制的无 PTY 语义。
+3. 返回 runtime.ctx；`runDshWorker` 原入口先装 remoteSessionPersistence。runtime.initialize 顺序：AgentRegistry → SessionStore → SessionProjectionRegistry → LlmRuntime → SystemPrompt → ToolRuntime → AgentLoop → checkpointPolicy，然后注册本轮 adapter。创建/恢复 AgentHandle 都加入 Set。保留官方原事件，不重写/filter 历史。
+4. `runDshWorker` 原入口调用 installOpenShellProvider 后才执行该轮。agents facade 只映射真实 handle.agent；使用弱映射将消费侧 agent 还原为官方 agent；flush 精确校验 ctx.sessions.get(grant.session) 与 handle.agent.session 同一对象，再官方 flush。沿 A2 已核实的最小字段断言适配生产消费的事件类型，不使用全形状 `as unknown as`。
+5. `userMessage` 用官方 createUserMessage。base 不增加工具目录，不实现 publicEvents；收到 Task 投影请求时沿原 Worker 入口 fail closed，不能回空投影冒充 Task 完成。effect 参数不被模型 factory 获得；本次没有新工具副作用包装，实际 SDK 执行仍经既有生产 SDK ingress 账本。
+6. dispose 为单次 promise：从本轮Set取快照并先clear（不再由base二次显式调用），逐一await真实AgentHandle.dispose（即使某个失败继续下一项）→注销adapter→await ctx.fiber.dispose（含RemoteSession/真实provider teardown）→await SDK transport.close→await adapter.dispose。全部错误收集，非空则抛单错或 AggregateError，不返回 completed/recovered。bootstrap 自身在返回前失败也执行同一清理链，保留原错及清理错误。recover 无 adapter/transport 时跳过对应阶段。
+
+AgentHandle双重结构所有权已按固定`dsh-agent`声明及`dsh-agent-loop/lib/index.js`核对：consumer持有handle，AgentLoop factory/fiber也是structural owner；内部`teardown()`用`disposing ??= promise`共享同一次清理，`dispose()`的finally释放owner/scope effect，`untrack()`在teardown finally移出liveAgents。Cordis原effect wrapper在首次结束后被移除，重复调用可返回undefined，不能把通用effect disposer误当“每次都等待”的API。因此base必须先显式await每个handle的完整dispose结算，再开始root fiber dispose，不并行跑二者；不能通过对handle.dispose打第二层patch改变官方owner关系。正常路径每个Agent只发生一次底层teardown/session detach；失败路径仍untrack/继续下一handle及其余阶段。错误按阶段handle→unregister→fiber→transport→adapter顺序收集，保留各阶段实际错误及其官方AggregateError，不按message去重吞错；最终单错直接抛、多错AggregateError。观察facade不额外disposehandle/fiber/transport。T3用真实官方handle正常/撤权路径验证先handle后fiber不会重复close；用独立部分失败单测验证所有后续阶段仍执行，不以fake计数替代官方正常幂等验证。
+
+不新增持久表/公开 HTTP/DTO/事件。Run、generation、capability、事务、receipt/outbox 仍由既有生产控制面持有；base 仅用当次 request，不缓存授权。同部署重启沿现有 SessionPersistence stat/open/reconcile 和 generation fencing；本次不增加恢复规则、迁移或双写。
+
+## 必要代码规模与依赖闭包
+
+已逐文件按基线全文件非空、非纯注释行计数，以下既有代码必须专核，均只计一次：
+
+| 路径/范围                                                  | 必须核对的符号与理由                                                 | 代码 LOC |
+| ---------------------------------------------------------- | -------------------------------------------------------------------- | -------: |
+| `apps/orchestrator/execution-service/warm-worker.ts:1-162` | startSlot/warmSlot/prewarmedWorker：同 PID、取消、异常补位及回执时序 |      153 |
+| `apps/worker/dsh-worker.ts:1-190`                          | runDshWorker/Loop：实际安装、恢复、finally、帧回执                   |      177 |
+| `apps/worker/remote-session.ts:1-399`                      | RemoteSession/Handle：凭据闭包、监听器、写句柄/缓存生命周期；只读    |      366 |
+| `apps/worker/provider.ts:1-34`                             | installOpenShellProvider：真实 provider 与工作目录                   |       30 |
+| `apps/worker/run-worker.ts:1-21`                           | main：真正生产 --warm 入口                                           |       19 |
+
+以上 5 个必要既有代码文件共 745 LOC，已超过 500；不靠生成代码、文档或填充行达标。新生产 2 文件预计 300–450 LOC，单元测试 2 文件约 200–300；验收新代码 7 文件约 650–1000，仅为评估，不把预计值冒充实测修改量。执行后记录实际 diff，不要求达到预计行数。
+
+Worker 必需直接运行依赖：`@deepseek-ai/cordis=4.0.5`；`@deepseek-ai/dsh-agent`、`dsh-agent-loop`、`dsh-llm`、`dsh-session`、`dsh-session-projection`、`dsh-system-prompt`、`dsh-tools`、`dsh-session-checkpoint-policy` 各 `0.2.1-rc.4`；`@connectrpc/connect`、`@connectrpc/connect-node` 各 `2.1.2`。保留已有 persistence/provider 版本。官方 SDK 用上述只读外部制品，不加 git/NPM floating dependency。pnpm lock 只允许这些 importer、其必需依赖/peer 解析的机械变化；其他升级 STOP。
+
+与 A 冲突：Worker package/lock 将改变 deploy/worker/Dockerfile 的 prod install 闭包，A 当前镜像不能复用为 B 新闭包的验收证据。B 在独立 checkout 可实施、本地安装和验证，不修改 A 镜像、Dockerfile、锁文件或 private，不要求 A 当前候选提前重建。禁止 B 合入 main，直到 A 冻结 T5/T6 安全点且 MASTER 显式放行最终顺序；届时按实际较新 main 核对差异、测试与闭包，不能预设 B 先交。root package files 保持原样；public-files 和 Readiness 若交叠，后合入方按 MASTER 顺序保留双方证据并复核。
+
+## 测试文件尺寸与拆分约束
+
+用户补充要求：测试文件尽量控制在1000物理行以内（含空行/注释，使用`wc -l`核对），按职责拆分，不能压缩格式、删除断言或合并测试来达标。本任务新建的`base-bootstrap.test.ts`、`sdk-transport.test.ts`、`fixture.test.ts`、`real-reuse.test.ts`均以此为门槛；共享fixture/observer同样避免超过1000行。计划当前每文件预计低于1000行，若执行超过，不临场新建未列文件，先回作者给出唯一拆分路径并重新审核相关步骤及文件数。保留所有case、名称、skip条件、超时、串行/并行边界和默认发现入口，不依赖跨文件执行顺序。
+
+基线发现既有超限测试：`apps/orchestrator/execution-service/service.test.ts`6032行、`apps/workspace/api/space-files.test.ts`3359行、`apps/workspace/web/e2e/task.spec.ts`1225行。现有`acceptance/temporal-retry/real-retry.test.ts`950行，禁止向其中堆入新验收。三个既有大文件的拆分需MASTER按A冻结范围另行排序；不随本A6-05实施静默改动。拆分验收必须对照前后测试清单/实际执行数量和断言、专门子进程入口/测试发现/共享清理，不能只以文件行数或编译通过作为完成。
+
+## 独立验收结构与不变量
+
+新增目录 `apps/orchestrator/acceptance/worker-reuse/`，唯一新符号：
+
+- `fixture.ts::createReuseFixture(sdk:PreparedSdk,sessionCount:2|65)`：在 mkdtemp 0700 中创建 authority/history SQLite、生产 SingleHostExecution、生产 persistence/operation/SDK ingress；随机回环端口，独立 mTLS 受控 upstream。只用 controller.bind/admit/takeover，不写生产 SQL。模拟 sandbox running/stopped 只用于本地契约，不能证明沙盒进程退出。
+- `observer.ts::readReuseSnapshot(paths, sessions)`：独立只读 SQLite；父进程记录 ingress/upstream stream 与 HTTP/2 session open/close、实际请求绑定及 grant 摘要。记录者不得替 Worker 清理资源来制造 PASS。另提供 `readWorkerProcesses(parentPid:number)`，用本机 `ps -axo pid=,ppid=,args=` 的私有输出筛选 parentPid 的直接子进程及正式 run-worker.ts --warm 命令，返回仅 pid/ppid 数组；必须与 trace PID 和连接时序一致，不保存或回显无关进程命令。
+- `model-adapter.ts`：实现 ModelAdapterFactory，以真实本地 HTTP 服务返回确定性文本，使用官方 LlmAdapter；每轮独立取消器，dispose 等当前请求结束。该模块不获得 ctx/SDK/provider/grant。
+- `observed-bootstrap.ts`：默认调用生产 base 默认导出并返回同一 runtime facade；仅包装 initialize/flush/dispose 进行观测，不能替换 ctx、agents、persistence、provider、adapter 或清理。trace 另写私有文件，stdout 仅生产帧。观测配置由fixture独立生成，目录0700、文件0600；模型HTTP地址用 `BENTO_REUSE_MODEL_URL`，父端仅允许 http://127.0.0.1 随机端口，其他地址立即失败；不是生产base新配置字段。
+- `real-reuse.test.ts`：调用原 prewarmedWorker，command 是当前 node，args 为 root register-paths + 正式 run-worker.ts --warm。BENTO_DSH_BOOTSTRAP 指向 observed-bootstrap，其内部唯一装配为生产 base；不调用 A2 runtime。生产 base 直接执行的对照轮与观测包装轮都必须通过。
+- `check-package.mjs`：实际安装树 npm pack 正/负路径检查。
+
+`ReuseSnapshot` 必须是下列精确脱敏结构，不把内部授权行整个输出：
+
+```ts
+export type ReuseSnapshot = {
+    schema: 1;
+    sessions: Array<{
+        tenant: string;
+        session: string;
+        run: string;
+        generation: number;
+        historySha256: string;
+        receiptsSha256: string;
+        handle: string | null;
+        intents: number;
+    }>;
+    sdkConnections: number;
+    sdkStreams: number;
+    upstreamCalls: number;
+    workerPids: number[];
+};
+```
+
+`readReuseSnapshot(paths:{authority:string;history:string}, sessions:readonly WorkerRequest[], resources:{sdkConnections:number;sdkStreams:number;upstreamCalls:number;workerPids:number[]}):ReuseSnapshot` 只读查询history的sessions/events/batch_receipts/batch_intents与authority的execution_sessions；只按session取行，events按seq、receipts按epoch/batch排序。historySha256为该Session完整events规范JSON的SHA256，receiptsSha256为排序完整receipt数组规范JSON的SHA256；SQL前后不变断言比较私有内存原行，不仅比较摘要。连接/stream/upstream/workerPids由observer读取实际server事件和原生进程快照合并，不从Worker回报赋值。`fixture.snapshot()` 返回该合并结构，存储证据时不附grant或capability。resources参数required，不得默认0。
+
+SDK 取得只调用原 prepareSdk，入口/构建引用固定官方来源；不修改原工具。upstream 用同 sdk.raw 的 protobuf schema 编解码 GetSandbox/ExecSandboxInteractive start/stdin/output/exit，不能字符串伪造 codec；GetSandboxResponseSchema、ExecSandboxEventSchema 与输入schema均从同一sdk.raw取得，经createRequire(sdk.raw)解析的官方protobuf create/toBinary/fromBinary处理。gRPC帧为identity压缩字节0+四字节BE长度+protobuf，HTTP trailers固定grpc-status=0；拒绝场景使用正式ingress实际status，不伪造。stdout/stderr payload.value.data为字节，exit为exitCode。每个 frame 上限 1 MiB，不支持的请求拒绝。helper 只返回固定 rc.4 协议下 resolve/readText 结果和受控长流，不实际运行用户代码。文件 target 通过真实 `ctx.fs.resolve()` 取得，不手工构造 namespace。
+
+观测 facade 在 Agent 请求前、provider 已正式安装后，通过一次性 `agent/request` 监听器完成真实 fs.resolve/readText 和 SDK stream 探针，再原样 next。保留前轮真实 SessionStore 对象、ctx.emit 绑定、真实 listener 回调计数和一个旧 FsTarget；新轮必须使用新 provider 的 processPath 拒绝旧 target。私有探针引用是主动保留用于负测，不以堆残留 canary 扫描误判资源泄漏；不读私有 Map，不注入虚假计数。旧 Context 派发真实已捕获 session/event 后旧回调不再触发，不能以新 Context 本来没有旧 listener 代替。SQL、wire 与 worker trace 三侧按 run/session/generation/轮次对应。
+
+正常P0/P1/P2期间不调用takeover、不撤销reference及64轮grant，也不向任一运行中slot发abort；因此跨Session同PID证据与撤权退出证据互不混用。正常完成不自动令独立controller签发的grant失效，本验收不预期旧grant访问其自身Session必然403，不将旧Session自身正向访问当泄漏。P2只证明当轮凭据使用与跨目标拒绝；它是绑定隔离，不能记录为“已撤销旧grant”。R独立fixture在实际持有stream/模型轮尚未完成时父端调用controller.takeover撤权，controller返回或拒绝的状态与真实stream关闭分别记录；Worker因此review或抛错，原warmSlot等待退出后补位。P1结束后的fixture清理发生在长期同PID断言之后，不计为R证据。
+
+| Case              | 固定动作与必需断言                                                                                                                                                                                                                                                                                                                                                                                  |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| P0 生产 base 对照 | 无 observed wrapper，真实生产 --warm 连续两轮不同 Session，官方模型轮/持久历史可回读，同 PID；真实 SDK 操作另由 T4 和 P1 对同一 base 的 provider 独立触发，不声称无工具模型轮自动产生工具调用；关闭后父端归零                                                                                                                                                                                       |
+| P1 长期重用       | 同一Worker先执行1个独立reference Session预热，随后64个不同Session/Run、8个轮换tenant；每轮开始时间不早于首轮开始+轮次×5 秒，首尾跨度≥315秒；每轮成功且同一个实际 PID，无 restart；前后所有历史仅自身 marker，模型实际请求无前轮 marker；每轮回执后父端 SDK session/stream=0，下一轮全新连接；只读 SQL 当前句柄关闭、批次无未提交 intent                                                             |
+| P2 四项独立负测   | P1 每轮分别记录 credential/listener/connection/cache 四个布尔结果和来源；每轮实际wire header摘要等于该轮grant摘要；拿前轮token访问本轮Session的persistence请求、以本轮sandbox为目标的SDK请求均被正式绑定校验拒绝，SQL四表及upstream调用数不变；当轮token同目标正向成功；旧 ctx 事件不触发旧 callback/新网络请求；新 fs拒旧 target、正向resolve/readText成功；上一SDK session真实close先于下一次请求 |
+| R 撤权            | 独立当前 Session/真实持有 stream，用正式 controller.takeover 撤权；旧 capability 重连及持有 stream 后续输入拒绝，父端确认关闭；Worker review或异常必须旧 PID 退出，下一 Session 在新 PID成功，其他绑定/历史不变。不得要求撤权后旧 PID仍复用；不得把 fixture stopped当独立真实沙盒停止                                                                                                               |
+| E 清理失败        | 独立 adapter.dispose 人工抛固定 fixture 错，生产 base 仍执行ctx/provider与SDK关闭；正式loop不得输出completed/recovered，父端等exit后才补位，新Session正常；错误无凭据                                                                                                                                                                                                                               |
+| L 关闭/恢复       | 正常宿主pool lifetime abort后await关闭，残留stream/session/子进程/监听socket全0；重开同两库，已完成Session事件/receipt逐项保持，继续一个新合法Session；不宣称未知副作用恢复                                                                                                                                                                                                                         |
+
+五个独立test严格为P0、P1+P2、R、E、L，无skip。P0/R/E/L各用`{timeout:120000,concurrency:false}`；P1+P2仅一个`test`，用`{timeout:600000,concurrency:false}`，在同一个callback内create fixture→64轮正向/四项负测→finally close，不能拆成两个test隐式共享fixture或依赖执行顺序。P2生成64条分项结果：P1+P2先在同一常驻Worker执行request(64)这一reference Session，取得真实旧ctx/listener/fsTarget/token；它不计64个测量轮但必须与随后64轮同PID。测量轮0使用该reference，轮1..63使用真实前一测量轮，因而64轮都有实际前驱可逐项负测，不用首轮空对象/缺省true代替。P1+P2显式createReuseFixture(sdk,65)；P0/R/E/L与fixture.test各用createReuseFixture(sdk,2)，不共享fixture。SDK在before hook准备、timeout=600000，仅共享只读SDK制品；每个case独立fixture/DB/pool，after仅清理SDK，不能代清case资源制造PASS。全文件`--test-timeout=1200000`。没有墙钟跨度/同PID/正向SDK调用的证据则不能判长期复用PASS。
+
+## T0：基线与资源窗口（独立，不写生产文件）
+
+前置状态：MASTER 审核同草稿内容，指定 `codex/a6-worker-reuse` 分支并允许 B 独立实施（无须等待 A 合入安全点）；先单独提交获审本文，记录真实提交 SHA。
+允许修改：本文（仅记录T0证据）。专核：Worker package、pnpm-lock、warm-worker、dsh-worker、remote-session、provider、run-worker、deploy/worker/Dockerfile，共9文件含本文。
+禁止修改：所有生产、依赖、A文件。独立 checkout 不能保持或必须进入 A 冻结内容即 STOP；A 合入安全点只约束最终 merge，不阻塞 B 独立本地实施。
+
+执行：核 checkout干净、main基线与审核一致；核无 A 专属进程/端口/目录被使用。ENVIRONMENTS.md若存在先只本地读取；缺失时本任务独立mkdtemp与回环资源不依赖私有环境，不凭空编造连接配置。外部工具下载继续使用B既有本地代理与权限，小写/大写proxy只在子进程规范化，不打印值；可走既有官方archive输入并完整校验，不用A隧道。不因check:core新增长时case改变代理/TLS/超时或外部权限；T0记录原基线wall，新增case时间预算在验证矩阵中独立固定。
+
+验证（仓库根目录）：
+
+```bash
+git status --short
+git rev-parse HEAD
+git ls-remote origin refs/heads/main
+pnpm --dir apps/worker typecheck
+time pnpm --dir apps/orchestrator check:core
+git diff --check
+```
+
+PASS：基线/独立实施边界核实，现有核心检查exit0，记录time实际wall耗时和既有测试数量；这是新增长时验收接入前的基线，不冒充新门禁已通过。条件skip不算A6证据。STOP：baseline失败、主线变化影响冻结文件、SDK源或所需官方API与本文不一致。保持现场，不通过改TLS/skip重试绕过。
+
+## T1：登记生产 runtime 直接依赖
+
+前置状态：T0通过，B独立checkout及本地实施授权已确认；A合入窗口尚未放行也可执行本步。
+允许修改：`apps/worker/package.json`、`pnpm-lock.yaml`、本文（3）。
+禁止修改：版本外升级、root package、CI、镜像及其他应用。
+
+执行：按依赖清单只增真正由新base/transport直接导入的11项固定运行依赖；`pnpm install --lockfile-only`生成锁文件，再`pnpm install --frozen-lockfile`安装。SDK仍外部官方只读制品，不引用临时目录为workspace依赖。核lock新增/peer变化均能追溯到清单；若依赖数与清单不符STOP而非猜测补依赖。
+
+验证：
+
+```bash
+pnpm install --frozen-lockfile
+pnpm --filter @bento/worker list --depth 0
+pnpm --dir apps/worker typecheck
+git diff --check
+```
+
+PASS：11项版本精确，旧版本不变，安装/typecheck exit0；记录新增lock节点与A闭包影响。STOP：未授权版本变化或需要新增模型/工具包。安装副作用仅本checkout node_modules；失败保留lock供作者核对。
+
+## T2：每轮 SDK transport 关闭契约
+
+前置状态：T1依赖安装通过。
+允许修改：`apps/worker/sdk-transport.ts`、`apps/worker/sdk-transport.test.ts`、`public-files.json`、本文（4）。
+专核：`apps/worker/protocol.ts`、`apps/orchestrator/openshell/binding-grants/sdk.ts`（共6）。
+禁止修改：生产ingress、grant、mTLS、retry及原worker文件。
+
+执行：按固定API与状态机实现transport；新增真HTTP/2测试：合法回环带当次header、两个轮次两个session、close后RPC拒绝、延迟/持有stream被关闭、服务端拒绝/断链、非法gateway/token表、重复close、关闭截止与残留错误。断链测试必须既先成功通信再真实断链，不仅构造无效端口。测试的客户端也使用原prepareSdk取得的官方SandboxClient，不手写protobuf descriptor或伪造transport返回；SDK准备不依赖T4产物。关闭截止分支用Node test mock.timers推进本模块的2秒/5秒timer，在尚未收到真实close时验证拒绝及残留报告，不能伪造一个close事件来宣告正常释放。精确登记两个新源的public白名单。
+
+验证：
+
+```bash
+node --import ./register-paths.mjs --test apps/worker/sdk-transport.test.ts
+pnpm --dir apps/worker typecheck
+git diff --check
+```
+
+PASS：全部测试执行无skip；独立server实际close且关闭后不再connect；错误无token。STOP：需要私有manager API或放宽回环契约。测试finally关自身资源，不能由finally清理产生PASS断言。
+
+## T3：正式 base bootstrap 与失败清理
+
+前置状态：T2真实transport测试通过。
+允许修改：`apps/worker/base-bootstrap.ts`、`apps/worker/base-bootstrap.test.ts`、`public-files.json`、`docs/30-designs/APPLICATION-BOUNDARIES-DESIGN.md`、本文（5）。
+专核：`apps/worker/dsh-worker.ts`、`apps/worker/provider.ts`、`apps/worker/task-bootstrap.ts`（共8）。
+禁止修改：专核文件、A2共享runtime、remote-session、工具目录/Task投影。
+
+执行：按固定config/factory/装配/清理顺序实现；成功/失败均走单次清理。单测固定非法配置、重复adapter拒绝、initialize部分失败、两个handle一个dispose失败仍清剩余、真实handle正常/撤权后再卸载fiber不重复close、fiber/transport/adapter多错聚合（保留各阶段实际错误，不按message去重）、recover不创建SDK/adapter、Task未提供publicEvents沿原入口fail closed。使用真实官方Context/SessionStore测试存活Session释放；局部故障注入只测错误分支，不计端到端四项证据。设计写入生产base/SDK owner及无Task投影的边界，精确登记新源。
+
+验证：
+
+```bash
+node --import ./register-paths.mjs --test apps/worker/base-bootstrap.test.ts apps/worker/sdk-transport.test.ts
+pnpm --dir apps/worker typecheck
+pnpm --dir apps/orchestrator typecheck
+git diff --check
+```
+
+PASS：全部执行无skip；没有dispose失败回成功；无生产测试开关。STOP：官方模型/事件/AgentHandle类型与已核契约冲突；回作者固定适配后复审，不扩大cast或filter历史。失败不触碰已有DB。
+
+## T4：生产 ingress 与独立资源观察器
+
+前置状态：T3生产入口通过focused验证。
+允许修改：`apps/orchestrator/acceptance/worker-reuse/fixture.ts`、`observer.ts`、`fixture.test.ts`、`public-files.json`、本文（5；前述文件均位于同新目录）。
+专核：`apps/orchestrator/openshell/binding-grants/sdk.ts`、`apps/orchestrator/openshell/single-host.ts`（共7）。
+禁止修改：专核文件、旧A1/A2/A6验收或所有生产安全原语。
+
+执行：实现规定fixture/observer。`fixture.test.ts`独立取得官方SDK、校验官方client连接production ingress→mTLS upstream→真实protobuf输出/exit；创建两个合法session并非法跨目标拒绝，独立SQL前后不变。fixture expose固定 `request(sessionIndex):WorkerRequest`、`takeover(sessionIndex):Promise<void>`、`snapshot():ReuseSnapshot`、`close():Promise<void>`；sessionCount个session由父端创建，索引从0到sessionCount-1；P1+P2唯一reference为索引64、测量轮为0..63，其余case为索引0/1。token只存私有内存。snapshot字段固定schema=1、sessions记录tenant/session/run/generation与历史/receipt摘要、sdkConnections/sdkStreams/upstreamCalls、残留子进程数，不输出token。创建失败finally清理已创建本fixture资源，错误聚合。
+
+验证：
+
+```bash
+node --import ./register-paths.mjs --test --test-concurrency=1 --test-timeout=1200000 apps/orchestrator/acceptance/worker-reuse/fixture.test.ts
+pnpm --dir apps/orchestrator typecheck
+git diff --check
+```
+
+PASS：正式SDK client正向与跨绑定拒绝均真实发生；不是只有protobuf工具探针。STOP：helper协议或官方client无法调用，不改decoder/安全语义来适配fixture。服务器自身日志留私有temp且0600。
+
+## T5：同生产 base 的长期四项隔离与补位
+
+前置状态：T4独立fixture正向/拒绝均通过。
+允许修改：新目录 `model-adapter.ts`、`observed-bootstrap.ts`、`real-reuse.test.ts`、`public-files.json`、本文（5）。
+专核：`apps/worker/base-bootstrap.ts`、`apps/worker/sdk-transport.ts`、`apps/worker/run-worker.ts`、`apps/orchestrator/execution-service/warm-worker.ts`（共9）。
+禁止修改：全部专核文件、生产测试探针/临时endpoint、旧验收。
+
+执行：实现P0/P1+P2/R/E/L共五个独立测试（P1与P2同一个长期case，先1个reference预热后64个测量轮，保留逐轮四项分项结果）。observed facade只观察，实际返回字段逐一委托生产base；PID由父端独立进程/socket证据交叉确认，不仅相信worker自报。model-adapter只持有当次模型HTTP请求。每轮RPC与历史独立核对。轮次/时间/无串Session均assert，不将warning或计数代替。测试失败输出case+轮次+四项失败名及残留计数，不能输出原始request/config/header。finally不改变失败结论，清理失败同样失败。
+
+验证：
+
+```bash
+node --import ./register-paths.mjs --test --test-concurrency=1 --test-timeout=1200000 apps/orchestrator/acceptance/worker-reuse/real-reuse.test.ts
+pnpm --dir apps/orchestrator typecheck
+pnpm --dir apps/worker typecheck
+git diff --check
+```
+
+PASS：五测试无skip；长期case64/64四项全真，跨度≥315秒，同PID；R/E旧进程真实退出后新PID成功；L关闭/同库重开无残留。STOP：任意一项只能靠fake/warm标志/自报证明；发现生产缺陷先回作者固定文件/修复/API与验证后重新审核，不能进入A冻结范围。
+
+## T6：默认门禁、证据与删除
+
+前置状态：T5全部断言通过，已记录实际实现与验收SHA；仍在B独立checkout。可完成本地收口、PR与审核，但最终merge必须另等MASTER放行A/B顺序。
+允许修改：`apps/orchestrator/package.json`、新目录 `check-package.mjs`、`public-files.json`、`README.md`、`docs/30-designs/APPLICATION-BOUNDARIES-DESIGN.md`、`docs/40-readiness/CURRENT-READINESS.md`、`deploy/README.md`、本文（8）。
+专核：根`package.json`、`deploy/worker/Dockerfile`（共10）。
+禁止修改：专核文件、CI、原Temporal脚本、原四项未闭合需求状态。
+
+执行：新增Orchestrator script `test:worker-runtime`，精确命令为`node --import ../../register-paths.mjs --experimental-strip-types --test ../worker/sdk-transport.test.ts ../worker/base-bootstrap.test.ts`，使T2/T3新单测进入默认门禁；新增`test:worker-reuse`，精确命令为`node --import ../../register-paths.mjs --experimental-strip-types --test --test-concurrency=1 --test-timeout=1200000 acceptance/worker-reuse/fixture.test.ts acceptance/worker-reuse/real-reuse.test.ts`，即T4与T5两个test文件同次Node运行且串行；`check`原值保持不变，保留原`check:core`、`test:temporal-retry`及原pack入口；在`check:core`原命令末尾追加`pnpm test:worker-runtime && pnpm test:worker-reuse && node acceptance/worker-reuse/check-package.mjs`，使根check和现有CI的check:core均执行新验收，无重复运行，不改workflow。pack脚本读取真实`npm pack --dry-run --json`，要求新生产/验收源精确收录，禁止node_modules、私有config、临时SDK、DB/key/trace；根files数组逐项与原基线相等。公开白名单精确登记新源，不登记临时RUNBOOK。
+
+README/deploy说明默认生产base配置、可信模型factory范围、官方SDK准备版本、当次授权及无Task投影限制；部署引用入口，不复制源码。设计保留稳定owner/关闭顺序。Readiness新增日期、真实代码SHA、官方依赖/SDK、命令/五case/64条四项结果/315秒/PID/资源残留/同库重开及Not Covered；只有全部PASS才把A6-05改已实现，A6父项仍部分实现。A6-01/04保持缺项，A6-02九项原证据保留并重新执行默认门禁。最后迁移长期结论，删除本文及仅指向本文的残留引用，再同提交收口。正文末的链接脚本只在终端执行，不新增Git跟踪的Python文件。
+
+验证：
+
+```bash
+pnpm check
+npm pack --dry-run --json
+node apps/orchestrator/acceptance/worker-reuse/check-package.mjs
+pnpm exec prettier --check README.md deploy/README.md docs/30-designs/APPLICATION-BOUNDARIES-DESIGN.md docs/40-readiness/CURRENT-READINESS.md public-files.json apps/orchestrator/package.json
+rg 'RUNBOOK-A6-WORKER-REUSE' README.md docs deploy .agents
+git diff --check
+```
+
+另执行`wc -l apps/worker/base-bootstrap.test.ts apps/worker/sdk-transport.test.ts apps/orchestrator/acceptance/worker-reuse/*.ts`并核对新增测试/fixture各文件≤1000行，以及下方“文档链接检查”原命令。PASS：check全exit0，新Worker两套单测实际执行、新五case与fixture都无skip，真实Temporal九项9/9无skip；pack正负边界成立；文档本地路径/锚点有效，rg无结果（exit1为本项PASS）。STOP：默认外部工具受阻、任意新case skip、旧九项变化、pack边界扩大、A最新main影响受测依赖。不能以重跑更小套件替代；恢复只重验受影响范围，再跑已固定全门禁。
+
+## 文档链接检查与最终完成定义
+
+作者送审与T6均从根执行下列脚本。仅校验本地链接路径存在；锚点另外逐项核对实际标题，不把脚本输出当语义审核。
+
+```bash
+python3 - <<'PY'
+import re
+from pathlib import Path
+files = [Path('README.md'), Path('deploy/README.md'), Path('docs/30-designs/APPLICATION-BOUNDARIES-DESIGN.md'), Path('docs/40-readiness/CURRENT-READINESS.md')]
+runbook = Path('docs/30-designs/RUNBOOK-A6-WORKER-REUSE.md')
+if runbook.exists():
+    files.append(runbook)
+errors = []
+for file in files:
+    for target in re.findall(r'\]\(([^)]+)\)', file.read_text()):
+        target = target.split('#', 1)[0]
+        if not target or '://' in target or target.startswith('mailto:'):
+            continue
+        path = file.parent / target
+        if not path.exists():
+            errors.append(str(file) + ': ' + target)
+if errors:
+    raise SystemExit('\n'.join(errors))
+print('local document paths PASS')
+PY
+```
+
+完成须同时具备：生产base/transport已交付；T0..T6通过并逐步提交；五项真实子进程验收、逐轮四项与九项Temporal证据；当前HEAD明确Codex审查与必需CI；MASTER确认合入顺序后普通merge；回读merge、checkout快进、仅清理已合入本任务分支。缺任何项不宣告交付完成。作者阶段只提交可审核草稿内容与SHA，不把计划/源码核对写成已验收。
+
+## 作者送审自审
+
+作者按低级执行者顺序核对 T0→T6 的输入、产物、文件数与命令，判定：`Executable`，但尚未获 MASTER 审核通过；T0 的独立checkout与实施授权、最终merge的A安全点与MASTER放行是分开的明确前置 STOP，不是假定已经成立。计划未执行任何生产检查或端到端测试，不存在验收 PASS 声明。若实施发现固定官方API、fixture wire协议或直接依赖与本文不一致，按本规则回作者修订和重审，不由执行者选择替代。
