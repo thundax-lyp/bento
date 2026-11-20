@@ -279,7 +279,9 @@ export function isolateVerifiedSdkFiles(
 
 README/deploy说明默认生产base配置、可信模型factory范围、官方SDK准备版本、当次授权及无Task投影限制；部署引用入口，不复制源码。设计保留稳定owner/关闭顺序。Readiness新增日期、真实代码SHA、官方依赖/SDK、命令/五case/64条四项结果/315秒/PID/资源残留/同库重开及Not Covered；只有全部PASS才把A6-05改已实现，A6父项仍部分实现。A6-01/04保持缺项，A6-02九项原证据保留并重新执行默认门禁。最后迁移长期结论，删除本文及仅指向本文的残留引用，再同提交收口。正文末的链接脚本只在终端执行，不新增Git跟踪的Python文件。
 
-验证：
+来源修订（MASTER定向批准）：本机本轮`pnpm check`可显式传入先前获审`BENTO_A6_WORKER_REUSE_SDK_BUNDLE`，仅影响新的prepareReuseSdk路径；原A1等prepareSdk仍默认来源，不改原工具/来源/TLS/预算或任何case。准确区分controlled-local本地结果与official-build CI结果。本机默认新before已失败事实保留下方；不再盲重跑默认安装。CI不设置bundle环境变量，必须真实默认官方build、原六probe、新Worker两套单测、全部复用case和原Temporal九项通过；CI缺失/失败不能以本机受控通过替代。该CI要求仍是PR交付与最终merge前置，不因本地收口删除RUNBOOK而消失。
+
+验证（本机由私有runner读取已获审bundle绝对路径并显式传入；值不写Git/聊天；CI无该变量）：
 
 ```bash
 pnpm check
@@ -290,7 +292,7 @@ rg 'RUNBOOK-A6-WORKER-REUSE' README.md docs deploy .agents
 git diff --check
 ```
 
-另执行`wc -l apps/worker/base-bootstrap.test.ts apps/worker/sdk-transport.test.ts apps/orchestrator/acceptance/worker-reuse/*.ts`并核对新增测试/fixture各文件≤1000行，以及下方“文档链接检查”原命令。PASS：check全exit0，新Worker两套单测实际执行、新五case与fixture都无skip，真实Temporal九项9/9无skip；pack正负边界成立；文档本地路径/锚点有效，rg无结果（exit1为本项PASS）。STOP：默认外部工具受阻、任意新case skip、旧九项变化、pack边界扩大、A最新main影响受测依赖。不能以重跑更小套件替代；恢复只重验受影响范围，再跑已固定全门禁。
+另执行`wc -l apps/worker/base-bootstrap.test.ts apps/worker/sdk-transport.test.ts apps/orchestrator/acceptance/worker-reuse/*.ts`并核对新增测试/fixture各文件≤1000行，以及下方“文档链接检查”原命令。PASS：check全exit0，新Worker两套单测实际执行、新五case与fixture都无skip，真实Temporal九项9/9无skip；pack正负边界成立；文档本地路径/锚点有效，rg无结果（exit1为本项PASS）。STOP：原A1默认外部工具受阻、CI默认SDK构建受阻、任意新case skip、旧九项变化、pack边界扩大、A最新main影响受测依赖。不能以重跑更小套件替代；恢复只重验受影响范围，再跑已固定全门禁。
 
 ## 文档链接检查与最终完成定义
 
@@ -364,3 +366,7 @@ Orchestrator typecheck、三源focused ESLint/Prettier、public-files格式与gi
 R真实open-input RPC撤权后done/write拒绝，旧PID退出后新PID成功；E模型dispose失败不发completed/recovered且SDK/context资源关闭后新PID成功；L关闭/同库重开及新Session完成前后旧events/receipts完整行不变，Worker/SDK/model连接归零。父端真实ps/server/只读SQL与Worker trace交叉核对，不以fake或warm标志证明。模型响应、文件helper和沙盒运行契约均为本地fixture，不证外部模型质量、真实沙盒退出/磁盘或任意第三方factory安全。
 
 原范围两次5/5（span315001.026ms及严格时序补强后duration325485.838625ms）不覆盖后来补充HTTP观察，不能替代本次。首次全网络active-runtime窗口3/5及focused失败如T5b记录，反事实源已恢复，最终使用获审启动前窗口。最小新phase两Session专门诊断1/1通过后恢复原五case源，不冒充无wrapper P0。最终生产专核文件无改动，Orchestrator/Worker类型、三源Lint/Prettier、public/RUNBOOK格式与diff全部exit0，实际运行3源SHA与私有manifest逐一相同；新源141/195/843行。T5通过不替代T6默认网络SDK准备、九项真实Temporal、pack/CI/Codex或最终merge安全点。
+
+## T6 默认来源失败与本机恢复授权
+
+2026-11-20，首次完整pnpm check明确移除SDK bundle变量，沿既有代理与原TLS/工具预算。旧Orchestrator123 tests（121PASS/2既有skip）、Go test/vet及原pack通过；新test:worker-runtime两before均在原prepareSdk install阶段失败或超时，14项全部hookFailed，0个行为用例执行/0skip，suite324516.029459ms，完整check exit1/wall518857ms。新reuse与原Temporal尚未执行，失败不计T6 PASS。所有本轮进程已按原预算结束。MASTER随后批准一次本机完整gate显式使用已审controlled输入，新路径不扩大到原A1工具，CI仍须默认官方准备与全部门禁。
