@@ -89,6 +89,8 @@ export async function createReuseFixture(
         tokenSha256: string;
         path: string;
         at: number;
+        status: number | null;
+        finishedAt: number | null;
     }[] = [];
     let upstreamCalls = 0;
     let authenticatedSessions = 0;
@@ -99,6 +101,8 @@ export async function createReuseFixture(
         generation: number;
         stopConfirmed: false;
         at: number;
+        status: number | null;
+        finishedAt: number | null;
     }[] = [];
     async function closeControl() {
         const errors: unknown[] = [];
@@ -473,9 +477,9 @@ export async function createReuseFixture(
                 ['persistence', persistence],
                 ['operation', operation],
             ] as const) {
-                server.on('request', (request) => {
+                server.on('request', (request, response) => {
                     const path = request.url?.split('?')[0];
-                    controlRequests.push({
+                    const observed = {
                         interface: name,
                         tokenSha256: sha256(
                             String(request.headers.authorization ?? '').replace(
@@ -488,6 +492,13 @@ export async function createReuseFixture(
                                 ? path
                                 : 'other',
                         at: performance.now(),
+                        status: null as number | null,
+                        finishedAt: null as number | null,
+                    };
+                    controlRequests.push(observed);
+                    response.once('finish', () => {
+                        observed.status = response.statusCode;
+                        observed.finishedAt = performance.now();
                     });
                 });
             }

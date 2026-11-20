@@ -198,6 +198,10 @@ test(
                 sha256(first.grant.token),
             );
             assert.equal(fixture.controlRequests[1]!.path, '/operations');
+            for (const row of fixture.controlRequests) {
+                assert.equal(row.status, 403);
+                assert(row.finishedAt !== null && row.finishedAt >= row.at);
+            }
             assert(
                 isDeepStrictEqual(sqlRows(fixture), rows),
                 'Denied probes changed private SQL rows',

@@ -188,10 +188,9 @@ SDK取得统一调用下节`prepareReuseSdk`：无显式本地输入时原样委
 
 只读HTTP观察器已由T5a独立交付；下列IPC和整轮断言在T5允许文件实现。
 
-observed-bootstrap仅在存在真实前驱的agent/request阶段发出trace `old-event-ready`；父端独立观察四类服务端计数100ms不变后，向既有私有trace文件旁的`.ack`写0600 JSON `{session,phase:'ready'}`。Worker等该session/phase的ACK后才调用真实旧ctx.emit，验证旧callback不增，等待100ms（用当前payload.signal可取消）并写trace `old-event-ended`。父端核与baseline计数相同，再连续观察100ms不变，写phase=`done`的ACK。Worker见done后才继续原样next及正式provider正向探针。两端ACK仅本测试IPC，不带grant、URL、模型或请求替身；单阶段最长5s，检查signal/父端停止条件；失败抛错并继续原正式finally清理，不在清理阶段等ACK，不自行dispose任何生产资源。
+observed-bootstrap仅在存在真实前驱时，在调用生产base(request,effect)之前发出trace `old-event-ready`；此时前轮正式dispose及receipt已完成，本轮Context/adapter/SDK尚未创建，避免把本轮200ms持久化批次刷盘误当旧事件触发。真实fs/namespace/当前listener正向观察仍在原agent/request且provider已安装之后；父端独立观察四类服务端计数100ms不变后，向既有私有trace文件旁的`.ack`写0600 JSON `{session,phase:'ready'}`。Worker等该session/phase的ACK后才调用真实旧ctx.emit，验证旧callback不增，等待100ms（仅测试IPC使用本阶段5秒deadline signal，启动阶段无agent payload.signal；case关闭原Worker进程即结束等待）并写trace `old-event-ended`。父端核与baseline计数相同，再连续观察100ms不变，写phase=`done`的ACK。Worker见done后才调用原生产base；后续initialize/flush/dispose原样委托，agent/request仍执行正式provider正向探针再next。两端ACK仅本测试IPC，不带grant、URL、模型或请求替身；单阶段最长5s，检查deadline signal/父端停止条件；失败抛错并继续原正式finally清理，不在清理阶段等ACK，不自行dispose任何生产资源。
 
 父端watcher只读trace、实际server计数并写ACK；有异常保存脱敏fixture错误，测试必须失败，case finally停止/等待watcher后关闭原owned资源。父端从每轮dispatch前一直检查到receipt后：persistence/operation新观察行均须为当前grant摘要；SDK沿原当轮摘要断言、模型仍仅当前Session一次。父端跨绑定HTTP负测精确产生1条旧摘要HTTP记录，额外条目失败；各轮间等待及最终shutdown后核观察cursor无额外旧请求。这个更宽区间用来捕获ACK短窗口后迟到的旧身份请求，不能仅验证100ms窗口后忽略其余记录。所有长期64轮记录listener网络分项及各面counter前后值，未有真实前驱不得填true。
-
 
 ## 已核实前置状态
 
@@ -271,7 +270,7 @@ export function isolateVerifiedSdkFiles(
 
 ## T5：同生产 base 的长期四项隔离与补位
 
-前置状态：T4已实现生产ingress/mTLS fixture与独立observer，下方记录本地受控SDK来源fixture两项2/2无skip；本步以前一T4及下方T5a只读HTTP观察器通过提交为基线。
+前置状态：T4已实现生产ingress/mTLS fixture与独立observer，下方记录本地受控SDK来源fixture两项2/2无skip；本步以前一T4、T5a及下方T5b只读HTTP观察器补强通过提交为基线。
 允许修改：新目录 `model-adapter.ts`、`observed-bootstrap.ts`、`real-reuse.test.ts`、`public-files.json`、本文（5）。
 专核：`apps/worker/base-bootstrap.ts`、`apps/worker/sdk-transport.ts`、`apps/worker/run-worker.ts`、`apps/orchestrator/execution-service/warm-worker.ts`、`apps/worker/dsh-worker.ts`（共10；MASTER定向批准新增正式loop只读专核）。
 禁止修改：全部专核文件、生产测试探针/临时endpoint、旧验收。
@@ -371,3 +370,9 @@ Orchestrator typecheck、三源focused ESLint/Prettier、public-files格式与gi
 ## T5a 实际通过记录
 
 2026-11-20，本条所属提交按MASTER批准b18e78ef39e4260528b9ffa0aeb4e96273bf6a76交付fixture只读persistence/operation HTTP观察器，不改生产handler。独立fixture两case最终2/2、fail0/skip0、duration1627.842458ms；真实跨Session persistence POST403/无效operations POST403分别恰1条对应面/原grant SHA摘要/path记录，完整私有SQL原行及脱敏snapshot不变，SDK/撤权原断言保持。首次误将operations空对象预期400，实际正式入口403；修正为精确403后完整重验，不计首次失败为PASS。Orchestrator typecheck、两源ESLint/Prettier与diff通过，新fixture639行、fixture.test289行。该小步不计T5完整网络负测已通过；剩余IPC及迟到请求检查仍须在原T5完整五case重验。
+
+## T5b 实际通过记录
+
+2026-11-20，按MASTER批准工作区blob872eac208b78158941a41daa04a6ace275f18259修订，反事实只作来源诊断：临时跳过旧emit仍有4条当前摘要HTTP200（baseline后30–38ms），SDK/operation/模型不增；结合RemoteSession.enqueue200ms定时flush的stage/append/reconcile/flush四RPC源码说明，不能用原活动窗口将本轮合法刷盘算旧事件触发。原两观测源已逐字节恢复hash，反事实不提交、不计T5验收。
+
+本条所属提交仅fixture/fixture.test/RUNBOOK：只读附加response finish status/finishedAt；完整fixture两case2/2、fail0skip0、duration1688.531875ms，精确403及finishedAt≥start断言通过，原所有SDK/mTLS/SQL/撤权断言保留。Orchestrator typecheck、两源Lint/Prettier、RUNBOOK格式、diff通过。T5将旧事件窗口移至新base构造前，仍须最小phase后完整五case；T5尚未PASS。
