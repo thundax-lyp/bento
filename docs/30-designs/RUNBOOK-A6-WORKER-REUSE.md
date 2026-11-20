@@ -2,7 +2,7 @@
 
 ## 状态与执行者契约
 
-- 建立日期：2026-11-20。状态：T0/T1/T2通过，待执行T3。T2使用获审本地受控SDK输入，不宣称默认网络准备已恢复。
+- 建立日期：2026-11-20。状态：T0/T1/T2/T3通过，待执行T4；定向只读stat fixture修订已获MASTER批准并通过。T2使用获审本地受控SDK输入，不宣称默认网络准备已恢复。
 - 唯一 checkout：`/Volumes/storage/workspace/bento-b`。调查基线：`fe12c24ddb6d2a061559173e623419d5aa97b99b`；此 SHA 不是未来验收通过声明。
 - 原计划及受控SDK输入修订已获MASTER审核Executable；T2已完整验证，按全流程授权继续剩余步骤。最终merge仍须MASTER明确放行A安全点。
 - 实施继承 WORKER 全流程授权；按 [Worker Skill](../../.agents/skills/bento-runbook-worker/SKILL.md)逐步验证、删除已完成步骤并提交。每步文件数包含本文、允许修改及专门核对的文件，最多 10。
@@ -165,7 +165,7 @@ export type ReuseSnapshot = {
 
 `readReuseSnapshot(paths:{authority:string;history:string}, sessions:readonly WorkerRequest[], resources:{sdkConnections:number;sdkStreams:number;upstreamCalls:number;workerPids:number[]}):ReuseSnapshot` 只读查询history的sessions/events/batch_receipts/batch_intents与authority的execution_sessions；只按session取行，events按seq、receipts按epoch/batch排序。historySha256为该Session完整events规范JSON的SHA256，receiptsSha256为排序完整receipt数组规范JSON的SHA256；SQL前后不变断言比较私有内存原行，不仅比较摘要。连接/stream/upstream/workerPids由observer读取实际server事件和原生进程快照合并，不从Worker回报赋值。`fixture.snapshot()` 返回该合并结构，存储证据时不附grant或capability。resources参数required，不得默认0。
 
-SDK取得统一调用下节`prepareReuseSdk`：无显式本地输入时原样委托原prepareSdk，入口/构建来源与预算不变；本地受控输入仅绑定已审核制品，隔离复制、全量校验和原六探针后使用。不修改原工具，不把本地输入通过当成默认下载/build路径恢复。upstream 用同 sdk.raw 的 protobuf schema 编解码 GetSandbox/ExecSandboxInteractive start/stdin/output/exit，不能字符串伪造 codec；SandboxResponseSchema、ExecSandboxEventSchema 与输入schema均从同一sdk.raw取得，经createRequire(sdk.raw)解析的官方protobuf create/toBinary/fromBinary处理。gRPC帧为identity压缩字节0+四字节BE长度+protobuf，HTTP trailers固定grpc-status=0；拒绝场景使用正式ingress实际status，不伪造。stdout/stderr payload.value.data为字节，exit为exitCode。每个 frame 上限 1 MiB，不支持的请求拒绝。helper 只返回固定 rc.4 协议下 resolve/readText 结果和受控长流，不实际运行用户代码。文件 target 通过真实 `ctx.fs.resolve()` 取得，不手工构造 namespace。
+SDK取得统一调用下节`prepareReuseSdk`：无显式本地输入时原样委托原prepareSdk，入口/构建来源与预算不变；本地受控输入仅绑定已审核制品，隔离复制、全量校验和原六探针后使用。不修改原工具，不把本地输入通过当成默认下载/build路径恢复。upstream 用同 sdk.raw 的 protobuf schema 编解码 GetSandbox/ExecSandboxInteractive start/stdin/output/exit，不能字符串伪造 codec；SandboxResponseSchema、ExecSandboxEventSchema 与输入schema均从同一sdk.raw取得，经createRequire(sdk.raw)解析的官方protobuf create/toBinary/fromBinary处理。gRPC帧为identity压缩字节0+四字节BE长度+protobuf，HTTP trailers固定grpc-status=0；拒绝场景使用正式ingress实际status，不伪造。stdout/stderr payload.value.data为字节，exit为exitCode。每个 frame 上限 1 MiB，不支持的请求拒绝。helper只返回固定rc.4协议下resolve/stat/readText结果和受控长流，不实际运行用户代码。文件 target 通过真实 `ctx.fs.resolve()` 取得，不手工构造 namespace。官方WorkingDirectory.ensure在模型前还会stat根目录；fixture仅对method=stat且path精确workspaceRoot（/sandbox/project）返回rc.4的value:{type:directory}，其余stat拒绝，不把该受控响应当真实沙盒文件系统证据。
 
 观测 facade 在 Agent 请求前、provider 已正式安装后，通过一次性 `agent/request` 监听器完成真实 fs.resolve/readText 和 SDK stream 探针，再原样 next。保留前轮真实 SessionStore 对象、ctx.emit 绑定、真实 listener 回调计数和一个旧 FsTarget；新轮必须使用新 provider 的 processPath 拒绝旧 target。私有探针引用是主动保留用于负测，不以堆残留 canary 扫描误判资源泄漏；不读私有 Map，不注入虚假计数。旧 Context 派发真实已捕获 session/event 后旧回调不再触发，不能以新 Context 本来没有旧 listener 代替。SQL、wire 与 worker trace 三侧按 run/session/generation/轮次对应。
 
@@ -258,29 +258,9 @@ export function isolateVerifiedSdkFiles(
 
 测试concurrency=false、各test120000、无skip；真实SDK选择与数据IO单测分开记录结果。原T2五项transport测试在同来源SDK上完整执行，CI默认是真实Linux SDK build→六探针→实际HTTP/2 RPC，不依赖Mac路径。本地使用受控输入时只证明该显式来源，全量默认网络准备失败事实保留；日志不写原始路径/token/header。T6将wrapper单测加入默认test:worker-reuse，CI不注入BENTO_A6_WORKER_REUSE_SDK_BUNDLE、不改workflow、不打包本地bundle/cache或历史manifest；本轮不为跨平台输入增加canonical inventory或新发布流程。
 
-## T3：正式 base bootstrap 与失败清理
-
-前置状态：下方已记录的T2完整21/21及原六探针通过，无skip，T2已提交可回读。
-允许修改：`apps/worker/base-bootstrap.ts`、`apps/worker/base-bootstrap.test.ts`、`public-files.json`、`docs/30-designs/APPLICATION-BOUNDARIES-DESIGN.md`、本文（5）。
-专核：`apps/worker/dsh-worker.ts`、`apps/worker/provider.ts`、`apps/worker/task-bootstrap.ts`（共8）。
-禁止修改：专核文件、A2共享runtime、remote-session、工具目录/Task投影。
-
-执行：按固定config/factory/装配/清理顺序实现；成功/失败均走单次清理。单测固定非法配置、重复adapter拒绝、initialize部分失败、两个handle一个dispose失败仍清剩余、真实handle正常/撤权后再卸载fiber不重复close、fiber/transport/adapter多错聚合（保留各阶段实际错误，不按message去重）、recover不创建SDK/adapter、Task未提供publicEvents沿原入口fail closed。使用真实官方Context/SessionStore测试存活Session释放；局部故障注入只测错误分支，不计端到端四项证据。设计写入生产base/SDK owner及无Task投影的边界，精确登记新源。
-
-验证：
-
-```bash
-node --import ./register-paths.mjs --test apps/worker/base-bootstrap.test.ts apps/worker/sdk-transport.test.ts
-pnpm --dir apps/worker typecheck
-pnpm --dir apps/orchestrator typecheck
-git diff --check
-```
-
-PASS：全部执行无skip；没有dispose失败回成功；无生产测试开关。STOP：官方模型/事件/AgentHandle类型与已核契约冲突；回作者固定适配后复审，不扩大cast或filter历史。失败不触碰已有DB。
-
 ## T4：生产 ingress 与独立资源观察器
 
-前置状态：T3生产入口通过focused验证。
+前置状态：本条所属T3提交的正式base及单测通过，下方记录T3/T2联合14/14无skip；T3已提交可回读。
 允许修改：`apps/orchestrator/acceptance/worker-reuse/fixture.ts`、`observer.ts`、`fixture.test.ts`、`public-files.json`、本文（5；前述文件均位于同新目录）。
 专核：`apps/orchestrator/acceptance/worker-reuse/sdk.ts`、`apps/orchestrator/openshell/single-host.ts`（共7）。
 禁止修改：专核文件、旧A1/A2/A6验收或所有生产安全原语。
@@ -383,3 +363,7 @@ PY
 ## T2 实际通过记录
 
 2026-11-20，获审扩充T2在本地controlled-local来源下完整运行SDK/数据16项、transport5项，最终21/21、fail0/skip0，实际duration1855.8885ms；原probeSdk六项真实执行，输入738文件/13058270bytes按固定清单校验后隔离加载，输入与诊断制品保留。首次真实持有RPC场景暴露静默destroy的RST_NO_ERROR不结束官方客户端等待响应头；改为原生HTTP2 NGHTTP2_CANCEL后完整重验通过，没有换SDK/codec/断言。先前挂起本测试进程树已仅定向停止，所属一个SDK隔离树已删除；最终正常测试的owned树清理通过。Worker与Orchestrator typecheck、四文件focused ESLint/Prettier及diff检查通过；四新源均不足1000物理行。首次错误schema/hook失败、npm平台包缺失、过窄allowlist STOP事实保留，不计入行为PASS。默认无输入路径仍原prepareSdk，当前新增wrapper默认网络完整运行与CI受控SDK正向均未在本地证明；CI按设计真实default build，待交付检查。T2不证明A6-05长期复用，T3..T6未完成。
+
+## T3 实际通过记录
+
+2026-11-20，本条所属T3提交完成正式base与单测。完整base9项+transport5项14/14，fail0/skip0，duration3081.650584ms，采用已核受控SDK来源及原六probe。真实官方handle正常/撤权后显式dispose再fiber只close一次；recover无SDK/模型、Task无投影不发prompt；factory仅provider/model且拒单例/多字段；局部初始化失败、两handle/根fiber/模型三错后续清理全部执行。新增正常真实AgentLoop轮completed、model stream1、history handle null/close1、SDK session归零。此前故障注入误用ctx.plugin动态别名已改实际registry.plugin；正常轮最初因SDK cwd lookup需stat而fixture拒绝返回review，MASTER批准只读根stat后重验原成功断言通过。两情况不算此前PASS，生产base无SDK/权限降级。单测的helper/mTLS外部系统/模型皆非真实部署证据，A6-05仍待T4..T6长期验收。

@@ -101,3 +101,13 @@ OpenShell Gateway interceptor 的固定源码白名单可以管理部分一元�
 正式恢复沿`runDshWorker`的prior分支，在交给官方AgentLoop前调用`reconcileSessionPersistence`；RemoteSession只用当前Session open(write)→无batch参数reconcile→close。控制面先通过takeover/admit撤旧句柄并授予新代，持久intent仍由SessionHistory自行读取；未提交时以新代提交，已提交时按intent.epoch找到并复用旧receipt，随后删除intent。父进程/旧caller不得向新Worker提供batch/events/receipt来协助发现。共享runtime唯一显式处置AgentHandle与root Context；测试bootstrap以小包装委托官方Agent，WeakMap映射回真实Session作flush identity校验，不伪造或过滤历史。snapshot局部类型适配只校验生产实际消费字段，保留官方header.reason字符串，不能当作完整SDK/生产窄shape兼容证明。
 
 四场景均要求同双库重开、SQL/Provider读回及合法新代正常轮，reconcile本身的seq/revision/receipt变化与之后官方resume后缀单独核对。模型、沙盒观察和bootstrap仍为fixture；本地强杀不等于真实外部OpenShell故障接管或独立停止证明，实际证据见[Readiness](../40-readiness/CURRENT-READINESS.md#a2-崩溃恢复本地验收)。
+
+## Worker 正式 base 与每轮资源所有权
+
+[A6-05](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a6-05-bad-case-跨会话池重用)的正式装配入口为[base-bootstrap.ts](../../apps/worker/base-bootstrap.ts)，由既有[run-worker.ts](../../apps/worker/run-worker.ts)加载；预热模式仍每次请求创建新的官方Context、Agent/SessionStore、AgentLoop、checkpoint和OpenShell provider，正常回执后保留进程，review或异常沿原warmSlot策略退出补位。长期复用验收状态以[Readiness](../40-readiness/CURRENT-READINESS.md)为准，源码接线与单轮单测不能代替四项长期隔离证据。
+
+可信只读配置`BENTO_DSH_RUNTIME_CONFIG`按代码中的BaseBootstrapConfig校验完整字段；SDK模块和模型factory为可信部署文件，tenant/Session/Run/generation/sandbox及grant仅来自本次WorkerRequest。模型factory仅收到provider/model，返回新的官方LlmAdapter和disposer，不能替换ctx/runtime/provider或复用单例；静态WeakSet拒绝重复adapter实例，不强持有其凭据。恢复不创建SDK连接或模型adapter。base没有通用工具目录或publicEvents，Task缺投影沿原Worker门禁返回review，不用空投影冒充结果。
+
+每轮[sdk-transport.ts](../../apps/worker/sdk-transport.ts)只接生产回环`http://127.0.0.1:<port>`，逐请求使用该轮grant，管理凭据和mTLS仍归Orchestrator。官方SandboxClient使用此transport；底层session由Worker显式持有，关闭先拒绝新RPC并以HTTP2 CANCEL结束在途stream，再等真实session close，截止后残留是失败。不能假定固定官方OpenShellClient存在close接口，不能以调用destroy或状态标志代替真实关闭。
+
+资源清理按AgentHandle完整dispose→注销adapter→root fiber/provider/持久化清理→SDK关闭→模型disposer依次执行，失败仍尝试其余阶段并聚合错误；回执必须在清理之后。官方factory也持有结构所有权，base先等显式handle清理结算才卸root，沿其共享teardown避免重复关闭。Agent快照保留原事件，仅断言Worker实际消费的turn/end.reason.kind及tool/result.error.code，不改写request/header.reason或伪称全事件类型兼容。单轮与故障清理验证见[base单测](../../apps/worker/base-bootstrap.test.ts)，其中SDK helper/model是受控fixture，不代表真实沙盒文件系统或生产模型。

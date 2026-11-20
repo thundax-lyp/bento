@@ -186,7 +186,9 @@
         "apps/worker/sdk-transport.ts",
         "apps/worker/sdk-transport.test.ts",
         "apps/orchestrator/acceptance/worker-reuse/sdk.ts",
-        "apps/orchestrator/acceptance/worker-reuse/sdk.test.ts"
+        "apps/orchestrator/acceptance/worker-reuse/sdk.test.ts",
+        "apps/worker/base-bootstrap.ts",
+        "apps/worker/base-bootstrap.test.ts"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",
