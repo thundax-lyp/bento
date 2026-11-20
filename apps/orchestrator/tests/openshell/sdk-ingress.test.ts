@@ -14,11 +14,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { schemaExecEventDecoder } from '../execution-service/command-host.ts';
-import { Authority } from './authority.ts';
-import { createSdkIngress, type SdkIngressOptions } from './sdk-ingress.ts';
-import { SingleHostExecution } from './single-host.ts';
-import { WorkerGate } from './worker-gate.ts';
+import { schemaExecEventDecoder } from '@/apps/orchestrator/execution-service/command-host.ts';
+import { Authority } from '@/apps/orchestrator/openshell/authority.ts';
+import {
+    createSdkIngress,
+    type SdkIngressOptions,
+} from '@/apps/orchestrator/openshell/sdk-ingress.ts';
+import { SingleHostExecution } from '@/apps/orchestrator/openshell/single-host.ts';
+import { WorkerGate } from '@/apps/orchestrator/openshell/worker-gate.ts';
 
 const binding = {
     tenant: 'tenant',

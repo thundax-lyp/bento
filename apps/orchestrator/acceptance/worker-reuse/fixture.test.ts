@@ -7,7 +7,7 @@ import { after, before, test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import type { PreparedSdk } from '@/apps/orchestrator/openshell/binding-grants/sdk.ts';
+import type { PreparedSdk } from '@/apps/orchestrator/tests/openshell/binding-grants/sdk.ts';
 import type { WorkerRequest } from '@/apps/worker/protocol.ts';
 import { createRunSdkTransport } from '@/apps/worker/sdk-transport.ts';
 import { createReuseFixture } from './fixture.ts';

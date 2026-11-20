@@ -14,7 +14,7 @@ import type { BaseBootstrapConfig } from '@/apps/worker/base-bootstrap.ts';
 import type { WorkerRequest } from '@/apps/worker/protocol.ts';
 import { createRunSdkTransport } from '@/apps/worker/sdk-transport.ts';
 import { prewarmedWorker } from '@/apps/orchestrator/execution-service/warm-worker.ts';
-import type { PreparedSdk } from '@/apps/orchestrator/openshell/binding-grants/sdk.ts';
+import type { PreparedSdk } from '@/apps/orchestrator/tests/openshell/binding-grants/sdk.ts';
 import { prepareReuseSdk } from './sdk.ts';
 import { createReuseFixture } from './fixture.ts';
 import { readWorkerProcesses, sha256 } from './observer.ts';

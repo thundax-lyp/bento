@@ -6,11 +6,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { request } from 'node:http';
 import { test } from 'node:test';
-import { Authority } from './authority.ts';
-import { createPersistenceIngress } from './persistence-ingress.ts';
-import { WorkerGate } from './worker-gate.ts';
-import { SingleHostExecution } from './single-host.ts';
-import type { VerifiedStopProof } from './session-history.ts';
+import { Authority } from '@/apps/orchestrator/openshell/authority.ts';
+import { createPersistenceIngress } from '@/apps/orchestrator/openshell/persistence-ingress.ts';
+import { WorkerGate } from '@/apps/orchestrator/openshell/worker-gate.ts';
+import { SingleHostExecution } from '@/apps/orchestrator/openshell/single-host.ts';
+import type { VerifiedStopProof } from '@/apps/orchestrator/openshell/session-history.ts';
 
 test(
     'persistence dispatch preserves UTF-8 split across HTTP chunks',
