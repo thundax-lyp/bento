@@ -6,6 +6,7 @@ import { lstat, open, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, basename } from 'node:path';
 import { promisify } from 'node:util';
 import type { Binding } from '@/apps/worker/protocol.ts';
+import { verifyBackup, type BackupMember } from './backup.ts';
 
 export type A7Config = {
     schema: 1;
@@ -115,7 +116,15 @@ async function volume(
     return info;
 }
 async function attachments(name: string, run: Command): Promise<string[]> {
-    return (await run('docker', ['ps', '-aq', '--filter', 'volume=' + name]))
+    return (
+        await run('docker', [
+            'ps',
+            '-aq',
+            '--no-trunc',
+            '--filter',
+            'volume=' + name,
+        ])
+    )
         .split(/\r?\n/)
         .filter(Boolean);
 }
@@ -128,6 +137,13 @@ async function stopped(
     await volume(config, binding, name, run);
     const ids = await attachments(name, run);
     assert(ids.length <= 1, 'resource_extra_attachment');
+    const evidence: {
+        containerId: string;
+        sandboxId: string;
+        sandboxName: string;
+        workspace: string;
+        namespace: string;
+    }[] = [];
     for (const id of ids) {
         const [info] = JSON.parse(
             await run('docker', ['container', 'inspect', id]),
@@ -136,6 +152,27 @@ async function stopped(
             info.Config?.Labels?.['bento.web08'] === config.caseId,
             'resource_owner_mismatch',
         );
+        if (name === binding.volume) {
+            const labels = info.Config?.Labels;
+            assert(
+                info.Id === id &&
+                    labels?.['openshell.ai/sandbox-name'] === binding.sandbox &&
+                    labels?.['openshell.ai/sandbox-workspace'] ===
+                        config.gatewayWorkspace &&
+                    labels?.['openshell.ai/sandbox-namespace'] ===
+                        config.gatewayOwner &&
+                    typeof labels?.['openshell.ai/sandbox-id'] === 'string' &&
+                    labels['openshell.ai/sandbox-id'].length > 0,
+                'resource_sandbox_binding_mismatch',
+            );
+            evidence.push({
+                containerId: id,
+                sandboxId: labels['openshell.ai/sandbox-id'],
+                sandboxName: binding.sandbox,
+                workspace: config.gatewayWorkspace,
+                namespace: config.gatewayOwner,
+            });
+        }
         assert(info.State?.Running === false, 'resource_writer_active');
         assert(info.Image === config.runtimeImageId, 'resource_image_mismatch');
         const mounts = info.Mounts.filter(
@@ -148,6 +185,7 @@ async function stopped(
             'resource_mount_mismatch',
         );
     }
+    return evidence;
 }
 const inventoryScript = String.raw`
 const fs=require('node:fs'),crypto=require('node:crypto'),path=require('node:path');
@@ -296,6 +334,7 @@ type Proof = {
     caseId: string;
     binding: Binding;
     archiveSha256: string;
+    databaseManifestSha256: string;
     entries: VolumeEntry[];
 };
 async function syncFile(path: string) {
@@ -314,11 +353,41 @@ async function archiveBytes(archive: string) {
     );
     return readFile(archive);
 }
+async function verifiedDatabaseManifest(config: A7Config) {
+    const root = join(config.root, 'backup');
+    const bytes = await archiveBytes(join(root, 'manifest.json'));
+    const manifest = JSON.parse(bytes.toString()) as {
+        schema: number;
+        caseId: string;
+        members: BackupMember[];
+    };
+    assert(
+        manifest.schema === 1 &&
+            manifest.caseId === config.caseId &&
+            Array.isArray(manifest.members) &&
+            manifest.members.length === 4,
+        'database_manifest_invalid',
+    );
+    const names = manifest.members.map((member) => member.path).sort();
+    assert.deepEqual(
+        names,
+        [
+            'authority.sqlite',
+            'business.sqlite',
+            'history.sqlite',
+            'temporal.sqlite',
+        ],
+        'database_manifest_incomplete',
+    );
+    await verifyBackup(root, manifest.members);
+    return sha(bytes);
+}
 export async function backupWorkspace(
     config: A7Config,
     binding: Binding,
     run: Command = execute,
 ): Promise<void> {
+    const databaseManifestSha256 = await verifiedDatabaseManifest(config);
     const archive = join(config.root, 'backup', 'workspace.tar');
     const before = await inventoryVolume(config, binding, run);
     await assert.rejects(lstat(archive), { code: 'ENOENT' });
@@ -343,6 +412,7 @@ export async function backupWorkspace(
         caseId: config.caseId,
         binding,
         archiveSha256,
+        databaseManifestSha256,
         entries: before,
     };
     await writeFile(archive + '.proof.json', JSON.stringify(proof) + '\n', {
@@ -351,9 +421,36 @@ export async function backupWorkspace(
     });
     await syncFile(archive + '.proof.json');
 }
-const deleteSandboxScript = String.raw`
-import {readFile} from 'node:fs/promises';import {resolve,dirname} from 'node:path';import {pathToFileURL} from 'node:url';
-try{const [file,module,name]=process.argv.slice(1);const c=JSON.parse(await readFile(file,'utf8'));const {SandboxClient}=await import(pathToFileURL(module).href);const root=dirname(file);const sdk=await SandboxClient.connect({gateway:c.gateway,caCert:await readFile(resolve(root,c.ca)),clientCert:await readFile(resolve(root,c.cert)),clientKey:await readFile(resolve(root,c.key))});await sdk.delete(name,{workspace:c.workspace});await sdk.waitDeleted(name,60,{workspace:c.workspace});process.exit(0);}catch{process.exit(1);}`;
+const sandboxScript = String.raw`
+import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';import {resolve,dirname} from 'node:path';import {pathToFileURL} from 'node:url';
+try{const [file,module,name,mode,raw]=process.argv.slice(1);const expected=JSON.parse(raw);const c=JSON.parse(await readFile(file,'utf8'));assert(c.workspace===expected.workspace);const {SandboxClient}=await import(pathToFileURL(module).href);const root=dirname(file);const sdk=await SandboxClient.connect({gateway:c.gateway,caCert:await readFile(resolve(root,c.ca)),clientCert:await readFile(resolve(root,c.cert)),clientKey:await readFile(resolve(root,c.key))});const ref=await sdk.get(name,{workspace:c.workspace});assert(ref.id===expected.id&&ref.name===name&&ref.workspace===expected.workspace&&ref.labels?.['bento.web08']===expected.owner&&ref.phase==='stopped');if(mode==='observe'){console.log(JSON.stringify({id:ref.id,name:ref.name,workspace:ref.workspace,owner:ref.labels['bento.web08']}));}else{assert(mode==='delete');await sdk.delete(name,{workspace:c.workspace});await sdk.waitDeleted(name,60,{workspace:c.workspace});}process.exit(0);}catch{process.exit(1);}`;
+async function boundSandbox(config: A7Config, binding: Binding, run: Command) {
+    const containers = await stopped(config, binding, binding.volume, run);
+    assert.equal(containers.length, 1, 'resource_source_container_missing');
+    const expected = {
+        id: containers[0]!.sandboxId,
+        name: binding.sandbox,
+        workspace: config.gatewayWorkspace,
+        owner: config.caseId,
+    };
+    const args = [
+        '--input-type=module',
+        '-e',
+        sandboxScript,
+        config.hostConfig,
+        config.sdkModule,
+        binding.sandbox,
+    ];
+    const observed = JSON.parse(
+        await run(process.execPath, [
+            ...args,
+            'observe',
+            JSON.stringify(expected),
+        ]),
+    );
+    assert.deepEqual(observed, expected, 'resource_official_ref_mismatch');
+    return [...args, 'delete', JSON.stringify(expected)];
+}
 export async function restoreWorkspace(
     config: A7Config,
     binding: Binding,
@@ -362,6 +459,7 @@ export async function restoreWorkspace(
 ): Promise<void> {
     validateConfig(config);
     validBinding(binding);
+    const databaseManifestSha256 = await verifiedDatabaseManifest(config);
     assert.equal(
         archive,
         join(config.root, 'backup', 'workspace.tar'),
@@ -375,6 +473,11 @@ export async function restoreWorkspace(
             proof.caseId === config.caseId &&
             JSON.stringify(proof.binding) === JSON.stringify(binding),
         'archive_proof_invalid',
+    );
+    assert.equal(
+        databaseManifestSha256,
+        proof.databaseManifestSha256,
+        'database_manifest_identity_mismatch',
     );
     assert.equal(
         sha(await archiveBytes(archive)),
@@ -394,14 +497,9 @@ export async function restoreWorkspace(
             run,
         ),
     );
-    await run(process.execPath, [
-        '--input-type=module',
-        '-e',
-        deleteSandboxScript,
-        config.hostConfig,
-        config.sdkModule,
-        binding.sandbox,
-    ]);
+    const deleteArgs = await boundSandbox(config, binding, run);
+    // The child re-reads the same official ref immediately before issuing delete.
+    await run(process.execPath, deleteArgs);
     assert.equal(
         (await attachments(binding.volume, run)).length,
         0,
