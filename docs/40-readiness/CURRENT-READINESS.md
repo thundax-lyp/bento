@@ -339,3 +339,10 @@
 - **页面目录调整补充验证（2026-11-23）**：同一本地工作区将 Web 页面归入 `src/pages/{auth,workbench,projects,tasks}/`，各页面组件使用独立目录的 `index.tsx`，Task 结果组件归入详情目录，在线状态辅助逻辑归入 `pages/shared/`；同步路由导入、设计、README 和公开文件清单。`pnpm --filter @bento/web check` 的类型、lint、格式、17 项测试及构建通过；`pnpm --filter @bento/web test:e2e` 的 22 项 Chromium 测试通过。此次目录调整未重跑 API、Orchestrator 或外部服务验收。
 
 - **Web 测试目录调整补充验证（2026-11-23）**：同一本地工作区将 4 个 `*.test.*` 文件从 `apps/workspace/web/src/` 移至同工程 `tests/`，同步源码导入、Vitest 发现路径、TypeScript/ESLint 覆盖范围、文档及公开清单。`pnpm --filter @bento/web check` 的类型、lint、格式、4 个测试文件共 17 项测试及生产构建通过。该次调整未重跑浏览器、API、Orchestrator 或外部服务验收。
+
+## 2026-11-23 SDK 下载缓存与失败复验
+
+- **基线与实现**：`7f77317` 上的本地工作区，SDK 准备器新增仓库外 `../bento-sdk-cache/`。固定官方 revision 的源码归档按版本保存，每次复用前校验原 SHA-256；新下载仅在完整校验后原子发布。npm 使用持久下载缓存及 `--prefer-offline`，Buf 使用独立持久缓存；每次构建和测试状态仍在本次临时目录中，清理不删除下载缓存。官方 source、lock、生成配置与测试预算保持原口径。
+- **首次准备**：本机已下载并校验官方源码；两个 macOS 平台工具包首次下载因速度和 HTTP/2 流错误未能在原安装阶段完成，随后在仓库外续传补齐，按官方 lockfile 的 SHA-512 核验后填入 npm 缓存。此预热不计作测试通过，也不证明冷缓存环境的网络准备已恢复。
+- **通过记录**：预热后运行原入口 `pnpm --filter @bento/orchestrator check:core:fast`，退出 0。Node 测试 143 项中 141 项通过、2 项原有条件跳过；此前 SDK 安装 hook 阻断的 10 项 A1-03 测试全部通过。Worker runtime 14 项通过、无跳过；Go test/vet、类型检查及两个包清单检查通过。缓存命中的 SDK 安装日志记录 npm HTTP fetch 为零。新增 5 项缓存用例覆盖重复复用、坏缓存拒绝、下载中断、摘要错误及并发原子发布，并已纳入上述 Node 测试。SDK 改动文件的 ESLint、Prettier 及 diff 检查通过。
+- **未覆盖**：两项条件跳过为 Temporal Activity 重投和双槽位公平派发场景；本轮不替代相应独立验收。未运行完整 worker-reuse 长时验收、Temporal retry acceptance 或真实部署验收，不修改需求完成状态。缓存外的网络依赖仍需首次准备，缓存损坏时保持明确失败。

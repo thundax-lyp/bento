@@ -1,5 +1,6 @@
 {
     "files": [
+        "apps/orchestrator/tests/openshell/sdk-cache.test.ts",
         "register-paths.mjs",
         "shared/text-snapshot.ts",
         ".agents/skills/bento-codex-comment-fix/SKILL.md",

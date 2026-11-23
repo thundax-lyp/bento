@@ -6,13 +6,14 @@ import {
     mkdtemp,
     mkdir,
     readFile,
+    rename,
     rm,
     writeFile,
 } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
     schemaDecoder,
     schemaExecEventDecoder,
@@ -39,6 +40,43 @@ export type PreparedSdk = {
     decodeExecEvent: NonNullable<SdkIngressOptions['decodeExecEvent']>;
     dispose(): Promise<void>;
 };
+
+// Keep downloads outside the checkout; each preparation still owns its build tree.
+export const sdkCacheDirectory = fileURLToPath(
+    new URL('../../../../../../bento-sdk-cache/', import.meta.url),
+);
+
+export async function cachedSdkArchive(
+    directory: string,
+    sha256: string,
+    download: (path: string) => Promise<void>,
+): Promise<Buffer> {
+    const archive = join(directory, 'source.tar.gz');
+    function verify(bytes: Buffer) {
+        assert.equal(
+            createHash('sha256').update(bytes).digest('hex'),
+            sha256,
+            'SDK archive cache checksum mismatch',
+        );
+        return bytes;
+    }
+    try {
+        return verify(await readFile(archive));
+    } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const staging = await mkdtemp(join(directory, '.download-'));
+    try {
+        const candidate = join(staging, 'source.tar.gz');
+        await download(candidate);
+        const bytes = verify(await readFile(candidate));
+        await rename(candidate, archive);
+        return bytes;
+    } finally {
+        await rm(staging, { recursive: true, force: true });
+    }
+}
 
 export async function prepareSdk(): Promise<PreparedSdk> {
     const root = await mkdtemp(join(tmpdir(), 'bento-a103-sdk-'));
@@ -104,23 +142,33 @@ export async function prepareSdk(): Promise<PreparedSdk> {
         createHash('sha256').update(bytes).digest('hex');
     try {
         const archive = join(root, 'source.tar.gz');
-        await run(
-            'download',
-            'curl',
-            [
-                '--fail',
-                '--location',
-                '--silent',
-                '--show-error',
-                '--max-time',
-                '120',
-                '--output',
-                archive,
-                'https://codeload.github.com/NVIDIA/OpenShell/tar.gz/' +
-                    sdkRevision,
-            ],
-            root,
-            125_000,
+        await writeFile(
+            archive,
+            await cachedSdkArchive(
+                join(sdkCacheDirectory, 'openshell', sdkRevision),
+                archiveDigest,
+                async (destination) => {
+                    await run(
+                        'download',
+                        'curl',
+                        [
+                            '--fail',
+                            '--location',
+                            '--silent',
+                            '--show-error',
+                            '--max-time',
+                            '120',
+                            '--output',
+                            destination,
+                            'https://codeload.github.com/NVIDIA/OpenShell/tar.gz/' +
+                                sdkRevision,
+                        ],
+                        root,
+                        125_000,
+                    );
+                },
+            ),
+            { mode: 0o600 },
         );
         assert.equal(hash(await readFile(archive)), archiveDigest);
         const source = join(root, 'source');
@@ -159,7 +207,8 @@ export async function prepareSdk(): Promise<PreparedSdk> {
                 '--no-audit',
                 '--no-fund',
                 '--cache',
-                join(root, 'npm-cache'),
+                join(sdkCacheDirectory, 'npm'),
+                '--prefer-offline',
                 '--fetch-timeout=20000',
                 '--fetch-retries=1',
             ],
@@ -168,7 +217,7 @@ export async function prepareSdk(): Promise<PreparedSdk> {
         );
         await run('generate', 'npm', ['run', 'gen'], sdk, 120_000, {
             ...process.env,
-            BUF_CACHE_DIR: join(root, 'buf-cache'),
+            BUF_CACHE_DIR: join(sdkCacheDirectory, 'buf'),
         });
         await run('build', 'npm', ['run', 'build'], sdk, 120_000);
         const raw = join(sdk, 'dist/raw.js');
