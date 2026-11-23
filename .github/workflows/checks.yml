@@ -122,8 +122,8 @@ jobs:
                       printf '%s=%s\n' "$check" "${!check}" >> "$GITHUB_OUTPUT"
                   done
 
-    repository:
-        name: Repository checks
+    quality:
+        name: Repository quality
         needs: changes
         if: ${{ always() }}
         runs-on: ubuntu-24.04
@@ -149,12 +149,6 @@ jobs:
                   node-version: 22.x
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
-            - run: pnpm check:workspace
-              if: ${{ needs.changes.outputs.workspace == 'true' }}
-            - run: pnpm --filter @bento/orchestrator check:core:fast
-              if: ${{ needs.changes.outputs.orchestrator == 'true' }}
-            - run: pnpm --filter @bento/orchestrator test:worker-reuse
-              if: ${{ needs.changes.outputs.worker_reuse == 'true' }}
             - run: pnpm check:worker
               if: ${{ needs.changes.outputs.worker == 'true' }}
             - run: pnpm lint
@@ -163,6 +157,98 @@ jobs:
                       needs.changes.outputs.orchestrator == 'true' ||
                       needs.changes.outputs.worker == 'true' }}
             - run: pnpm format:check
+
+    workspace:
+        name: Workspace checks
+        needs: changes
+        if: ${{ needs.changes.outputs.workspace == 'true' }}
+        runs-on: ubuntu-24.04
+        timeout-minutes: 30
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  persist-credentials: false
+            - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: 22.x
+                  cache: pnpm
+            - run: pnpm install --frozen-lockfile
+            - run: pnpm check:workspace
+
+    orchestrator:
+        name: Orchestrator core checks
+        needs: changes
+        if: ${{ needs.changes.outputs.orchestrator == 'true' }}
+        runs-on: ubuntu-24.04
+        timeout-minutes: 30
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  persist-credentials: false
+            - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: 22.x
+                  cache: pnpm
+            - run: pnpm install --frozen-lockfile
+            - run: pnpm --filter @bento/orchestrator check:core:fast
+
+    worker_reuse:
+        name: Worker reuse acceptance
+        needs: changes
+        if: ${{ needs.changes.outputs.worker_reuse == 'true' }}
+        runs-on: ubuntu-24.04
+        timeout-minutes: 30
+        steps:
+            - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+              with:
+                  persist-credentials: false
+            - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+            - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+              with:
+                  node-version: 22.x
+                  cache: pnpm
+            - run: pnpm install --frozen-lockfile
+            - run: pnpm --filter @bento/orchestrator test:worker-reuse
+              env:
+                  # PRs exercise all 64 rounds without pacing; main retains the 315s soak.
+                  BENTO_A6_WORKER_REUSE_MODE: ${{ github.event_name == 'pull_request' && 'burst' || 'soak' }}
+
+    repository:
+        name: Repository checks
+        needs: [changes, quality, workspace, orchestrator, worker_reuse]
+        if: ${{ always() }}
+        runs-on: ubuntu-24.04
+        timeout-minutes: 5
+        steps:
+            - name: Verify repository checks
+              shell: bash
+              env:
+                  CHANGES_RESULT: ${{ needs.changes.result }}
+                  QUALITY_RESULT: ${{ needs.quality.result }}
+                  WORKSPACE_REQUIRED: ${{ needs.changes.outputs.workspace }}
+                  WORKSPACE_RESULT: ${{ needs.workspace.result }}
+                  ORCHESTRATOR_REQUIRED: ${{ needs.changes.outputs.orchestrator }}
+                  ORCHESTRATOR_RESULT: ${{ needs.orchestrator.result }}
+                  WORKER_REUSE_REQUIRED: ${{ needs.changes.outputs.worker_reuse }}
+                  WORKER_REUSE_RESULT: ${{ needs.worker_reuse.result }}
+              run: |
+                  set -euo pipefail
+                  [[ "$CHANGES_RESULT" == success && "$QUALITY_RESULT" == success ]] || exit 1
+                  verify() {
+                      local name="$1" required="$2" result="$3"
+                      case "$required:$result" in
+                          true:success|false:success|false:skipped) ;;
+                          *)
+                              printf '%s: required=%s result=%s\n' "$name" "$required" "$result" >&2
+                              exit 1
+                              ;;
+                      esac
+                  }
+                  verify workspace "$WORKSPACE_REQUIRED" "$WORKSPACE_RESULT"
+                  verify orchestrator "$ORCHESTRATOR_REQUIRED" "$ORCHESTRATOR_RESULT"
+                  verify worker_reuse "$WORKER_REUSE_REQUIRED" "$WORKER_REUSE_RESULT"
 
     browser:
         name: Web Chromium E2E
