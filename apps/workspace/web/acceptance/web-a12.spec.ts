@@ -190,12 +190,33 @@ async function send(
     return path + '/' + encodeURIComponent(run.id);
 }
 
-async function state(page: Page, runPath: string, status: string) {
+async function state(
+    page: Page,
+    runPath: string,
+    status: string,
+    pendingAdmission = false,
+) {
     let observed = '';
     await expect
         .poll(
             async () => {
-                observed = (await (await get(page, runPath)).json()).run.status;
+                if (pendingAdmission) {
+                    const reply = await page.evaluate(async (path) => {
+                        const response = await fetch(path, {
+                            redirect: 'error',
+                        });
+                        return {
+                            status: response.status,
+                            body: await response.text(),
+                        };
+                    }, runPath);
+                    if (reply.status === 404) return 'not_admitted';
+                    expect(reply.status).toBe(200);
+                    observed = JSON.parse(reply.body).run.status;
+                } else {
+                    observed = (await (await get(page, runPath)).json()).run
+                        .status;
+                }
                 return observed;
             },
             { intervals: [1000], timeout: 90_000 },
@@ -295,6 +316,12 @@ test('WEB-07-04 safe retry preserves prior results and both original checkpoints
         );
         expect(before.historyCheckpointSha256).toBe(before.historyActualSha256);
         expect(before.attemptId).toBe(retry.id);
+        expect(before.sourceRunId).toBe(ids(taskPath, failed).runId);
+        expect(before.newRunId).toBe(retry.runId);
+        expect(before.attempts).toBe(1);
+        expect(before.sourceBindingDigest).toBe(before.retryBindingDigest);
+        expect(before.stopProofSha256).toMatch(/^[a-f0-9]{64}$/);
+
         console.log(
             'A12_CHECKPOINT_READBACK',
             JSON.stringify({
@@ -308,6 +335,7 @@ test('WEB-07-04 safe retry preserves prior results and both original checkpoints
             active,
             '/api' + taskPath + '/runs/' + encodeURIComponent(retry.runId),
             'succeeded',
+            true,
         );
         expect(await resultHash(active, prior)).toEqual(original);
         const allEvents = await events(active, taskPath);

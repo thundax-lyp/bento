@@ -182,6 +182,7 @@
         "apps/workspace/web/playwright.task-submission.config.ts",
         "apps/workspace/web/acceptance/web-a12.spec.ts",
         "apps/workspace/web/acceptance/web-a12-hook.ts",
+        "apps/workspace/web/tests/web-a12-hook.test.ts",
         "apps/workspace/web/playwright.web-a12.config.ts",
         "apps/workspace/web/acceptance/queue-storage-fixture.ts",
         "apps/workspace/web/acceptance/queue-isolation-fixture.ts",
