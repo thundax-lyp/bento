@@ -1,8 +1,5 @@
 import { createHash } from 'node:crypto';
-import { Server } from 'node:http';
-import { Server as TcpServer } from 'node:net';
-import { Context } from '@deepseek-ai/cordis';
-import WebServer from '@deepseek-ai/dsh-host-webserver';
+import { httpListener } from './http-listener.ts';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { keycloakAuth } from './oidc.ts';
 import type { sessionAuth } from './auth.ts';
@@ -27,24 +24,6 @@ type Options = {
 };
 
 const maxJsonBytes = 8 * 1024 * 1024;
-const requestReceiveTimeoutMs = 30_000;
-const connectionsCheckingIntervalMs = 500;
-
-function configureReceiveTimeout(server: Server) {
-    // DSH has already called listen(). Restart Node's existing scanner so the
-    // new interval takes effect without rebinding or replacing HTTP parsing.
-    const setup = server
-        .listeners('listening')
-        .find((listener) => listener.name === 'setupConnectionsTracking');
-    if (!setup || !('connectionsCheckingInterval' in server)) {
-        throw new Error('Node HTTP connection timeout scanner is unavailable');
-    }
-    server.requestTimeout = requestReceiveTimeoutMs;
-    server.headersTimeout = requestReceiveTimeoutMs;
-    server.connectionsCheckingInterval = connectionsCheckingIntervalMs;
-    setup.call(server);
-}
-
 function reply(
     response: ServerResponse,
     status: number,
@@ -458,50 +437,23 @@ export async function taskEntryServer({
         }
     };
 
-    const context = new Context();
     let cleanupTimer: ReturnType<typeof setInterval> | undefined;
     const requests = new Set<Promise<void>>();
-    let listener: Server | undefined;
+    let listener: ReturnType<typeof httpListener> | undefined;
     let stopping: Promise<void> | undefined;
     function close() {
         return (stopping ??= (async () => {
             closing = true;
             clearInterval(cleanupTimer);
-            if (listener?.listening) {
-                const server = listener;
-                // HTTP close stops its timeout scanner immediately. Keep it
-                // running while existing connections drain. DSH disposes it below.
-                await new Promise<void>((resolve) => {
-                    TcpServer.prototype.close.call(server, () => resolve());
-                    server.closeIdleConnections();
-                });
-            }
+            if (listener?.server.listening) await listener.close();
             // An aborted client can close its socket before its handler has finished.
             await Promise.allSettled(requests);
             await cleaning;
-            try {
-                await context.fiber.dispose();
-            } finally {
-                await space?.close();
-            }
+            await space?.close();
         })());
     }
 
     try {
-        await context.plugin(WebServer, {
-            host: '127.0.0.1',
-            port,
-            compression: 'none',
-        });
-        const web = context.webServer;
-        // The pinned DSH release does not expose the Node listener or its timeouts.
-        const native: unknown = Reflect.get(web, 'server');
-        if (!(native instanceof Server) || !native.listening)
-            throw new Error(
-                'DSH WebServer did not expose a listening HTTP server',
-            );
-        listener = native;
-        configureReceiveTimeout(listener);
         function dispatch(request: IncomingMessage, response: ServerResponse) {
             if (closing)
                 return json(response, 503, {
@@ -513,11 +465,23 @@ export async function taskEntryServer({
             requests.add(work);
             return work;
         }
-        web.register({ kind: 'prefix', path: '/api', handler: dispatch });
-        web.registerFallback(dispatch);
+        listener = httpListener((request, response) => {
+            void dispatch(request, response);
+        });
+        const server = listener.server;
+        await new Promise<void>((resolve, reject) => {
+            server.once('error', reject);
+            server.listen(port, '127.0.0.1', () => {
+                server.off('error', reject);
+                resolve();
+            });
+        });
+        const address = server.address();
+        if (!address || typeof address === 'string')
+            throw new Error('HTTP listener unavailable');
         cleanupTimer = setInterval(sweepAccounts, 2000).unref();
         sweepAccounts();
-        return { origin: web.getOrigin(), close };
+        return { origin: 'http://127.0.0.1:' + address.port, close };
     } catch (error) {
         await close();
         throw error;

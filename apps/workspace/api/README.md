@@ -30,9 +30,9 @@ node --import ./register-paths.mjs --env-file=debug-workspace/task-entry.env app
 
 ## HTTP 服务生命周期
 
-任务入口使用 `@deepseek-ai/dsh-host-webserver@0.2.1-rc.4` 监听回环地址和分发路由，继续使用上文的反向代理和 Web API 配置。请求头和完整请求的接收期限均为 30 秒，Node 每 500 毫秒检查一次，超时返回 `408`。该版本未公开监听超时配置，任务入口在启动时重启 Node 的连接超时检查。升级 Node 或 WebServer 时，用未发完的请求头和请求体复验。
+任务入口由 `src/http-listener.ts` 使用 Node 公开的 `node:http` API 监听回环地址，继续使用上文的反向代理和 Web API 配置。请求头和完整请求的接收期限均为 30 秒，在创建 Server 时配置。接收期限独立于处理器耗时；完整请求的后端处理不会因该期限中断。监听器不读取 DSH 私有字段，不调用 Node 内部连接扫描函数。
 
-收到 `SIGINT` 或 `SIGTERM` 后，任务入口停止接收新连接。已连接的客户端仍受接收期限约束。任务入口等待已进入处理器的请求结束，再释放 WebServer。
+收到 `SIGINT` 或 `SIGTERM` 后，任务入口停止接收新连接，关闭空闲连接，等待已进入处理器的请求结束后释放空间资源。监听器保留独立接收期限，保证停止监听后未发完的请求头和请求体仍会结束。`tests/http-listener.test.ts` 使用短期限验证接收和关闭行为。
 
 ## 账号和云端空间
 

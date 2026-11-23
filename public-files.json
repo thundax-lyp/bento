@@ -222,7 +222,9 @@
         "apps/orchestrator/acceptance/worker-reuse/observed-bootstrap.ts",
         "apps/orchestrator/acceptance/worker-reuse/real-reuse.test.ts",
         "apps/orchestrator/acceptance/worker-reuse/check-package.mjs",
-        "apps/orchestrator/acceptance/worker-reuse/trace.ts"
+        "apps/orchestrator/acceptance/worker-reuse/trace.ts",
+        "apps/workspace/api/src/http-listener.ts",
+        "apps/workspace/api/tests/http-listener.test.ts"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",
