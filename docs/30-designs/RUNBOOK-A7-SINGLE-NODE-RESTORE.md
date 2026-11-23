@@ -80,7 +80,7 @@ Non-goals：Go 权威账本迁移、旧部署兼容、新备份产品、远程 H
 
 ## 分段前置门禁与执行顺序
 
-执行顺序固定为：**T0-local → T1 → T3 → T1a → T2a → T2b → T4-local → T0-remote → T4-real → T5-real → T6**。保留既有步骤编号，按此物理顺序执行，不按编号猜测依赖。T1与T3分别提供可独立验证提交的本地产物，不消费尚未创建的adapter、镜像、配置或远端API。
+执行顺序固定为：**T0-local → T1 → T3 → T1a → T2a → T2b → T4-local → T0-remote → T4-real → T5-real → T6-final**。保留既有步骤编号，按此物理顺序执行，不按编号猜测依赖。T1与T3分别提供可独立验证提交的本地产物，不消费尚未创建的adapter、镜像、配置或远端API。
 
 ### T0-local：本地基线、来源与接口门禁
 
@@ -273,6 +273,19 @@ GateProof.required：schema=1、sourceCommit/aIntegratedCommit 40位hex、docker
 
 driver实际启动前再次核控制器字节、daemon和三镜像的ID/平台/源码标签。宿主停启不拼虚假generation：从真实authority三库规范快照构造现有stop/start参数，绑定不匹配/整数越界拒绝。运行时阶段序列约束先gate、停服、完整四库与保全，再还原、重新观测官方ref/mount；只更新本轮部署manifest容器/sandbox ID，不写权威SQL。RTO在原执行停止接收起算，到还原服务实际回读且第二轮成功时取单调时长，不将清理时间当服务恢复时间。报告仅在全部实际断言及本轮清理成功后输出。
 
+### T6-local：常规检查与发布边界（已提前独立完成）
+
+MASTER确认本地范围为package/public-files/check-package/RUNBOOK四改文件，专核现有CI workflow、既有check-package和根files三项，不新增CI job或扩大根files/patterns。已将backup/audit/resources/driver四个纯本地suite精确接`test:single-node-restore:local`，再由`check:core:fast`消费；现有Orchestrator CI job本就调用该corefast，无须变更workflow。真实suite只由显式`test:single-node-restore --case restart|restore`执行，私有adapter专项不入普通CI。
+
+验证实际结果（2026-11-23，代码对应本轮实质提交）：
+
+- `pnpm --filter @bento/orchestrator test:single-node-restore:local`：41/41，fail0/skip0；这四组是本地工具/拒绝/编排证据，不是A7实栈PASS。
+- `pnpm --filter @bento/orchestrator check:core:fast`：exit0，实际经过旧Node suite155项（153PASS、2项既有条件skip）、本轮四suite41/41、Go test/vet、旧包契约、Worker runtime14/14及新增包检查。既有skip不计为本任务验收；该入口不运行远端A7或私有adapter用例。
+- 新`check-package.mjs`：实际installed-tree npm pack dry-run为188文件，13个新源逐项存在、相对/@包内source import闭包完整；root files与三patterns未变、公开登记无重复；依赖/DB/WAL/日志/归档/证书/密钥/env/私有部署JSON及A7受控目录负向检查通过。
+- `pnpm lint`与`pnpm format:check`：全仓exit0；`git diff --check`通过。CI接线按现有workflow实际调用链核对，尚未发起本任务远端PR/CI，不把本机结果写成GitHub结果。
+
+保留T0-remote、T4-real/T5-real和T6-final；Readiness未标已实现，RUNBOOK不删除。过程日志与短probe证据留受控目录，不单独提交过程记录。
+
 ### T0-remote：构建产物身份及真实能力门禁
 
 前置状态：T1/T3/T1a/T2a/T2b已各自通过并提交（T2b：resources8+adapter3合计11/11、fail0/skip0，typecheck/eslint通过）；MASTER明确释放B所需窗口。允许修改：本RUNBOOK；专核T2a私有manifest、T2b host/resources、两份已有Dockerfile，共6文件。未释放窗口时留在此门禁，不阻止之前本地步骤提交。
@@ -314,11 +327,11 @@ node apps/orchestrator/acceptance/single-node-restore/run.mjs --case restore
 
 PASS：真实卷完整inventory/权限一致、四库健康、三库整表一致、原键同输入返回原Run/异输入冲突、他owner不可读、Temporal原history可查且无重复执行、原Session新轮读旧文件/历史并追加成功，A7-01完整报告。STOP：无法同名绑定恢复、额外写者、Gateway对象错归属、任何缺失外部依赖。保留备份/保全卷/源库与失败证据，禁止手工补文件/SQL。通过后提交本步实际产物。
 
-### T6：固定检查、文档落点和删除 RUNBOOK
+### T6-final：真实验收后的长期落点与删除 RUNBOOK
 
-前置状态：T4/T5均实际通过；A 已合入，当前分支按普通 merge 纳新主线，受影响契约定向复验。若 A 尚未合入则等待，不能先B合并。
+前置状态：T6-local已通过并提交，T4-real/T5-real均实际通过；A 已合入，当前分支按普通 merge 纳新主线，受影响契约定向复验。若 A 尚未合入则等待，不能先B合并。
 允许修改：deploy README、应用设计、Readiness、Orchestrator package、`apps/orchestrator/acceptance/single-node-restore/check-package.mjs`、`public-files.json`、本 RUNBOOK；专核根package files，合计8文件。根package无需新增files模式，新源均由现有apps/orchestrator覆盖；backup.test.ts及runner只以显式.ts路径导入同目录backup.ts，pack正向同时检查消费者与backup.ts，禁止出现包内悬空依赖。部署README经既有run入口引用备份能力，不扩根files或旧pack白名单。
-执行：独立入口增加`test:single-node-restore`，只由显式受控执行调用，不加入普通CI远端业务；新增`test:single-node-restore:local`，精确命令为`node --import ../../register-paths.mjs --experimental-strip-types --test acceptance/single-node-restore/backup.test.ts acceptance/single-node-restore/audit.test.ts acceptance/single-node-restore/resources.test.ts acceptance/single-node-restore/driver.test.ts`，在现有`check:core:fast`的`pnpm test`后接`pnpm test:single-node-restore:local`，本地聚合和既有CI corefast自然执行。不得使用acceptance目录通配符，以免引入real-restore/adapter用例；public-files精确登记应发布的验收源，私有adapter/config/DB不登记。check-package使用实际npm pack --dry-run --json断言新增公开源存在、私有内容/数据库/证书/归档不存在。Readiness分别写A7-01/02及声明范围、实际commit、四库/卷/外部Gateway保留边界、真实结果与RPO/RTO；原fixture和A证据保留。删除本RUNBOOK并检查残留引用。
+执行：保留T6-local已接入的精确四suite/corefast/CI和13源公开登记及打包闭包检查，不使用acceptance通配符引入real-restore/adapter私有用例。实际完整门禁对齐最终合入版本，按受影响范围复验；Readiness分别写A7-01/02及声明范围、实际commit、四库/卷/外部Gateway保留边界、真实结果与RPO/RTO；原fixture和A证据保留。删除本RUNBOOK并检查残留引用。
 验证：
 
 ```sh
