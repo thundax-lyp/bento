@@ -81,7 +81,7 @@ BENTO_A7_CONFIG=/absolute/private/case-restart.json node apps/orchestrator/accep
 BENTO_A7_CONFIG=/absolute/private/case-restore.json node apps/orchestrator/acceptance/single-node-restore/run.mjs --case restore
 ```
 
-两个用例分别使用全新业务状态和独立归属。恢复用例停止服务并备份执行账本、授权账本、Session 历史和 Temporal 四个 SQLite 数据库，校验 integrity、外键和 SHA-256，同时归档真实工作区卷并建立独立保全副本。恢复前校验绑定和完整清单，仅写入空目标。归档 helper 断网并只读挂载源卷；解包使用受控 root 恢复新卷的文件所有权。无法证明停写、归属冲突、非空目标和损坏备份均拒绝继续。
+两个用例分别使用全新业务状态和独立归属。恢复用例停止服务并备份执行账本、授权账本、Session 历史和 Temporal 四个 SQLite 数据库，校验 integrity、外键和 SHA-256，同时归档真实工作区卷并建立独立保全副本。独立数据库快照固定为 DELETE journal mode；校验拒绝未纳入清单的 WAL、SHM 和 journal 文件。恢复前校验绑定和完整清单，仅写入空目标。归档 helper 断网并只读挂载源卷；解包使用受控 root 恢复新卷的文件所有权。无法证明停写、归属冲突、非空目标和损坏备份均拒绝继续。
 
 PASS 要求八项断言全部通过：完整业务账本、原回执、原工作流、Session 历史、文件字节、幂等、owner 可见性和原 Session 后续执行。CaseReport 记录源码、恢复版本、已确认记录丢失数、实测 RTO 及停止/清理结果。RTO 从停止边界计到恢复后第二轮完成，属于本次演练观测值。失败时保留源数据库、卷及备份，核对本次资源身份后处理；不得执行全局清理或覆盖曾运行的状态目录。成功时仅清理本轮资源，失败现场先归档保全。实际结果见 [A7 证据](../docs/40-readiness/CURRENT-READINESS.md#a7-单执行节点真实恢复验收)。
 

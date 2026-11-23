@@ -82,6 +82,14 @@ export async function backupSqlite(
         } finally {
             db.close();
         }
+        // backup() inherits WAL mode. Seal the independent target so later
+        // read-only verification never creates or consults sidecar state.
+        const snapshot = new DatabaseSync(target);
+        try {
+            snapshot.exec('PRAGMA journal_mode=DELETE');
+        } finally {
+            snapshot.close();
+        }
         healthy(target);
         await sync(target);
         const bytes = await readFile(target);
@@ -104,7 +112,12 @@ export async function verifyBackup(
     try {
         if (!isAbsolute(root) || members.length < 1 || members.length > 4)
             throw failure();
-        const actual = (await readdir(root))
+        const entries = await readdir(root);
+        // These archives are standalone SQLite snapshots. SQLite must never read
+        // unmanifested sidecar state that restoreSqlite would not copy.
+        if (entries.some((name) => /\.sqlite-(?:wal|shm|journal)$/.test(name)))
+            throw failure();
+        const actual = entries
             .filter((name) => Object.hasOwn(owners, name))
             .sort();
         const declared = members.map((member) => member.path).sort();

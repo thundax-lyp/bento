@@ -4,6 +4,7 @@ import {
     mkdir,
     mkdtemp,
     readFile,
+    readdir,
     rm,
     symlink,
     writeFile,
@@ -165,3 +166,51 @@ test('manifest omission rejects before touching source or an occupied restore ta
         await rm(f.root, { recursive: true, force: true });
     }
 });
+
+test('committed WAL outside the manifest cannot authorize restore', async () => {
+    const f = await fixture();
+    const path = join(f.archive, names[0]!);
+    const db = new DatabaseSync(path);
+    try {
+        db.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;');
+        const member = f.members[0]!;
+        member.sha256 = await f.hash(path);
+        member.bytes = (await readFile(path)).length;
+        db.prepare('INSERT INTO proof VALUES (?,?)').run(2, 'wal-only');
+        assert.equal(db.prepare('SELECT count(*) AS n FROM proof').get()!.n, 2);
+        assert((await readFile(path + '-wal')).length > 0);
+        const before = await f.hash(path);
+        await assert.rejects(
+            verifyBackup(f.archive, f.members),
+            /backup_invalid/,
+        );
+        await assert.rejects(
+            restoreSqlite(f.archive, f.target, f.members),
+            /backup_invalid/,
+        );
+        await assert.rejects(readdir(f.target), { code: 'ENOENT' });
+        assert.equal(await f.hash(path), before);
+    } finally {
+        db.close();
+        await rm(f.root, { recursive: true, force: true });
+    }
+});
+
+for (const suffix of ['-wal', '-shm', '-journal'])
+    test('standalone backup rejects SQLite sidecar ' + suffix, async () => {
+        const f = await fixture();
+        try {
+            await writeFile(join(f.archive, names[0]! + suffix), '');
+            await assert.rejects(
+                verifyBackup(f.archive, f.members),
+                /backup_invalid/,
+            );
+            await assert.rejects(
+                restoreSqlite(f.archive, f.target, f.members),
+                /backup_invalid/,
+            );
+            await assert.rejects(readdir(f.target), { code: 'ENOENT' });
+        } finally {
+            await rm(f.root, { recursive: true, force: true });
+        }
+    });
