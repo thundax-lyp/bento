@@ -76,6 +76,14 @@
 
 OpenShell Gateway interceptor 的固定源码白名单可以管理部分一元控制面 RPC，但不能绑定 ExecSandbox/ExecSandboxInteractive 流式执行。当前可行组合是原生 mTLS 保护后端、平台服务端入口检查业务 generation/READY；入口是新增平台代码，并非已有插件零配置提供。可信管理证书不可下发 worker。
 
+## A1-02 资源绑定隔离验收接线
+
+[A1-02](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a1-02-bad-case-伪造资源绑定) 的三个独立入口套件为 [绑定控制](../../apps/orchestrator/tests/openshell/binding-forgery-control.test.ts)、[持久历史](../../apps/orchestrator/tests/openshell/binding-forgery-persistence.test.ts)和 [SDK 目标](../../apps/orchestrator/tests/openshell/binding-forgery-sdk.test.ts)。测试使用生产 `SingleHostExecution`、权威库和历史库，以及三个独立本机卷。READY 绑定仅替换 tenant、session 或 volume，必须在 `Authority.checkPurge` 拒绝且不进入资源删除回调；合法完整绑定仍可删除自己的卷。每次拒绝前后由独立只读连接比较全表及文件字节，同库重开后再次核验。
+
+历史通过生产 HTTP 的 create/stage/append/reconcile/flush/close 写入两套非空事件，再分别合法读回。A 的当次 capability 请求 B 的 stat/open/read，或 create 提交不匹配的 header.id，均须返回 403 GrantDenied，不改变历史或资源。SDK 复用官方源码准备器和 protobuf 编解码，通过生产 ingress 到独立真实 mTLS HTTP2 服务；GetSandbox、ExecSandbox、ExecSandboxInteractive 分别检查跨 sandbox 请求返回 gRPC 7、上游调用数为零，合法请求实际读取自己的卷。两类网络入口均在同库重开后复验。
+
+三个 suite 由既有 Orchestrator 测试通配符自动执行，[打包检查](../../apps/orchestrator/tests/openshell/binding-forgery/check-package.mjs)核对七个显式公开源文件及私有材料排除。测试不改变生产授权契约，不证明外部 OpenShell 的实际挂载、Docker/OS 隔离或恶意宿主防护，也不替代 A1-03 撤权与 A3 停止观察。实际基线、结果和未覆盖范围见 [A1-02 验收记录](../40-readiness/CURRENT-READINESS.md#a1-02-伪造资源绑定本地验收)。
+
 ## A1-03 旧执行授权验收接线
 
 [A1-03](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a1-03-bad-case-旧执行授权) 的本地验收入口是 [binding-grants.test.ts](../../apps/orchestrator/tests/openshell/binding-grants.test.ts)，由 Orchestrator 既有 `tests/openshell/*.test.ts` 纳入 `pnpm check`。独立 [fixture](../../apps/orchestrator/tests/openshell/binding-grants/fixture.ts) 经生产 SingleHostExecution.bind/admit 签发真实当次 capability，调用真实 sdkIngress 和 operationIngress；不使用手填 token、手造 grantFor 或 SQL 写授权来替代入口。

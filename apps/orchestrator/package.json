@@ -7,7 +7,7 @@
         "test": "node --import ../../register-paths.mjs --experimental-strip-types --test tests/execution-service/*.test.ts tests/openshell/*.test.ts",
         "check": "pnpm check:core && pnpm test:temporal-retry && node acceptance/temporal-retry/check-package.mjs",
         "check:core": "pnpm check:core:fast && pnpm test:worker-reuse",
-        "check:core:fast": "pnpm typecheck && pnpm test && go test ./... && go vet ./... && node tests/openshell/binding-grants/check-package.mjs && pnpm test:worker-runtime && node acceptance/worker-reuse/check-package.mjs",
+        "check:core:fast": "pnpm typecheck && pnpm test && go test ./... && go vet ./... && node tests/openshell/binding-grants/check-package.mjs && pnpm test:worker-runtime && node acceptance/worker-reuse/check-package.mjs && node tests/openshell/binding-forgery/check-package.mjs",
         "test:temporal-retry": "node --import ../../register-paths.mjs --experimental-strip-types --test --test-concurrency=1 --test-timeout=1200000 acceptance/temporal-retry/real-retry.test.ts",
         "test:worker-runtime": "node --import ../../register-paths.mjs --experimental-strip-types --test ../worker/sdk-transport.test.ts ../worker/base-bootstrap.test.ts",
         "test:worker-reuse": "node --import ../../register-paths.mjs --experimental-strip-types --test --test-concurrency=1 --test-timeout=1200000 acceptance/worker-reuse/sdk.test.ts acceptance/worker-reuse/fixture.test.ts acceptance/worker-reuse/real-reuse.test.ts"
