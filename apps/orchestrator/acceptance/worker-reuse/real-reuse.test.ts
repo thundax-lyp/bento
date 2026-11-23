@@ -49,6 +49,12 @@ before(
 );
 after(async () => sdk?.dispose());
 const timeout = { timeout: 120_000, concurrency: false };
+const reuseMode = process.env.BENTO_A6_WORKER_REUSE_MODE ?? 'soak';
+assert(
+    reuseMode === 'soak' || reuseMode === 'burst',
+    'BENTO_A6_WORKER_REUSE_MODE must be soak or burst',
+);
+const roundIntervalMs = reuseMode === 'soak' ? 5000 : 0;
 
 type Trace = {
     kind: string;
@@ -481,7 +487,7 @@ test(
             let last = 0;
             for (let round = 0; round < 64; round++) {
                 if (round > 0) {
-                    const target = first + round * 5000;
+                    const target = first + round * roundIntervalMs;
                     while (performance.now() < target)
                         await delay(
                             Math.max(1, Math.ceil(target - performance.now())),
@@ -490,7 +496,7 @@ test(
                 const started = performance.now();
                 if (!round) first = started;
                 assert(
-                    started >= first + round * 5000,
+                    started >= first + round * roundIntervalMs,
                     'Measured round started early',
                 );
                 last = started;
@@ -615,7 +621,7 @@ test(
                         row.cache,
                 ),
             );
-            assert(last - first >= 315000);
+            assert(last - first >= 63 * roundIntervalMs);
             assert.equal(
                 new Set(
                     h.fixture
@@ -634,6 +640,8 @@ test(
             t.diagnostic(
                 JSON.stringify({
                     schema: 1,
+                    mode: reuseMode,
+                    roundIntervalMs,
                     pid,
                     spanMs: last - first,
                     results,

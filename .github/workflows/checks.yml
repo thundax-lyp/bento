@@ -211,6 +211,9 @@ jobs:
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
             - run: pnpm --filter @bento/orchestrator test:worker-reuse
+              env:
+                  # PRs exercise all 64 rounds without pacing; main retains the 315s soak.
+                  BENTO_A6_WORKER_REUSE_MODE: ${{ github.event_name == 'pull_request' && 'burst' || 'soak' }}
 
     repository:
         name: Repository checks
