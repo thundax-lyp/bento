@@ -254,7 +254,20 @@
         "apps/orchestrator/tests/openshell/binding-forgery/check-package.mjs",
         "apps/orchestrator/tests/openshell/binding-forgery-control.test.ts",
         "apps/orchestrator/tests/openshell/binding-forgery-persistence.test.ts",
-        "apps/orchestrator/tests/openshell/binding-forgery-sdk.test.ts"
+        "apps/orchestrator/tests/openshell/binding-forgery-sdk.test.ts",
+        "apps/orchestrator/acceptance/single-node-restore/backup.ts",
+        "apps/orchestrator/acceptance/single-node-restore/backup.test.ts",
+        "apps/orchestrator/acceptance/single-node-restore/audit.ts",
+        "apps/orchestrator/acceptance/single-node-restore/audit.test.ts",
+        "apps/orchestrator/acceptance/single-node-restore/adapter.test.ts",
+        "apps/orchestrator/acceptance/single-node-restore/resources.ts",
+        "apps/orchestrator/acceptance/single-node-restore/resources.test.ts",
+        "apps/orchestrator/acceptance/single-node-restore/host.ts",
+        "apps/orchestrator/acceptance/single-node-restore/driver.ts",
+        "apps/orchestrator/acceptance/single-node-restore/driver.test.ts",
+        "apps/orchestrator/acceptance/single-node-restore/run.mjs",
+        "apps/orchestrator/acceptance/single-node-restore/real-restore.test.ts",
+        "apps/orchestrator/acceptance/single-node-restore/check-package.mjs"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",

@@ -70,6 +70,23 @@ PASS 时两项测试通过，零失败、零跳过。三库演练报告三个备
 
 该演练验证已完成 Run 的停服边界，真实 OpenShell Workspace 卷及其生命周期、真实 DSH provider/checkpoint、未结批次与故障注入、在线备份和部署级恢复需单独验收。
 
+## 单执行节点真实备份恢复与重启验收
+
+声明范围为单执行节点的执行子部署：正式 commandHost、生产 Go Orchestrator、真实 Temporal、官方 DSH/OpenShell、独立工作区卷及真实模型。正常持久轮次完成后停止执行进程和写入者；OpenShell Gateway 的身份、证书及模型服务在演练中保留。账号 MySQL、Keycloak/Postgres、S3 和完整网站恢复不属于该集合。
+
+在独立 Linux/amd64、Node.js 22 环境准备 Docker CLI、Git、官方 SDK/CLI、受控 bootstrap 和私有配置。配置包含独立资源归属、精确镜像 ID、源码提交、Gateway 身份及通过的能力门禁；不接受缺失证明或其他 owner 的资源。DSH 和官方文件/DeepSeek 插件固定 `0.2.1-rc.4`，Cordis 固定 `4.0.5`，按 frozen lockfile 安装。私有配置、凭据、数据库、备份和报告放在仓库外受限目录。T0 在核实 `sourceCommit` 对应的干净源码及受控适配器后，用 `executionSourceDigest(runtimeRoot)` 记录实际执行树的 `sourceTreeSha256`，同时记录宿主配置的 `hostConfigSha256`，适配器清单与 bootstrap 必须位于该执行源码树根目录，随后冻结运行目录。执行入口重新核对实际源码、lockfile、Dockerfile、宿主配置、适配器输出/base/relay 摘要；旧证明不能授权变化后的文件，不能为绕过拒绝而只重算摘要。
+
+```sh
+BENTO_A7_CONFIG=/absolute/private/case-restart.json node apps/orchestrator/acceptance/single-node-restore/run.mjs --case restart
+BENTO_A7_CONFIG=/absolute/private/case-restore.json node apps/orchestrator/acceptance/single-node-restore/run.mjs --case restore
+```
+
+两个用例分别使用全新业务状态和独立归属。恢复用例停止服务并备份执行账本、授权账本、Session 历史和 Temporal 四个 SQLite 数据库，校验 integrity、外键和 SHA-256，同时归档真实工作区卷并建立独立保全副本。独立数据库快照固定为 DELETE journal mode；校验拒绝未纳入清单的 WAL、SHM 和 journal 文件。恢复前校验绑定和完整清单，仅写入空目标。归档 helper 断网并只读挂载源卷；解包使用受控 root 恢复新卷的文件所有权。无法证明停写、归属冲突、非空目标和损坏备份均拒绝继续。
+
+PASS 要求八项断言全部通过：完整业务账本、原回执、原工作流、Session 历史、文件字节、幂等、owner 可见性和原 Session 后续执行。CaseReport 记录源码、恢复版本、已确认记录丢失数、实测 RTO 及停止/清理结果。RTO 从停止边界计到恢复后第二轮完成，属于本次演练观测值。失败时保留源数据库、卷及备份，核对本次资源身份后处理；不得执行全局清理或覆盖曾运行的状态目录。成功时仅清理本轮资源，失败现场先归档保全。实际结果见 [A7 证据](../docs/40-readiness/CURRENT-READINESS.md#a7-单执行节点真实恢复验收)。
+
+本入口验证计划停服及进程重启，不覆盖在线备份、机器掉电、Gateway 灾备、完整子进程 confinement、多节点或 HA。
+
 ## 单节点 Web 镜像回滚演练
 
 在经批准的 Linux/amd64 开发宿主使用独立 Compose 项目。演练使用正式 Web 镜像构建输入、启动入口和健康检查，配合 mock 业务模式、独立 MySQL 和合成数据。故障镜像只把 `/api/session` 改为返回 503。该流程用于验证同源码版本的 Web 镜像替换和恢复。发布版本降级及数据兼容需要独立验收。
