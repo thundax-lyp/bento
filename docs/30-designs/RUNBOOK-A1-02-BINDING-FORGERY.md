@@ -97,19 +97,9 @@ const expectedEvents = {
 
 PASS：基线匹配、无归属不明改动、命令0且无skip；wire与本文一致。STOP：任何冲突、来源缺失、依赖失败。作者已核 wire 与 remote-session.test.ts、SessionHistory.request 一致；2026-11-23 Node v22.23.2、pnpm12.15.0、OpenSSL3.5.9，以上baseline测试4/4 PASS、fail0skip0。HEAD仍为起始基线；当前唯一改动为本未跟踪草稿。T0技术前置已通过，Executable与分支/开工仍待MASTER。
 
-## T1：建立独立持久状态观察与 fixture
-
-前置：T0 PASS，获审 RUNBOOK 已单独提交。允许修改：state.ts、fixture.ts、binding-forgery-control.test.ts、本稿；专核 authority.ts/single-host.ts。
-
-执行：按结构创建 fixture 和 snapshot；control suite 先增加 `A1-02 fixture legal binding and reopen`：A/B/C READY，真实三卷 canary；同库重开绑定和snapshot相同，清理资源全部关闭。fixture setup失败也执行已拥有资源清理，关闭失败保留私有目录并抛 AggregateError。
-
-验证：`node --import ./register-paths.mjs --test apps/orchestrator/tests/openshell/binding-forgery-control.test.ts`。
-
-PASS：至少1项无skip，独立DB读到3条绑定、三份不同文件，reopen不变。STOP：fixture伪造生产状态、snapshot无真实数据或清理失败。仅清理本次所有资源，不清缓存。
-
 ## T2：逐项拒绝伪造绑定并证明合法删除
 
-前置：T1已提交。允许修改：control.test.ts、fixture.ts、本稿；专核 authority.ts、single-host.ts（test 路径为上述唯一 binding-forgery-control.test.ts）。
+前置：已提交的 fixture/state/control 三文件提供真实3绑定/3卷及同库reopen；T1 focused 1/1 PASS、fail0skip0。允许修改：control.test.ts、fixture.ts、本稿；专核 authority.ts、single-host.ts（test 路径为上述唯一 binding-forgery-control.test.ts）。
 
 执行：分别独立 test `A1-02 forged tenant`、`A1-02 forged session`、`A1-02 forged volume`；每项新fixture，READY A仅改对应字段为B，调用生产purge，拒绝 `Session is not safe to purge`；removeCalls=0，全snapshot等于前值，同库reopen后再攻一次仍相等。各项最后正确purge C：remove恰1、C卷消失、C权威行消失，A/B绑定与canary不变。
 
