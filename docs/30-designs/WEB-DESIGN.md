@@ -316,4 +316,4 @@ Task 使用稳定详情地址，按事件 sequence 恢复历史和持续读取�
 
 Orchestrator 的 `service.ts` 组合执行服务。`task-retry-recovery.ts` 管理 Task 停止证据复验与恢复推进；`task-run-view.ts` 生成 Task Run 视图及重试原因。`Store` 保持公开账本入口，证据、检查点和关闭审计由 `task-evidence-store.ts` 实现，复用 Store 的 SQLite 连接及事务函数，不引入独立数据库或事务边界。
 
-前端页面组件统一置于 `src/pages/`，`pages/index.ts` 提供路由导出入口。`pages/auth/` 管理登录、注册与账号设置，`pages/workbench/` 管理工作台布局，`pages/projects/` 管理项目页面，`pages/tasks/` 管理 Task 列表、提交和详情。每个页面组件使用独立目录的 `index.tsx`，专属子组件位于同目录；Task 结果组件位于 `pages/tasks/details/run-result.tsx`，业务标签由 `pages/tasks/labels.ts` 维护。在线状态订阅由 `pages/shared/online.ts` 共享。
+前端页面组件统一置于 `src/pages/`，`pages/index.ts` 提供路由导出入口。`pages/auth/` 管理登录、注册与账号设置，`pages/workbench/` 管理工作台布局，`pages/projects/` 管理项目页面，`pages/tasks/` 管理 Task 列表、提交和详情。每个页面组件使用独立目录的 `index.tsx`，专属子组件位于同目录；Task 结果组件位于 `pages/tasks/details/run-result.tsx`，业务标签由 `pages/tasks/labels.ts` 维护。在线状态订阅由 `pages/shared/online.ts` 共享。 Web 单元与组件测试位于源码目录外的 `tests/`，Vitest 从该目录发现 `*.test.ts` 和 `*.test.tsx`；TypeScript 和 ESLint 同时覆盖源码与测试。
