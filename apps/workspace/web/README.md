@@ -27,3 +27,29 @@ pnpm --filter @bento/web test:e2e
 ```
 
 浏览器测试自动启动 Vite 和 Bento 的模拟任务入口，使用独立的 4320 和 4319 端口。
+
+页面组件统一置于 `src/pages/`，每个页面组件使用独立目录及显式 `index.tsx` 入口，路由从 `src/pages/index.ts` 导入。
+
+```text
+src/pages/
+├── auth/
+│   ├── login/index.tsx
+│   ├── register/index.tsx
+│   └── account-settings/index.tsx
+├── workbench/index.tsx
+├── projects/
+│   ├── dashboard/index.tsx
+│   ├── workspace/index.tsx
+│   └── run-details/index.tsx
+├── tasks/
+│   ├── list/index.tsx
+│   ├── composer/index.tsx
+│   ├── details/
+│   │   ├── index.tsx
+│   │   └── run-result.tsx
+│   └── labels.ts
+├── shared/online.ts
+└── index.ts
+```
+
+页面专属子组件放在所属页面目录；同业务共享内容放在对应业务目录，跨业务共享的页面辅助逻辑放在 `pages/shared/`。仓库内部导入必须显式写出 `.ts` 或 `.tsx` 等实际扩展名，跨两级及以上父目录使用仓库根别名 `@/`。根 ESLint 配置检查静态导入、重导出、动态导入及类型导入。
