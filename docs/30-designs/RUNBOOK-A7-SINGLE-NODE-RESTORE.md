@@ -311,24 +311,15 @@ MASTER确认本地范围为package/public-files/check-package/RUNBOOK四改文�
 
 PASS：实际daemon/平台/image/proof一致，Linux import/helper/tar、官方create/stop/start/delete及精确volume挂载通过；配置image值均来自本次构建/独立观察，非猜填。PASS后按原已审核RUNBOOK直接进入T4并回报MASTER，不新增审批层；窗口授权仍必须已存在。STOP：窗口未释放、任何能力失败、必须改生产接口或资源无法证归属。T1/T3既有PASS/commit继续有效，不回退也不借此降低A7完整验收。
 
-### T4-real：真实 A7-02 正常进程停止重启
+### T4-real 已通过
 
-前置状态：T4-local接线已提交且完整T0-remote通过；本轮构建proof/配置/镜像/资源identity不变；复核既有能力未漂移，不补造T0证据。
-允许修改：同目录 `run.mjs`、`real-restore.test.ts`、本 RUNBOOK；专核 host.ts/resources.ts/audit.ts，合计6文件。
-执行：run 支持 `--case restart|restore` 两个枚举；BENTO_A7_CONFIG必填且私有；固定超时每轮180秒、生命周期单步60秒、整体15分钟。先执行 restart：独立实例完成第一轮，查原 receipt/intents空和文件；服务正常退出，保留同数据库/卷与外部Gateway，重新启动后 readLedger/HTTP/官方provider对账，提交第二轮，再验原历史前缀与实际文件。正常停止场景不注入 SIGKILL、不引入在途恢复。
-验证：
-
-```sh
-node apps/orchestrator/acceptance/single-node-restore/run.mjs --case restart
-```
-
-PASS：实际生产HTTP→Temporal→生产worker→官方provider/SDK→真实文件链路两轮均成功；原Run未重派，Run/receipt/session/files逐项 true，独立 A7-02报告与清理记录齐全。STOP：fixture替换、跳过、端口监听代替业务验证、模型结果不匹配、退出未证。失败目录保留，不自动递归删除；本步骤完成后提交测试与实际脱敏边界。
+2026-11-23，在B独立测试容器中以源码`71b1cb20ca561da6b504cd14b8a6d5f6c9695535`完成真实DeepSeek/DSH/OpenShell/Temporal执行进程重启，8项断言全部通过、无skip；RPO丢失确认记录0，实测RTO为29057.413毫秒，包含第二轮模型时间。Run/回执/原Workflow/history/幂等/owner隔离/同Session继续与19字节工作区检查通过；本案执行资源清理断言通过。原始白名单报告私有保全，最终T6迁入长期证据。
 
 ### T5-real：真实 A7-01 停服备份还原
 
 前置状态：T4-local干净提交及T4-real已验证，另用新 caseId/全新目录执行，不复用前案数据；T0-remote能力仍匹配。
-允许修改：real-restore.test.ts、resources.ts、本 RUNBOOK；专核 backup.ts/audit.ts，合计5文件。
-执行：严格按九项恢复顺序；备份与保全验证后才删本轮源资源，创建同名空卷。source/state不变；启动restore/state及restore Temporal DB。原API/全部表对账后，在原Session继续真实第二轮。记录从停止接收新任务到第二轮业务验证完成的单调RTO，明确包含模型时间；报告精确 lastAcknowledged/restoredThrough 与丢失确认记录数。
+允许修改：real-restore.test.ts、resources.ts、resources.test.ts、本 RUNBOOK；专核 backup.ts/audit.ts，合计6文件。
+执行：归档仍以非root读取；仅离线tar解包使用显式`--user 0:0`，在network=none、read-only root和本案卷/只读archive挂载内恢复原numeric uid/gid和目录权限。纯本地fixture必须模拟新卷root:root/0755，并拒绝非root解包。严格按九项恢复顺序；备份与保全验证后才删本轮源资源，创建同名空卷。source/state不变；启动restore/state及restore Temporal DB。原API/全部表对账后，在原Session继续真实第二轮。记录从停止接收新任务到第二轮业务验证完成的单调RTO，明确包含模型时间；报告精确 lastAcknowledged/restoredThrough 与丢失确认记录数。
 验证：
 
 ```sh

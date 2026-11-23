@@ -312,6 +312,8 @@ async function tar(
         '--network',
         'none',
         '--read-only',
+        // A fresh Docker volume belongs to root; extraction must restore its numeric ownership.
+        ...(extract ? ['--user', '0:0'] : []),
         '--label',
         'io.bento.a7=' + config.caseId,
         '--mount',

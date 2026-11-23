@@ -179,7 +179,7 @@ async function fixture(mode = 'pass') {
                     }
                 volumes.set(name, {
                     labels,
-                    entries: [structuredClone(directory)],
+                    entries: [{ ...directory, uid: 0, gid: 0, mode: 0o755 }],
                 });
                 return name;
             }
@@ -204,6 +204,11 @@ async function fixture(mode = 'pass') {
                 );
             } else {
                 assert(args.includes('-xpf'));
+                assert.equal(
+                    args[args.indexOf('--user') + 1],
+                    '0:0',
+                    'fresh root-owned volume requires extraction as root',
+                );
                 volume.entries = structuredClone(entries);
             }
             return '';
