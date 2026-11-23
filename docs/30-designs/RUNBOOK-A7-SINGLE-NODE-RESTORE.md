@@ -244,26 +244,9 @@ export async function restoreWorkspace(
 
 本节固定本地与远端的分段执行；当前等待MASTER审核本地链。新增文件在对应步骤创建后验证并提交，后步才消费干净提交；远端能力不作为前序本地提交的条件。
 
-### T1：离线 SQLite 备份器
-
-前置状态：T0-local通过并获本地链Executable、按授权创建任务分支；不要求T0-remote通过。
-允许修改：`apps/orchestrator/acceptance/single-node-restore/backup.ts`、`apps/orchestrator/acceptance/single-node-restore/backup.test.ts`、本 RUNBOOK；专核 authority.ts 与 session-history.ts，合计5文件。
-禁止修改：生产账本/恢复语义与 A 热点。
-执行：按前述签名实现 backupSqlite/verifyBackup/restoreSqlite；member 按 owner 白名单限定业务三库与 temporal；所有目标 exclusive create，verify 全部成功后才建立还原 staging；目标存在立即失败。backup 返回 owner 由固定 basename 映射，不从 caller 任意文本推断。SQLite只读源，备份器不承担停写判断。
-本地输入输出固定：`backupSqlite`要求source/target为绝对普通文件路径，source已存在且basename属于`business.sqlite/authority.sqlite/history.sqlite/temporal.sqlite`，target.basename必须相同、父目录已独占创建；映射owner分别为`business/authority/history/temporal`，member.path为该basename，bytes/stat与sha256由完成并关闭的目标文件生成。`verifyBackup`校验1–4项、四种owner/path一一对应、没有重复/软链接/遗漏实体、健康检查及摘要；调用者在业务备份场景另外要求完整四项，本地工具不猜部署范围。`restoreSqlite`以members精确白名单为输入，先全部验证再排他创建target目录，逐项exclusive copy/fsync并验证摘要；失败只删除本调用持有的新target，target预先存在则拒绝且不动。函数错误只给固定错误类别，不输出SQL/文件正文或绝对私有路径。三个函数都不读取环境、Docker或ExecutionHost。
-
-验证（仓库根）：
-
-```sh
-node --import ./register-paths.mjs --test apps/orchestrator/acceptance/single-node-restore/backup.test.ts
-pnpm --filter @bento/orchestrator typecheck
-```
-
-PASS：正常四库备份/恢复、缺 member、hash损坏、非空目标、软链接成员、重复成员六类实际通过；拒绝时源及既有目标 hash 不变。STOP：任一用例失败或要求迁移。只删除本次未发布 staging，保留源。通过后提交本步骤与 RUNBOOK，下一步只消费该提交。
-
 ### T3：只读对账与脱敏报告
 
-前置状态：T1已提交；仅使用本地临时SQLite/合成文件与内存报告，不导入host/resources、不读取部署配置。
+前置状态：T1已通过并提交（2026-11-23：backup.test.ts 6/6、fail0/skip0；Orchestrator typecheck与两文件eslint通过；backup.ts为同目录实现）；仅使用本地临时SQLite/合成文件与内存报告，不导入host/resources、不读取部署配置。
 允许修改：同目录 `audit.ts`、`audit.test.ts`、本 RUNBOOK；专核 Store 与 SessionHistory，合计5文件。
 执行：实现前述只读接口，完整比较所有非内部表行；原 receipt/历史前缀/Run 与 binding 单列断言。CaseReport 的 RPO/RTO 用 performance.now 单调差记录时长，UTC时点仅供追溯；RPO lostAcknowledgedRecords 必须由前后集合计算，不能写死0。
 本地接口固定：`readLedger(state)`只读state中的business/authority/history三库，返回key为`<库basename>/<表名>`的全表行数组；数据库/表/字段按名称排序，`sqlite_%`内部表排除，标识符双引号转义。启用readBigInts，integer用`{type:'integer',value:十进制string}`、real用`{type:'real',value:number}`、text用`{type:'text',value:string}`、blob用`{type:'blob',value:base64string}`、null用`{type:'null',value:null}`规范化；每行按已排字段顺序生成后以canonical JSON排序，避免无PK表顺序漂移。`assertSameLedger`比较完整canonical结构，失败只给`ledger_mismatch`，不输出敏感行。report写入由T4 runner消费本节结构；T3只验证计算和脱敏，不采样真实RTO或构造“已通过”的A7报告。临时测试使用独立DatabaseSync创建合成库后关闭写句柄，注入每项差异由测试数据准备完成，不导入远端resources或修改生产数据库。
@@ -489,3 +472,5 @@ T0调用不修改production或本任务接线。其结果只确定既有官方�
 - 本稿两段TypeScript签名/argv构造片段已用Node `stripTypeScriptTypes`语法解析通过；这不是新增函数实现或真实部署验证。
 
 未决项因此不再包括“B历史镜像是否存在”的泛化调查，而是：A窗口释放及合入基线、新应用镜像身份、本轮独立受控配置、目标Linux导入/helper/tar与官方RPC/挂载能力。仅凭历史镜像仍在不能放行T0-remote；T1不依赖这些镜像。T0-remote保持未通过，等待窗口后针对本轮真实目标补证；不再阻塞获审本地步骤。
+
+T1 本地PASS：2026-11-23，backup.ts/backup.test.ts已实现四种owner、离线SQLite backup/健康检查/hash、完整成员预验证与排他空目标恢复；固定六类测试6/6，无失败或跳过，typecheck及定向eslint通过。此为本地工具证据，不代表A7真实部署验收。
