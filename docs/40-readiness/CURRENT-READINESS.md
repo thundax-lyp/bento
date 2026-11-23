@@ -353,3 +353,9 @@
 - **回归**：新增正常运行与关闭期间两项未消费 GET 用例，100 ms 接收期限下允许 250 ms 后端处理完成；修复前均返回 408，修复后 HTTP 生命周期 7/7、API 62/62 及 Go test/vet 通过。
 - **复用与补验**：复用上一轮 `pnpm check` 已通过的 Workspace、Orchestrator 核心 141 项（另有 2 项原有条件跳过）、Worker runtime 14/14 和 Worker 复用 24/24，包含 64 轮同 PID 隔离；该轮使用随后形成 `67fc90d` 的 SDK 缓存准备器。官方 Temporal CLI 1.5.1 的 macOS arm64 归档大小及固定 SHA-256 核验一致，通过既有 `BENTO_A6_TEMPORAL_ARCHIVE` 入口补跑 `test:temporal-retry` 9/9。Temporal 包契约、`pnpm check:worker`、`pnpm lint`（19 项规则测试）和干净源码副本的 `pnpm format:check` 均通过，补齐此前失败阶段及其后检查。
 - **未覆盖**：未声明冷缓存直连网络恢复，未运行真实外部模型/OpenShell 部署验收。归档及下载缓存保存在仓库外，不纳入源码或发布包；正在独立修改的 Temporal 下载器不属于该 HTTP 修复提交。不改变需求完成状态。
+
+## 2026-11-23 Temporal CLI 缓存配置与复验
+
+- **基线与设置**：验收 CaseReport 的 head 为 `b313f87dcb1479875d39df55e8294c875ce11ed6`，另含本地未提交的 Temporal 缓存改动。默认复用仓库外 `../bento-sdk-cache/temporal/1.5.1/<平台架构>/release.tar.gz`，显式 `BENTO_A6_TEMPORAL_ARCHIVE` 优先；每次仍执行原有归档大小/SHA、成员、二进制与版本校验，完整准备后才原子发布缓存。CLI、Server 版本、下载预算及失败语义保持原锁定值。
+- **本机通过**：Darwin arm64 的官方归档已完成首次下载和 SHA-256 核验。使用默认路径连续获取两次，下载器调用为零；显式坏归档被拒绝且不回退下载。`pnpm --filter @bento/orchestrator test:temporal-retry` 退出 0，9 项全部通过，无失败或跳过；happy、lost-host、lost-both 三项业务报告与所有清理断言通过，共享缓存保留。类型检查、改动文件 ESLint/Prettier、Temporal 包清单检查通过。
+- **CI 配置与边界**：同一 Temporal job 新增固定版本、Linux x64 与完整 SHA-256 组成的归档缓存键，命中后仍验证内容；未命中时从官方获取并验证后保存。job 名称与必需检查入口未改变。工作流通过 YAML 解析和 Bash 语法检查，job 名称与基线一致；提取实际下载脚本，用合成归档的大小/摘要及命令 fixture 验证冷缓存下载、有效命中、坏摘要拒绝、符号链接拒绝，4/4 通过。实际 Actions 恢复/保存效果待 CI 运行验证。本机通过不证明冷缓存下载网络、Linux 运行、完整长期 worker-reuse 或真实部署就绪，不改变其他需求的状态。

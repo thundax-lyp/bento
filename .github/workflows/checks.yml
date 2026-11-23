@@ -214,6 +214,11 @@ jobs:
                   node-version: 22.x
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
+            - name: Restore pinned Temporal archive
+              uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+              with:
+                  path: ${{ github.workspace }}/../bento-sdk-cache/temporal/1.5.1/linux-x64/release.tar.gz
+                  key: temporal-cli-1.5.1-linux-x64-ddc95e08b0b076efd4ea9733a3f488eb7d2be875f8834e616cd2a37358b4852d
             - name: Fetch pinned official Temporal archive
               id: temporal-archive
               shell: bash
@@ -227,19 +232,31 @@ jobs:
                   chmod 700 "$directory"
                   printf 'directory=%s\n' "$directory" >> "$GITHUB_OUTPUT"
                   archive="$directory/temporal_cli_1.5.1_linux_amd64.tar.gz"
-                  if ! timeout 120s gh release download v1.5.1 --repo temporalio/cli \
+                  cache_directory="$GITHUB_WORKSPACE/../bento-sdk-cache/temporal/1.5.1/linux-x64"
+                  cache_archive="$cache_directory/release.tar.gz"
+                  if [[ -e "$cache_archive" || -L "$cache_archive" ]]; then
+                      [[ -f "$cache_archive" && ! -L "$cache_archive" ]] || exit 1
+                      cp -- "$cache_archive" "$archive"
+                  elif ! timeout 120s gh release download v1.5.1 --repo temporalio/cli \
                       --pattern temporal_cli_1.5.1_linux_amd64.tar.gz --output "$archive" \
                       > /dev/null 2> "$directory/download-error"; then
                       printf 'Pinned official Temporal download failed.\n' >&2
                       exit 1
                   fi
-                  rm -- "$directory/download-error"
+                  rm -f -- "$directory/download-error"
                   [[ -f "$archive" && ! -L "$archive" ]] || exit 1
                   chmod 600 "$archive"
                   [[ $(find "$directory" -mindepth 1 -maxdepth 1 | wc -l) -eq 1 ]] || exit 1
                   [[ $(stat -c %s "$archive") == 50408448 ]] || exit 1
                   archive_sha=$(sha256sum "$archive")
                   [[ ${archive_sha%% *} == ddc95e08b0b076efd4ea9733a3f488eb7d2be875f8834e616cd2a37358b4852d ]] || exit 1
+                  if [[ ! -e "$cache_archive" ]]; then
+                      mkdir -p -- "$cache_directory"
+                      candidate=$(mktemp "$cache_directory/.archive.XXXXXXXX")
+                      cp -- "$archive" "$candidate"
+                      chmod 600 "$candidate"
+                      mv -- "$candidate" "$cache_archive"
+                  fi
                   printf 'archive=%s\n' "$archive" >> "$GITHUB_OUTPUT"
             - run: pnpm --filter @bento/orchestrator test:temporal-retry
               env:
