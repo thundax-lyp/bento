@@ -97,17 +97,9 @@ const expectedEvents = {
 
 PASS：基线匹配、无归属不明改动、命令0且无skip；wire与本文一致。STOP：任何冲突、来源缺失、依赖失败。作者已核 wire 与 remote-session.test.ts、SessionHistory.request 一致；2026-11-23 Node v22.23.2、pnpm12.15.0、OpenSSL3.5.9，以上baseline测试4/4 PASS、fail0skip0。HEAD仍为起始基线；当前唯一改动为本未跟踪草稿。T0技术前置已通过，Executable与分支/开工仍待MASTER。
 
-## T2：逐项拒绝伪造绑定并证明合法删除
-
-前置：已提交的 fixture/state/control 三文件提供真实3绑定/3卷及同库reopen；T1 focused 1/1 PASS、fail0skip0。允许修改：control.test.ts、fixture.ts、本稿；专核 authority.ts、single-host.ts（test 路径为上述唯一 binding-forgery-control.test.ts）。
-
-执行：分别独立 test `A1-02 forged tenant`、`A1-02 forged session`、`A1-02 forged volume`；每项新fixture，READY A仅改对应字段为B，调用生产purge，拒绝 `Session is not safe to purge`；removeCalls=0，全snapshot等于前值，同库reopen后再攻一次仍相等。各项最后正确purge C：remove恰1、C卷消失、C权威行消失，A/B绑定与canary不变。
-
-验证：与T1相同命令。PASS：四项及以上无skip，三项结果独立列出。STOP：任一伪造通过、因错误生命周期拒绝、合法控制失败或数据变化；不改生产以绕过。
-
 ## T3：以真实历史内容证明 Session 隔离
 
-前置：T2已提交，T0 wire已固定。允许修改：fixture.ts、persistence.test.ts、state.ts、本稿；专核 persistence-ingress.ts、worker-gate.ts、session-history.ts（persistence.test.ts 唯一路径为 binding-forgery-persistence.test.ts）。
+前置：control suite 的fixture及tenant/session/volume三项负测4/4 PASS、fail0skip0；READY绑定逐项拒绝、reopen及合法C实际删除已提交；T0 wire已固定。允许修改：fixture.ts、persistence.test.ts、state.ts、本稿；专核 persistence-ingress.ts、worker-gate.ts、session-history.ts（persistence.test.ts 唯一路径为 binding-forgery-persistence.test.ts）。
 
 执行：增加 `A1-02 persistence session target` suite；A/B admit后各经真实HTTP创建并append不同合法事件，close后合法stat返回对应Session header，open(read)/read的value.events深比较上述expectedEvents[actor]完整数组（A两项time=1700000000001/1700000000002；B两项time=1700000000101/1700000000102），不等于另一actor数组；不要求历史返回文件canary。A token + B id 对 stat/open/read 分项403；create分别用A id+B header.id、A id+新UUID header.id，均403 GrantDenied（由ingress先拒绝，不能以SessionAlreadyExists替代）。每次负测snapshot完全相同、响应不含B事件；同库reopen后重复。合法A/B仍可读且值不串。
 
