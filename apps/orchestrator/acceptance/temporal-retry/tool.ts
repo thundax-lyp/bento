@@ -3,13 +3,15 @@ import {
     chmod,
     copyFile,
     mkdir,
+    mkdtemp,
     open,
     readFile,
     realpath,
+    rename,
     rm,
     stat,
 } from 'node:fs/promises';
-import { isAbsolute, join, relative } from 'node:path';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import { root, runCommand } from './process.ts';
 
 export type TemporalTool = {
@@ -41,6 +43,24 @@ export async function acquireTemporal(
     if (platform !== 'darwin-arm64' && platform !== 'linux-x64')
         throw new Error('Unsupported Temporal acceptance platform');
     const release = releases[platform];
+    const cachedArchive = join(
+        root,
+        '..',
+        'bento-sdk-cache',
+        'temporal',
+        '1.5.1',
+        platform,
+        'release.tar.gz',
+    );
+    let supplied = process.env.BENTO_A6_TEMPORAL_ARCHIVE;
+    if (supplied === undefined) {
+        try {
+            await stat(cachedArchive);
+            supplied = cachedArchive;
+        } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        }
+    }
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const archive = join(directory, 'release.tar.gz');
     const part = join(directory, 'part');
@@ -64,7 +84,6 @@ export async function acquireTemporal(
             input,
         });
     try {
-        const supplied = process.env.BENTO_A6_TEMPORAL_ARCHIVE;
         if (supplied !== undefined) {
             if (!isAbsolute(supplied))
                 throw new Error(
@@ -316,6 +335,19 @@ export async function acquireTemporal(
         const version = (await command([binary, '--version'])).stdout.trim();
         if (version !== 'temporal version 1.5.1 (Server 1.29.1, UI 2.42.1)')
             throw new Error('Temporal version mismatch');
+        if (supplied === undefined) {
+            const cacheDirectory = dirname(cachedArchive);
+            await mkdir(cacheDirectory, { recursive: true, mode: 0o700 });
+            const staging = await mkdtemp(join(cacheDirectory, '.download-'));
+            try {
+                const candidate = join(staging, 'release.tar.gz');
+                await copyFile(archive, candidate);
+                await chmod(candidate, 0o600);
+                await rename(candidate, cachedArchive);
+            } finally {
+                await rm(staging, { recursive: true, force: true });
+            }
+        }
         return { binary, archiveSha256: release.sha, binarySha256, platform };
     } catch (error) {
         await rm(archive, { force: true });

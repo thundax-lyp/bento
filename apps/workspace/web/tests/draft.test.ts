@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'vitest';
-import { loadDraft, prepareSubmission, saveDraft } from './draft';
+import { loadDraft, prepareSubmission, saveDraft } from '../src/draft.ts';
 
 afterEach(() => sessionStorage.clear());
 

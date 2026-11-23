@@ -13,7 +13,7 @@ export default [
     },
     ...base,
     {
-        files: ['src/**/*.{ts,tsx}'],
+        files: ['src/**/*.{ts,tsx}', 'tests/**/*.{ts,tsx}'],
         languageOptions: { globals: globals.browser },
         plugins: { 'react-hooks': hooks },
         rules: {

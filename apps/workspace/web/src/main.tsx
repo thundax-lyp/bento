@@ -13,7 +13,7 @@ import {
     RouterProvider,
     useRouteError,
 } from 'react-router';
-import { ApiError, projectsQuery, sessionQuery } from './api';
+import { ApiError, projectsQuery, sessionQuery } from './api.ts';
 import {
     AccountSettings,
     Dashboard,
@@ -24,8 +24,8 @@ import {
     TaskDetails,
     Workspace,
     Workbench,
-} from './pages';
-import { CloudProjectRoute } from './space';
+} from './pages/index.ts';
+import { CloudProjectRoute } from './space.tsx';
 import './style.css';
 
 const externalAuth = import.meta.env.VITE_BENTO_KEYCLOAK_AUTH === '1';

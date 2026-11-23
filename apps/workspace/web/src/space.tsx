@@ -18,7 +18,7 @@ import {
 } from './space-api.ts';
 import type { PreviewResult, Space, Upload } from './space-api.ts';
 import { ApiError, createTask, taskListQuery, taskUrl } from './api.ts';
-import { Button, Notice } from './ui';
+import { Button, Notice } from './ui.tsx';
 
 function message(error: unknown) {
     return error instanceof Error ? error.message : '操作失败，请稍后重试。';

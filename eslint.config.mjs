@@ -35,6 +35,12 @@ export default tseslint.config(
                 'error',
                 {
                     selector:
+                        ':matches(ImportDeclaration, ExportNamedDeclaration, ExportAllDeclaration, ImportExpression, TSImportType) > .source[value=/^(?:\\.\\.?\\/|@\\/)/]:not([value=/\\.(?:[cm]?[jt]sx?|json|css|svg|png|webp|woff2?)$/])',
+                    message:
+                        'Use an explicit file extension for repository imports.',
+                },
+                {
+                    selector:
                         ':matches(ImportExpression > .source, TSImportType > .source)[value=/^\\.\\.\\/\\.\\.(?:\\/|$)/]',
                     message:
                         'Use @/ for imports that cross two or more parent directories.',

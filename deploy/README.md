@@ -183,7 +183,7 @@ pnpm --dir apps/orchestrator test:temporal-retry
 
 该入口校验官方 Temporal CLI 1.5.1 archive 并提取工具，运行独立真实 Server 1.29.1。支持平台固定为 Darwin arm64 和 Linux x64，其他平台直接失败。下载来自固定官方 release asset，大小/SHA-256 按[工具锁定](../apps/orchestrator/acceptance/temporal-retry/tool.ts)验证；HTTP/1.1 Range 最多 8 分钟/12 次请求，签名 URL 只在内存使用，网络/完整性或任一测试失败均返回非零，不静默 skip。
 
-本机可设置 `BENTO_A6_TEMPORAL_ARCHIVE` 为仓库外、本平台已取得的官方 archive 绝对路径，每次仍完整核验大小/SHA 并提取版本。CI 默认按官方来源获取。`BENTO_A6_EVIDENCE_DIR` 可指定仓库外私有目录保存脱敏 CaseReport、SQL/文件回执及真实 history；不设置时输出摘要并清理运行状态。
+本机默认复用仓库外 `../bento-sdk-cache/temporal/1.5.1/<平台架构>/release.tar.gz`，平台目录为 `darwin-arm64` 或 `linux-x64`。归档不存在时从锁定官方来源下载，完成大小、SHA、成员、二进制及版本校验后原子写入缓存；每次命中仍完整核验，损坏时明确失败，不静默换源。设置 `BENTO_A6_TEMPORAL_ARCHIVE` 可优先指定其他仓库外、本平台官方 archive 的绝对路径。CI 按固定版本、平台和 SHA-256 恢复归档缓存，未命中时获取官方资产，命中后仍校验；运行目录及 Temporal 数据库继续独立创建和清理，不删除共享归档。`BENTO_A6_EVIDENCE_DIR` 可指定仓库外私有目录保存脱敏 CaseReport、SQL/文件回执及真实 history；不设置时输出摘要并清理运行状态。
 
 测试自己创建 loopback 临时端口、专属 namespace/taskQueue、Temporal DB 和执行宿主 SQLite；不读取部署 Temporal 配置。先完成内部 HTTP→生产 Go Workflow/Activity→生产 TS 宿主→真实文件/回执的正常路径，再注入成功回包丢失、宿主/Worker 重启与原 Temporal DB 重启。执行 host 明确为本地 fixture，不需 Docker、真实模型、OpenShell、IdP 或对象存储。全九项测试通过、三例业务输出 passed 且 cleanup 全 true 才是成功，实际副作用一次、原 receipt/Run/execution/结果保持一致。
 
@@ -234,6 +234,6 @@ pnpm --filter @bento/orchestrator test:worker-reuse
 node apps/orchestrator/acceptance/worker-reuse/check-package.mjs
 ```
 
-成功须五case无skip、64轮四项隔离全通过、跨度至少315秒、同一实际PID，以及撤权/清理失败换PID、同库重开与资源归零。测试失败按对应case和分项定位，保留失败结论；只清理本次准确拥有的临时资源，不删除其他服务状态。SDK默认走原[官方准备工具](../apps/orchestrator/tests/openshell/binding-grants/sdk.ts)及六项schema探针；固定源码revision为`ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47`，TLS/安装和构建预算不变。
+成功须五case无skip、64轮四项隔离全通过、跨度至少315秒、同一实际PID，以及撤权/清理失败换PID、同库重开与资源归零。测试失败按对应case和分项定位，保留失败结论；只清理本次准确拥有的临时资源，不删除其他服务状态。SDK默认走原[官方准备工具](../apps/orchestrator/tests/openshell/binding-grants/sdk.ts)及六项schema探针；固定源码revision为`ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47`，TLS/安装和构建预算不变。官方源码归档首次下载并通过固定SHA-256校验后，保存到仓库旁的`../bento-sdk-cache/openshell/<revision>/source.tar.gz`；后续准备逐次复验并复用，npm/Buf下载内容分别缓存在同级`npm/`和`buf/`。每次构建仍使用独立临时目录，清理测试不会删除缓存；源码缓存损坏时明确失败，应先核对原因再删除该版本缓存并重新获取。
 
 本轮本地可显式指定`BENTO_A6_WORKER_REUSE_SDK_BUNDLE`为仓库外、已经审核身份的受控输入；wrapper逐项核验固定历史清单/完整SHA，隔离复制并执行相同六探针，错误不回退来源。该本地输入绑定本轮已核SDK，不能自行重签manifest或将任意SDK路径当成受控输入；CI不设置该变量，按官方来源真实构建。验收模式必须与[Readiness](../docs/40-readiness/CURRENT-READINESS.md#a6-05-worker-长期池复用)证据对应，受控来源通过不表示默认网络准备已恢复。临时SDK、mTLS材料、config、数据库和trace均在仓库外，不进入npm包；完整门禁保留真实Temporal九项。

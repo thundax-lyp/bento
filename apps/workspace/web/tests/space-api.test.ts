@@ -5,7 +5,7 @@ import {
     type TransferProgress,
     getProjectDeletionImpact,
     deleteSpaceProject,
-} from './space-api.ts';
+} from '../src/space-api.ts';
 
 afterEach(() => vi.unstubAllGlobals());
 
