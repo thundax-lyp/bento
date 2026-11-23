@@ -1,22 +1,20 @@
-import { createHash } from 'node:crypto';
+import { operationId, publicTaskEventBatch } from '@/apps/worker/protocol.ts';
 import { mkdir, realpath } from 'node:fs/promises';
-import type { Http2Server } from 'node:http2';
 import type { Server as HttpServer } from 'node:http';
+import type { Http2Server } from 'node:http2';
 import type { Socket } from 'node:net';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { SingleHostExecution } from '../openshell/single-host.ts';
-import {
-    HistoryCheckpointUnavailable,
-    type VerifiedStopProof,
-} from '../openshell/session-history.ts';
 import { unifiedDiff } from './diff.ts';
 import { executionHttp, RetryUnavailable } from './http.ts';
-import { conflict, RequestError, textSnapshot } from './input.ts';
+import { conflict, textSnapshot } from './input.ts';
+import { snapshotSha256 } from './snapshot.ts';
 import { projectBinding, Store, type ProjectDeletionReceipt } from './store.ts';
+import { taskRetryRecovery } from './task-retry-recovery.ts';
+import { taskRunViews } from './task-run-view.ts';
 import type { TemporalRunOptions, temporalRuns } from './temporal.ts';
 import {
-    TaskRestoreEvidenceConflict,
     executionBindingDigest,
     sha256Digest,
     type Binding,
@@ -25,12 +23,9 @@ import {
     type WorkerRequest,
     type WorkerResult,
 } from './types.ts';
-import { operationId, publicTaskEventBatch } from '@/apps/worker/protocol.ts';
 
 type Run = ReturnType<Store['findRun']>;
-type Attempt = ReturnType<Store['taskRetry']>;
 type Server = HttpServer | Http2Server;
-class RetryEvidenceConflict extends Error {}
 
 type Review = {
     runId: string;
@@ -40,11 +35,7 @@ type Review = {
     expectedSnapshotSha256: string;
 };
 
-export function snapshotSha256(files: readonly FileText[]) {
-    return createHash('sha256')
-        .update(JSON.stringify(textSnapshot(files)))
-        .digest('hex');
-}
+export { snapshotSha256 } from './snapshot.ts';
 type Options = {
     state: string;
     token: string;
@@ -466,322 +457,21 @@ export async function serveExecution(options: Options) {
             return true;
         }
 
-        function readProof(
-            run: Run,
-            oldGeneration: number,
-            newGeneration: number,
-        ) {
-            const binding = db.binding(run);
-            const receipt = db.readStopProof(run.id);
-            if (
-                !receipt ||
-                typeof receipt.canonicalJson !== 'string' ||
-                sha256Digest(receipt.canonicalJson) !== receipt.sha256
-            )
-                throw new RetryEvidenceConflict(
-                    'Task stop proof checksum mismatch',
-                );
-            const proof = JSON.parse(receipt.canonicalJson);
-            const canonical = JSON.stringify({
-                taskId: run.projectId,
-                runId: run.id,
-                sessionId: binding.session,
-                bindingDigest: executionBindingDigest(binding),
-                oldGeneration,
-                newGeneration,
-                workerExitedAt: db.taskExit(run.id, oldGeneration)?.exitedAt,
-                authorityState: 'READY',
-                authorityRun: null,
-                hasCapability: false,
-                unknownOperations: 0,
-                pendingBatches: 0,
-                workspaceOnly: true,
-                observedAt: proof.observedAt,
-            });
-            if (
-                oldGeneration !== run.admittedGeneration ||
-                oldGeneration + 1 !== newGeneration ||
-                canonical !== receipt.canonicalJson ||
-                !Number.isFinite(Date.parse(proof.workerExitedAt)) ||
-                !Number.isFinite(Date.parse(proof.observedAt)) ||
-                !readyBinding(binding, newGeneration) ||
-                execution.hasUnknownOperations(binding.session, oldGeneration)
-            )
-                throw new RetryEvidenceConflict(
-                    'Task stop proof binding mismatch',
-                );
-            return binding;
-        }
+        const {
+            readProof,
+            verifiedStopProof,
+            advanceTaskRetry,
+            verifyRestoredTask,
+            advancingRetries,
+        } = taskRetryRecovery({ db, execution, host, stop, readyBinding });
 
-        function verifiedStopProof(attempt: Attempt) {
-            const source = db.findRun(attempt.sourceRunId);
-            if (source.projectId !== attempt.taskId)
-                throw new RetryEvidenceConflict('Retry source binding changed');
-            const binding = readProof(
-                source,
-                attempt.oldGeneration,
-                attempt.newGeneration,
-            );
-            const checkpoint = db.taskCheckpoint(source.id);
-            if (
-                !checkpoint ||
-                checkpoint.workspaceSha256 !== attempt.workspaceSha256 ||
-                checkpoint.historySha256 !== attempt.historySha256
-            )
-                throw new RetryEvidenceConflict('Retry checkpoint mismatch');
-            let files: FileText[];
-            try {
-                files = textSnapshot(JSON.parse(checkpoint.workspace));
-            } catch (error) {
-                if (
-                    error instanceof RequestError ||
-                    error instanceof SyntaxError
-                )
-                    throw new RetryEvidenceConflict(
-                        'Retry checkpoint mismatch',
-                    );
-                throw error;
-            }
-            if (snapshotSha256(files) !== checkpoint.workspaceSha256)
-                throw new RetryEvidenceConflict('Retry checkpoint mismatch');
-            const proof = {
-                attemptId: attempt.id,
-                taskId: attempt.taskId,
-                sourceRunId: source.id,
-                newRunId: attempt.newRunId,
-                sessionId: binding.session,
-                oldGeneration: attempt.oldGeneration,
-                newGeneration: attempt.newGeneration,
-                checkpointSha256: attempt.historySha256,
-            } as VerifiedStopProof;
-            return { binding, checkpoint, proof };
-        }
-
-        const advancingRetries = new Set<string>();
-        async function advanceTaskRetry(attempt: Attempt) {
-            const phase = attempt.phase;
-            const recovery = host.taskRecovery;
-            if (
-                !recovery ||
-                phase === 'queued' ||
-                phase === 'closed' ||
-                phase === 'blocked' ||
-                advancingRetries.has(attempt.id)
-            )
-                return;
-            advancingRetries.add(attempt.id);
-            try {
-                let validated: ReturnType<typeof verifiedStopProof>;
-                try {
-                    validated = verifiedStopProof(attempt);
-                } catch (error) {
-                    if (
-                        error instanceof RetryEvidenceConflict ||
-                        error instanceof SyntaxError
-                    )
-                        throw new RetryEvidenceConflict(
-                            'Invalid persisted retry evidence',
-                        );
-                    throw error;
-                }
-                let { binding, checkpoint, proof } = validated;
-                if (phase === 'preparing') {
-                    const receipt = await recovery.queryRestore(
-                        binding,
-                        attempt.id,
-                    );
-                    try {
-                        ({ binding, checkpoint, proof } =
-                            verifiedStopProof(attempt));
-                    } catch (error) {
-                        if (
-                            error instanceof RetryEvidenceConflict ||
-                            error instanceof SyntaxError
-                        )
-                            throw new RetryEvidenceConflict(
-                                'Invalid persisted retry evidence',
-                            );
-                        throw error;
-                    }
-                    if (
-                        receipt &&
-                        (receipt.sha256 !== attempt.workspaceSha256 ||
-                            receipt.attemptId !== attempt.id)
-                    )
-                        throw new RetryEvidenceConflict(
-                            'Restore receipt changed',
-                        );
-                    execution.validateRestoreCheckpoint(
-                        proof.sessionId,
-                        proof.sourceRunId,
-                        proof.oldGeneration,
-                        proof.checkpointSha256,
-                    );
-                    if (receipt?.phase !== 'ready') {
-                        const output = await recovery.restoreTask(
-                            binding,
-                            attempt.id,
-                            textSnapshot(JSON.parse(checkpoint.workspace)),
-                            attempt.workspaceSha256,
-                        );
-                        if (
-                            output.attemptId !== attempt.id ||
-                            output.sha256 !== attempt.workspaceSha256
-                        )
-                            throw new RetryEvidenceConflict(
-                                'Unexpected restore receipt',
-                            );
-                    }
-                    if (
-                        snapshotSha256(await host.snapshot(binding)) !==
-                        attempt.workspaceSha256
-                    )
-                        throw new RetryEvidenceConflict(
-                            'Restored Task volume differs',
-                        );
-                    db.advanceTaskRetry(
-                        attempt.id,
-                        phase,
-                        'workspace_restored',
-                    );
-                    return;
-                }
-                if (phase === 'workspace_restored') {
-                    if (
-                        execution.restoreHistory(proof).sha256 !==
-                        attempt.historySha256
-                    )
-                        throw new RetryEvidenceConflict(
-                            'Restored Task history differs',
-                        );
-                    db.advanceTaskRetry(attempt.id, phase, 'history_restored');
-                    return;
-                }
-                await verifyRestoredTask(attempt, binding, proof);
-                db.finalizeTaskRetry(attempt.id, phase);
-            } catch (error) {
-                if (
-                    !stop.signal.aborted &&
-                    (error instanceof RetryEvidenceConflict ||
-                        error instanceof TaskRestoreEvidenceConflict ||
-                        error instanceof HistoryCheckpointUnavailable)
-                )
-                    db.advanceTaskRetry(attempt.id, phase, 'blocked');
-                // An ambiguous host response is queried under the same attempt on the next tick.
-            } finally {
-                advancingRetries.delete(attempt.id);
-            }
-        }
-
-        async function verifyRestoredTask(
-            attempt: Attempt,
-            binding: Binding,
-            proof: VerifiedStopProof,
-        ) {
-            const receipt = await host.taskRecovery?.queryRestore(
-                binding,
-                attempt.id,
-            );
-            const current = await host.running(
-                execution.inspect(binding.session),
-            );
-            if (
-                receipt?.phase !== 'ready' ||
-                receipt.attemptId !== attempt.id ||
-                receipt.sha256 !== attempt.workspaceSha256 ||
-                !current.running ||
-                !current.installed ||
-                current.sandbox !== binding.sandbox ||
-                current.volume !== binding.volume ||
-                snapshotSha256(await host.snapshot(binding)) !==
-                    attempt.workspaceSha256 ||
-                execution.restoredHistoryDigest(proof) !== attempt.historySha256
-            )
-                throw new RetryEvidenceConflict(
-                    'Inconsistent Task recovery evidence',
-                );
-        }
-
-        function retryReason(run: Run) {
-            const task = db.task(db.binding(run).tenant, run.projectId);
-            if (task.closedReason) return 'task_closed';
-            if (task.status !== 'ready') return 'task_not_ready';
-            if (run.status === 'needs_review') return 'needs_review';
-            if (db.hasActiveTaskRetry(run.projectId)) return 'task_busy';
-            if (
-                db.taskRunRows(db.binding(run).tenant, run.projectId).at(-1)
-                    ?.id !== run.id
-            )
-                return 'not_latest';
-            if (run.status !== 'failed' && run.status !== 'cancelled')
-                return 'not_terminal';
-            if (!host.taskRecovery || !db.readStopProof(run.id))
-                return 'stop_unconfirmed';
-            const checkpoint = db.taskCheckpoint(run.id);
-            if (!checkpoint) return 'checkpoint_unavailable';
-            try {
-                if (
-                    snapshotSha256(
-                        textSnapshot(JSON.parse(checkpoint.workspace)),
-                    ) !== checkpoint.workspaceSha256
-                )
-                    return 'checkpoint_unavailable';
-            } catch {
-                return 'checkpoint_unavailable';
-            }
-            const oldGeneration = run.admittedGeneration;
-            if (oldGeneration === null) return 'stop_unconfirmed';
-            let binding: Binding;
-            try {
-                binding = readProof(run, oldGeneration, oldGeneration + 1);
-            } catch {
-                return 'stop_unconfirmed';
-            }
-            try {
-                execution.validateRestoreCheckpoint(
-                    binding.session,
-                    run.id,
-                    oldGeneration,
-                    checkpoint.historySha256,
-                );
-            } catch (error) {
-                if (error instanceof HistoryCheckpointUnavailable)
-                    return 'checkpoint_unavailable';
-                throw error;
-            }
-            return null;
-        }
-
-        function taskRunView(run: Run) {
-            const task = db.task(db.binding(run).tenant, run.projectId);
-            return {
-                id: run.id,
-                taskId: run.projectId,
-                sequence: run.taskSequence,
-                prompt: run.prompt,
-                status: run.status,
-                retryOf: run.retryOf,
-                createdAt: run.createdAt,
-                updatedAt: run.updatedAt,
-                summary: run.summary,
-                canContinue:
-                    task.status === 'ready' &&
-                    !task.closedReason &&
-                    !db.hasActiveTaskRetry(task.id) &&
-                    db.taskRunRows(db.binding(run).tenant, task.id).at(-1)
-                        ?.id === run.id &&
-                    (run.status === 'succeeded' ||
-                        (run.status === 'cancelled' &&
-                            run.admittedGeneration === null)),
-                canCancel:
-                    run.status === 'queued' ||
-                    (run.status === 'running' &&
-                        !run.receipt &&
-                        supportsCancellation(run)),
-                retryReason: retryReason(run),
-                resultVersion: db.taskResultRow(run.id)?.version ?? null,
-            };
-        }
+        const { retryReason, taskRunView } = taskRunViews({
+            db,
+            execution,
+            host,
+            readProof,
+            supportsCancellation,
+        });
 
         async function closeTaskRun(input: {
             runId: string;

@@ -1,3 +1,4 @@
+import { TaskEvidenceStore } from './task-evidence-store.ts';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -169,12 +170,18 @@ export function projectBinding(project: Project): Binding {
 
 export class Store {
     private readonly db: DatabaseSync;
+    private readonly evidence: TaskEvidenceStore;
 
     private readonly tenantQueueLimit: number;
 
     constructor(path: string, tenantQueueLimit = 16) {
         this.tenantQueueLimit = tenantQueueLimit;
         this.db = new DatabaseSync(path);
+        this.evidence = new TaskEvidenceStore(
+            this.db,
+            (action) => this.write(action),
+            (id) => this.findRun(id),
+        );
         this.db.exec(`
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=FULL;
@@ -1311,31 +1318,11 @@ export class Store {
     }
 
     recordStopProof(runId: string, canonicalJson: string) {
-        const digest = sha256(canonicalJson);
-        return this.write(() => {
-            const prior = this.readStopProof(runId);
-            if (prior) {
-                if (
-                    prior.canonicalJson !== canonicalJson ||
-                    prior.sha256 !== digest
-                )
-                    throw new Error('Conflicting stop proof.');
-                return prior;
-            }
-            const createdAt = now();
-            this.db
-                .prepare('INSERT INTO stop_proofs VALUES (?,?,?,?)')
-                .run(runId, canonicalJson, digest, createdAt);
-            return { canonicalJson, sha256: digest, createdAt };
-        });
+        return this.evidence.recordStopProof(runId, canonicalJson);
     }
 
     readStopProof(runId: string) {
-        return this.db
-            .prepare(
-                'SELECT canonicalJson,sha256,createdAt FROM stop_proofs WHERE runId=?',
-            )
-            .get(runId);
+        return this.evidence.readStopProof(runId);
     }
 
     acquireTaskInputDeleteHold(
@@ -1721,55 +1708,24 @@ export class Store {
         workspaceSha256: string,
         historySha256: string,
     ) {
-        const workspace = JSON.stringify(files);
-        return this.write(() => {
-            const prior = this.taskCheckpoint(runId);
-            if (prior) {
-                if (
-                    prior.workspace !== workspace ||
-                    prior.workspaceSha256 !== workspaceSha256 ||
-                    prior.historySha256 !== historySha256
-                )
-                    throw new Error('Task checkpoint conflict.');
-                return;
-            }
-            this.db
-                .prepare('INSERT INTO task_run_checkpoints VALUES (?,?,?,?)')
-                .run(runId, workspace, workspaceSha256, historySha256);
-        });
+        return this.evidence.recordTaskCheckpoint(
+            runId,
+            files,
+            workspaceSha256,
+            historySha256,
+        );
     }
 
     taskCheckpoint(runId: string) {
-        return this.db
-            .prepare(
-                'SELECT workspace,workspaceSha256,historySha256 FROM task_run_checkpoints WHERE runId=?',
-            )
-            .get(runId) as
-            | {
-                  workspace: string;
-                  workspaceSha256: string;
-                  historySha256: string;
-              }
-            | undefined;
+        return this.evidence.taskCheckpoint(runId);
     }
 
     recordTaskAdmission(runId: string, generation: number, digest: string) {
-        const admitted = this.db
-            .prepare(
-                'UPDATE runs SET admittedGeneration=?,admittedBindingDigest=? WHERE id=? AND admittedGeneration IS NULL AND taskSequence IS NOT NULL',
-            )
-            .run(generation, digest, runId);
-        if (admitted.changes !== 1)
-            throw new Error('Task execution admission changed');
+        return this.evidence.recordTaskAdmission(runId, generation, digest);
     }
 
     taskExit(runId: string, generation: number) {
-        return this.db
-            .prepare(
-                'SELECT bindingDigest,exitedAt FROM worker_exit WHERE runId=? AND generation=?',
-            )
-            .get(runId, generation) as
-            { bindingDigest: string; exitedAt: string } | undefined;
+        return this.evidence.taskExit(runId, generation);
     }
 
     recordTaskExit(
@@ -1778,32 +1734,16 @@ export class Store {
         bindingDigest: string,
         exitedAt: string,
     ) {
-        return this.write(() => {
-            const row = this.findRun(runId);
-            if (
-                row.admittedGeneration !== generation ||
-                row.admittedBindingDigest !== bindingDigest
-            )
-                throw new Error('Task execution identity mismatch');
-            const prior = this.taskExit(runId, generation);
-            if (prior) {
-                if (prior.bindingDigest !== bindingDigest)
-                    throw new Error('Task exit identity mismatch');
-                return prior;
-            }
-            this.db
-                .prepare('INSERT INTO worker_exit VALUES (?,?,?,?)')
-                .run(runId, generation, bindingDigest, exitedAt);
-            return { bindingDigest, exitedAt };
-        });
+        return this.evidence.recordTaskExit(
+            runId,
+            generation,
+            bindingDigest,
+            exitedAt,
+        );
     }
 
     readTaskClosure(runId: string) {
-        return (
-            this.db
-                .prepare('SELECT * FROM task_closure_audit WHERE runId=?')
-                .get(runId) ?? null
-        );
+        return this.evidence.readTaskClosure(runId);
     }
 
     closeTaskRun(
@@ -1812,51 +1752,12 @@ export class Store {
         generation: number,
         stopDigest: string,
     ) {
-        return this.write(() => {
-            const prior = this.readTaskClosure(runId);
-            if (prior) {
-                if (
-                    prior.decision !== decision ||
-                    prior.authorityGeneration !== generation
-                )
-                    throw conflict(
-                        'review_unavailable',
-                        'Closure decision changed.',
-                    );
-                return;
-            }
-            const run = this.findRun(runId);
-            if (
-                run.taskSequence === null ||
-                run.status !== 'needs_review' ||
-                run.receipt
-            )
-                throw conflict(
-                    'review_unavailable',
-                    'Run is not awaiting closure.',
-                );
-            const time = now();
-            this.db
-                .prepare('INSERT INTO task_closure_audit VALUES (?,?,?,?,?)')
-                .run(runId, decision, generation, stopDigest, time);
-            this.db
-                .prepare(
-                    "UPDATE runs SET status='failed',summary=?,updatedAt=? WHERE id=?",
-                )
-                .run(
-                    decision === 'unconfirmed'
-                        ? '执行结果无法确认。'
-                        : '执行失败。',
-                    time,
-                    runId,
-                );
-            if (decision === 'unconfirmed')
-                this.db
-                    .prepare(
-                        "UPDATE tasks SET closedReason='unconfirmed',updatedAt=? WHERE id=?",
-                    )
-                    .run(time, run.projectId);
-        });
+        return this.evidence.closeTaskRun(
+            runId,
+            decision,
+            generation,
+            stopDigest,
+        );
     }
 
     private hasQueueCapacity(owner: string) {
