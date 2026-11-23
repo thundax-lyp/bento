@@ -224,6 +224,8 @@
         "apps/orchestrator/acceptance/worker-reuse/check-package.mjs",
         "apps/orchestrator/acceptance/worker-reuse/trace.ts",
         "apps/workspace/api/src/http-listener.ts",
+        "apps/workspace/api/src/space-project-deletion.ts",
+        "apps/workspace/api/src/space-upload.ts",
         "apps/workspace/api/tests/http-listener.test.ts"
     ],
     "patterns": [

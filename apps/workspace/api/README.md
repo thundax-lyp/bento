@@ -34,6 +34,8 @@ node --import ./register-paths.mjs --env-file=debug-workspace/task-entry.env app
 
 收到 `SIGINT` 或 `SIGTERM` 后，任务入口停止接收新连接，关闭空闲连接，等待已进入处理器的请求结束后释放空间资源。监听器保留独立接收期限，保证停止监听后未发完的请求头和请求体仍会结束。`tests/http-listener.test.ts` 使用短期限验证接收和关闭行为。
 
+空间上传由 `src/space.ts` 协调；项目删除状态机位于 `src/space-project-deletion.ts`，共用原 SQLite 连接和事务函数。任务来源和输入 pin 仍由 `src/space-execution.ts` 管理。
+
 ## 账号和云端空间
 
 受邀账号在前端用邀请码注册并设置密码，注册后用密码登录。Docker Compose 中，邀请账号、注册凭据和注销状态保存在 MySQL，Go 从邀请文件初始化尚不存在的账号。
