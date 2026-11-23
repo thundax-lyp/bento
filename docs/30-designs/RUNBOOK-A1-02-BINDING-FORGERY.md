@@ -97,19 +97,9 @@ const expectedEvents = {
 
 PASS：基线匹配、无归属不明改动、命令0且无skip；wire与本文一致。STOP：任何冲突、来源缺失、依赖失败。作者已核 wire 与 remote-session.test.ts、SessionHistory.request 一致；2026-11-23 Node v22.23.2、pnpm12.15.0、OpenSSL3.5.9，以上baseline测试4/4 PASS、fail0skip0。HEAD仍为起始基线；当前唯一改动为本未跟踪草稿。T0技术前置已通过，Executable与分支/开工仍待MASTER。
 
-## T5：固定公开边界与完整验证
-
-前置：T4 gateway/sdk suite已提交，三组全量focused 12/12 PASS、fail0skip0，tsc --noEmit通过。MASTER批准本步直接类型修正 apps/orchestrator/tests/openshell/binding-forgery/state.ts 的泛型表名键及 apps/orchestrator/tests/openshell/binding-forgery-persistence.test.ts 的官方SessionSeq构造，原完整事件断言不缩减。允许修改：check-package.mjs、public-files.json、apps/orchestrator/package.json、本稿；专核根package.json、binding-grants/check-package.mjs、.github/workflows/checks.yml（共7文件）。
-
-执行：public-files精确登记7个新代码文件；根files不变。test默认openshell/*.test.ts已收三个新suite；check:core:fast末尾加 `node tests/openshell/binding-forgery/check-package.mjs`。新检查器用现有pack检查同等正负断言，确认7文件各入包一次且无node_modules/SQLite/私钥/证书/日志/临时目录。CI当前Orchestrator路径覆盖自动执行，无CI改动；若实际未覆盖STOP向MASTER报。
-
-验证：`node apps/orchestrator/tests/openshell/binding-forgery/check-package.mjs`；`pnpm check`；`git diff --check`。
-
-PASS：完整check0；三个新suite全部实际执行无skip，既有两个可选Temporal skip不得计入A1证据；pack符合固定边界。STOP：任何失败、用例缺失或发布泄漏；不得扩大根files。
-
 ## T6：迁移证据并删除 RUNBOOK
 
-前置：T5提交和完整验证证据对应当前代码。允许修改：APPLICATION-BOUNDARIES-DESIGN.md、CURRENT-READINESS.md、本稿（完整路径见前面链接）；专核正式需求、public-files.json（共5文件）。
+前置：T5完整验证已PASS：2026-11-23 pnpm check exit0，三个新suite无skip；全仓lint/format、64轮315秒Worker复用、真实Temporal9项、打包检查通过。MASTER在B聊天系统中止后接管本任务，仅修正测试清理lint并完成原固定检查；证据仍对应本任务代码。T5产物提交后进入本步。允许修改：APPLICATION-BOUNDARIES-DESIGN.md、CURRENT-READINESS.md、本稿（完整路径见前面链接）；专核正式需求、public-files.json（共5文件）。
 
 执行：设计记录绑定伪造入口/信任范围与真实HTTP/mTLS/SQLite/文件fixture边界；Readiness A1-02改已实现，逐项列tenant/session/volume、合法控制、持久回读/重启、SDK与HTTP拒绝和零转发，记录日期/代码基线/实际命令/通过数量/未覆盖。A1父项仍部分，A6原状态不变。删本稿，不保留completed/archive副本。
 

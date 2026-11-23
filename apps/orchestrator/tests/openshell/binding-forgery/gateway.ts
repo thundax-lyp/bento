@@ -300,6 +300,7 @@ export async function createBindingGateway(
             throw new AggregateError(
                 [error, cleanup],
                 'A1-02 gateway setup and cleanup failed',
+                { cause: cleanup },
             );
         }
         throw error;

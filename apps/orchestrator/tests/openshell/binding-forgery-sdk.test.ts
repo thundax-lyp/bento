@@ -24,11 +24,28 @@ for (const method of [
     'ExecSandbox',
     'ExecSandboxInteractive',
 ] as const) {
-    test('A1-02 SDK forged sandbox ' + method, { timeout: 60000 }, async () => {
-        const fixture = await createBindingFixture();
-        let gateway:
-            Awaited<ReturnType<typeof createBindingGateway>> | undefined;
-        try {
+    test(
+        'A1-02 SDK forged sandbox ' + method,
+        { timeout: 60000 },
+        async (t) => {
+            const fixture = await createBindingFixture();
+            let gateway:
+                Awaited<ReturnType<typeof createBindingGateway>> | undefined;
+            t.after(async () => {
+                const results = [];
+                results.push(...(await Promise.allSettled([gateway?.close()])));
+                results.push(
+                    ...(await Promise.allSettled([fixture.dispose()])),
+                );
+                const errors = results
+                    .filter((result) => result.status === 'rejected')
+                    .map((result) => result.reason);
+                if (errors.length)
+                    throw new AggregateError(
+                        errors,
+                        'A1-02 SDK cleanup failed',
+                    );
+            });
             fixture.admit();
             for (let attempt = 0; attempt < 2; attempt++) {
                 gateway = await createBindingGateway(fixture, sdk);
@@ -90,15 +107,6 @@ for (const method of [
                     assert.deepEqual(fixture.snapshot(), settled);
                 }
             }
-        } finally {
-            const results = [];
-            results.push(...(await Promise.allSettled([gateway?.close()])));
-            results.push(...(await Promise.allSettled([fixture.dispose()])));
-            const errors = results
-                .filter((result) => result.status === 'rejected')
-                .map((result) => result.reason);
-            if (errors.length)
-                throw new AggregateError(errors, 'A1-02 SDK cleanup failed');
-        }
-    });
+        },
+    );
 }

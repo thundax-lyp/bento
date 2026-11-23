@@ -185,6 +185,7 @@ export async function createBindingFixture() {
             throw new AggregateError(
                 [error, cleanup],
                 'A1-02 setup and cleanup failed',
+                { cause: cleanup },
             );
         }
         throw error;

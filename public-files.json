@@ -245,7 +245,14 @@
         "apps/workspace/web/src/pages/tasks/details/run-result.tsx",
         "apps/workspace/web/src/pages/tasks/labels.ts",
         "apps/workspace/web/src/pages/tasks/list/index.tsx",
-        "apps/workspace/web/src/pages/workbench/index.tsx"
+        "apps/workspace/web/src/pages/workbench/index.tsx",
+        "apps/orchestrator/tests/openshell/binding-forgery/state.ts",
+        "apps/orchestrator/tests/openshell/binding-forgery/fixture.ts",
+        "apps/orchestrator/tests/openshell/binding-forgery/gateway.ts",
+        "apps/orchestrator/tests/openshell/binding-forgery/check-package.mjs",
+        "apps/orchestrator/tests/openshell/binding-forgery-control.test.ts",
+        "apps/orchestrator/tests/openshell/binding-forgery-persistence.test.ts",
+        "apps/orchestrator/tests/openshell/binding-forgery-sdk.test.ts"
     ],
     "patterns": [
         "apps/orchestrator/index.ts",
