@@ -38,6 +38,8 @@ Compose 在数据库、Keycloak 和 Orchestrator 健康后启动 Web。使用默
 
 Compose 的 `auth-build` 阶段独立生成个人端认证 HTML 和 CSS。运行镜像通过 NGINX 和 Go 入口将 `/auth` 请求转发给 TypeScript task-entry，由它根据当前业务会话提供构建产物。启用 OIDC 时若启动日志提示 `Workspace auth build artifacts are unavailable`，运行 `docker compose -f deploy/compose.yaml build bento-web` 后重新启动服务。
 
+Web 和 Orchestrator 的 Go 构建使用 BuildKit 持久缓存：`bento-go-mod-1.25` 保存 `/go/pkg/mod`，`bento-go-build-1.25` 保存 `/root/.cache/go-build`。同一 builder 上重建时复用已下载模块及编译结果，即使构建层失效或上次构建失败，也无需重新下载已缓存的模块。依赖版本仍由各自的 `go.mod` 和 `go.sum` 决定。缓存属于 builder，不进入运行镜像；日常案例清理只删除本次容器和镜像，不清理共享构建缓存。首次下载、缓存被回收或切换 builder 后仍需要可用网络，缓存不能替代代理或网络配置。
+
 启动失败时运行 `docker compose -f deploy/compose.yaml logs --tail=100`。核对 Realm 导入、OIDC 客户端配置、容器对 issuer 的连通性，以及适配器的启动日志。用同一 Compose 项目名执行 `stop` 和 `up -d` 恢复。保留命名卷以延续账号、身份、空间及执行状态。
 
 ## 单节点业务执行账本备份还原演练

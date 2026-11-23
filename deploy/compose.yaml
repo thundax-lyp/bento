@@ -9,9 +9,12 @@ services:
                 FROM golang:1.25-bookworm AS go-build
                 WORKDIR /build
                 COPY apps/workspace/api/go/go.mod apps/workspace/api/go/go.sum ./
-                RUN go mod download
+                RUN --mount=type=cache,id=bento-go-mod-1.25,target=/go/pkg/mod \
+                    go mod download
                 COPY apps/workspace/api/go/*.go ./
-                RUN CGO_ENABLED=0 go build -trimpath -o /out/bento-web-api .
+                RUN --mount=type=cache,id=bento-go-mod-1.25,target=/go/pkg/mod \
+                    --mount=type=cache,id=bento-go-build-1.25,target=/root/.cache/go-build \
+                    CGO_ENABLED=0 go build -trimpath -o /out/bento-web-api .
 
                 FROM $${NODE_IMAGE} AS dependencies
                 WORKDIR /app

@@ -288,6 +288,10 @@ MASTER确认本地范围为package/public-files/check-package/RUNBOOK四改文�
 
 ### T0-remote：构建产物身份及真实能力门禁
 
+构建缓存补充（2026-11-23，与部署配置同一实质提交）：MASTER授权本步同步修改`deploy/orchestrator/Dockerfile`、`deploy/compose.yaml`、`deploy/README.md`及本RUNBOOK。两处Go阶段的下载与编译共享BuildKit缓存`bento-go-mod-1.25`挂载`/go/pkg/mod`；编译另用`bento-go-build-1.25`挂载`/root/.cache/go-build`。依赖版本、运行镜像与业务契约不变。案例清理不得prune共享builder缓存。缓存复用的实际验证须在同builder二次构建观察命中；目前仅配置检查通过，尚未证实热缓存复用。
+
+当前源诊断已实际尝试：首个Orchestrator构建在`go mod download`下载既有Go模块时连接超时，未到DSH安装/导入；本案清理与独立容器/镜像清零均通过。环境说明中已有代理候选对同下载目标的定向探针返回`EHOSTUNREACH`。因此先恢复既有授权网络入口，再基于含缓存改动的干净源码、源码包与Dockerfile新摘要重试；不得盲目重试、改依赖版本或把缓存挂载当作冷缓存网络已恢复。该诊断不替代A合入后完整T0，实际restart/restore与Readiness保持待验。
+
 前置状态：T1/T3/T1a/T2a/T2b已各自通过并提交（T2b：resources8+adapter3合计11/11、fail0/skip0，typecheck/eslint通过）；MASTER明确释放B所需窗口。允许修改：本RUNBOOK；专核T2a私有manifest、T2b host/resources、两份已有Dockerfile，共6文件。未释放窗口时留在此门禁，不阻止之前本地步骤提交。
 
 执行：
