@@ -272,10 +272,13 @@ jobs:
             - name: Use Ubuntu HTTPS package mirrors
               shell: bash
               run: |
-                  # Regional HTTP mirrors caused multi-minute apt downloads in recent runs.
+                  # Hosted runners may select regional HTTP mirrors through mirror+file URIs.
                   sudo sed -i -E \
                       's|http://([a-z0-9.-]+\.)?archive.ubuntu.com/ubuntu/?|https://archive.ubuntu.com/ubuntu/|g; s|http://security.ubuntu.com/ubuntu/?|https://security.ubuntu.com/ubuntu/|g' \
                       /etc/apt/sources.list.d/ubuntu.sources
+                  # Retain the runner's HTTPS fallback mirrors, excluding slow HTTP entries.
+                  sudo sed -i '/^http:\/\//d' /etc/apt/apt-mirrors.txt
+                  grep '^https://' /etc/apt/apt-mirrors.txt
             - run: pnpm --filter @bento/web exec playwright install --with-deps --only-shell chromium
             - run: pnpm --filter @bento/web test:e2e
               if: ${{ needs.changes.outputs.browser == 'true' }}
