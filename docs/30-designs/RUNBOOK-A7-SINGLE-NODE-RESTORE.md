@@ -244,22 +244,9 @@ export async function restoreWorkspace(
 
 本节固定本地与远端的分段执行；当前等待MASTER审核本地链。新增文件在对应步骤创建后验证并提交，后步才消费干净提交；远端能力不作为前序本地提交的条件。
 
-### T2a：锁定私有 adapter 派生装配
-
-前置状态：T1a已通过并提交（backup.test.ts 7/7，manifest遗漏负例及合法单库子集均验证，typecheck/定向eslint通过），T3已通过并提交（2026-11-23：audit.test.ts 7/7、fail0/skip0；Orchestrator typecheck与定向eslint通过；本地三库全表规范编码与脱敏报告已落盘）。
-允许修改：adapter.test.ts、本 RUNBOOK，以及私有派生 daemon/worker-loopback/a7-bootstrap 三文件；专核历史 daemon、worker-loopback、model-relay、volume-io、base.candidate 五文件，合计10文件。历史四文件校验与 inventory 已在T0形成固定证据；relay-host不参与当前进程装配，不新增依赖。
-执行：仅按前述四类适配生成派生本轮源及manifest；不得改原始历史源。bootstrap使用已选createBootstrap/官方DeepSeekAdapter/SDK/provider，既有shim路径不变。
-验证：
-
-```sh
-node --import ./register-paths.mjs --test apps/orchestrator/acceptance/single-node-restore/adapter.test.ts
-```
-
-PASS：原文件SHA仍一致、派生补丁仅覆盖允许的四类、bootstrap不含手工事件/receipt或管理凭据，错误不回退fixture。STOP：原依赖闭包变化或必须扩大生产范围；保留派生源和差异。通过后提交本步骤公开测试与RUNBOOK，私有源由manifest锁定但不进入Git。
-
 ### T2b：资源控制、全卷 inventory 与正式宿主接线
 
-前置状态：T2a 已提交，私有manifest已锁定，工作树无未归属改动；只用本地记录命令的double验证接线，不要求实际image ID。
+前置状态：T2a已PASS并提交（adapter.test.ts 3/3、fail0/skip0，typecheck/eslint通过），私有manifest已锁定，工作树无未归属改动；只用本地记录命令的double验证接线，不要求实际image ID。
 允许修改：`apps/orchestrator/acceptance/single-node-restore/resources.ts`、同目录 `resources.test.ts`、`host.ts`、本 RUNBOOK；专核 command-host.ts、start.ts，合计6文件。私有 adapter 派生产物写仓库外目录，不计入公开源，但必须进入本轮 manifest。
 禁止修改：新 host 框架、业务 HTTP、生产 service/types、历史 adapter 原件。
 执行：host.ts 只调用 commandHost/serveExecution；配置和销毁复用既有过程工具。resources 实现 owner/daemon/image/ref/mount 核对、停写证明、归档、保全卷、同名恢复。新增 `inventoryVolume(config:A7Config,binding:Binding):Promise<VolumeEntry[]>`，entry required `path:string,type:'directory'|'file',mode:number,uid:number,gid:number,bytes:number,sha256:string|null`，目录sha256=null，路径包含根`.`，按 UTF-8 path 排序。禁止链接/设备/非本轮资源，所有命令argv调用。历史源按上表校验后生成派生 adapter；bootstrap 按上一节固定，不允许 caller 选其他实现。
@@ -360,7 +347,7 @@ PASS：backup/audit本地测试由check:core:fast实际执行且无skip；远端
 Worker import闭包使用如下唯一固定命令：
 
 ```sh
-docker run --rm --network none --read-only --label "io.bento.a7=$BENTO_A7_CASE_ID" --mount "type=bind,src=$BENTO_A7_ADAPTER_ROOT,dst=/app,readonly" --entrypoint node "$BENTO_A7_WORKER_IMAGE" --input-type=module -e 'import {createRequire} from "node:module"; import {pathToFileURL} from "node:url"; const r=createRequire("/app/package.json"); const b=await import("/app/base.candidate.ts"); const m=await import(pathToFileURL(r.resolve("@deepseek-ai/dsh-llm-deepseek")).href); if(typeof b.createBootstrap!=="function"||typeof m.DeepSeekAdapter!=="function"||typeof m.resolveAdapterOptions!=="function") process.exitCode=1'
+docker run --rm --network none --read-only --label "io.bento.a7=$BENTO_A7_CASE_ID" --mount "type=bind,src=$BENTO_A7_ADAPTER_ROOT,dst=/app,readonly" --entrypoint node "$BENTO_A7_WORKER_IMAGE" --input-type=module -e 'import {createRequire} from "node:module"; import {pathToFileURL} from "node:url"; const r=createRequire("/app/package.json"); const b=await import("/app/base.candidate.ts"); const a=await import("/app/a7-bootstrap.ts"); const m=await import(pathToFileURL(r.resolve("@deepseek-ai/dsh-llm-deepseek")).href); if(typeof a.default!=="function"||typeof b.createBootstrap!=="function"||typeof m.DeepSeekAdapter!=="function"||typeof m.resolveAdapterOptions!=="function") process.exitCode=1'
 ```
 
 **当前本地链待MASTER审核，T0-remote未通过**。新基线/本轮镜像与资源、helper及官方RPC/挂载证据只约束远端阶段；历史源码和本地依赖闭包已核。远端失败报告具体symbol/镜像/断言，不否定无依赖的T1/T3本地证据。
@@ -464,3 +451,5 @@ T3 本地PASS：2026-11-23，audit.ts/audit.test.ts七项通过，覆盖全部SQ
 T0-remote同名能力补齐：第一次官方delete/waitDeleted及实际容器卸载后，只删除本轮空卷，明确volume absent，再排他创建**相同volume名和sandbox名**，沿同一固定CLI argv重新创建。同名卷必须先证明空内容再挂载；Docker volume无独立稳定ID，不断言volume-ID变化、不靠CreatedAt秒级差。第二次必须SDK waitReady、独立核新sandbox ref.id与新container.Id均不同于首次，且tenant/project/session语义绑定不变、volume名字/labels/实际mount目标与image一致。核第二次stop状态后再官方delete/waitDeleted，精确卸载/删本轮卷/tag。只有第二次同名重建和清理全PASS，T0-remote才通过；T5不再作为首次同名重建试验。任何失败保留两次实际ID和断言，不假定第一次create证明恢复。
 
 T1a PASS：verifyBackup对root受管DB名集合与manifest.path集合精确比较；四库root+slice(1)拒绝，source/archive/occupied target canary摘要不变；独立单库root合法。固定backup suite7/7、typecheck/eslint通过。T0-remote已补两次同名创建与sandbox/container ID变化、卷absent→排他create→空内容→实际mount；不虚构volume ID。
+
+T2a PASS：2026-11-23，仅本地生成三个私有源（daemon、worker-loopback、a7-bootstrap），原source三项SHA不变；shared model-relay/volume-io沿已核SHA不改。MASTER已定向批准专核来源替换为daemon/loopback/base及现有sdk-transport/provider，总10文件。官方SandboxClient无close，实际用既有createRunSdkTransport+new SandboxClient(transport)，finally关闭真实transport，不虚构SDK方法。adapter.test.ts 3/3、fail0/skip0，Node语法/精确patch/隔离argv/绑定与生命周期检查、Orchestrator typecheck/定向eslint通过。私有manifest SHA256=`0d2a60a353a249dc985d9eafe7892ecfb75c5a47eb01a6535bcbc56c4f25048a`，源位置和完整before/after仅留私有调查回执。执行adapter专项需显式BENTO_A7_ADAPTER_MANIFEST与BENTO_A7_ADAPTER_MANIFEST_SHA256，不进常规CI。未调用bootstrap/模型/SDK/Docker；Linux实际import新增a7-bootstrap.default检查，仍待T0-remote。
