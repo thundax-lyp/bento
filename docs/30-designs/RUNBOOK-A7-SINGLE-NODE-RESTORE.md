@@ -244,24 +244,9 @@ export async function restoreWorkspace(
 
 本节固定本地与远端的分段执行；当前等待MASTER审核本地链。新增文件在对应步骤创建后验证并提交，后步才消费干净提交；远端能力不作为前序本地提交的条件。
 
-### T2b：资源控制、全卷 inventory 与正式宿主接线
-
-前置状态：T2a已PASS并提交（adapter.test.ts 3/3、fail0/skip0，typecheck/eslint通过），私有manifest已锁定，工作树无未归属改动；只用本地记录命令的double验证接线，不要求实际image ID。
-允许修改：`apps/orchestrator/acceptance/single-node-restore/resources.ts`、同目录 `resources.test.ts`、`host.ts`、本 RUNBOOK；专核 command-host.ts、start.ts，合计6文件。私有 adapter 派生产物写仓库外目录，不计入公开源，但必须进入本轮 manifest。
-禁止修改：新 host 框架、业务 HTTP、生产 service/types、历史 adapter 原件。
-执行：host.ts 只调用 commandHost/serveExecution；配置和销毁复用既有过程工具。resources 实现 owner/daemon/image/ref/mount 核对、停写证明、归档、保全卷、同名恢复。新增 `inventoryVolume(config:A7Config,binding:Binding):Promise<VolumeEntry[]>`，entry required `path:string,type:'directory'|'file',mode:number,uid:number,gid:number,bytes:number,sha256:string|null`，目录sha256=null，路径包含根`.`，按 UTF-8 path 排序。禁止链接/设备/非本轮资源，所有命令argv调用。历史源按上表校验后生成派生 adapter；bootstrap 按上一节固定，不允许 caller 选其他实现。
-验证：
-
-```sh
-node --import ./register-paths.mjs --test apps/orchestrator/acceptance/single-node-restore/resources.test.ts apps/orchestrator/acceptance/single-node-restore/adapter.test.ts
-pnpm --filter @bento/orchestrator typecheck
-```
-
-PASS：非本轮/错daemon/额外挂载/运行中写者拒绝；tar argv只读源/无网络；损坏归档和保全不一致时删除回调为零；派生配置无额外挂载/管理凭据泄漏；错误全部非零。这里可用记录命令的测试 double 验证保护，不能计真实部署证据。STOP：需要未确认官方能力或生产变化。通过后提交，不等待真实部署结果才提交接线。
-
 ### T0-remote：构建产物身份及真实能力门禁
 
-前置状态：T1/T3/T2a/T2b各自本地验证通过并已提交；MASTER明确释放B所需窗口。允许修改：本RUNBOOK；专核T2a私有manifest、T2b host/resources、两份已有Dockerfile，共6文件。未释放窗口时留在此门禁，不阻止之前本地步骤提交。
+前置状态：T1/T3/T1a/T2a/T2b已各自通过并提交（T2b：resources8+adapter3合计11/11、fail0/skip0，typecheck/eslint通过）；MASTER明确释放B所需窗口。允许修改：本RUNBOOK；专核T2a私有manifest、T2b host/resources、两份已有Dockerfile，共6文件。未释放窗口时留在此门禁，不阻止之前本地步骤提交。
 
 执行：
 
@@ -453,3 +438,5 @@ T0-remote同名能力补齐：第一次官方delete/waitDeleted及实际容器�
 T1a PASS：verifyBackup对root受管DB名集合与manifest.path集合精确比较；四库root+slice(1)拒绝，source/archive/occupied target canary摘要不变；独立单库root合法。固定backup suite7/7、typecheck/eslint通过。T0-remote已补两次同名创建与sandbox/container ID变化、卷absent→排他create→空内容→实际mount；不虚构volume ID。
 
 T2a PASS：2026-11-23，仅本地生成三个私有源（daemon、worker-loopback、a7-bootstrap），原source三项SHA不变；shared model-relay/volume-io沿已核SHA不改。MASTER已定向批准专核来源替换为daemon/loopback/base及现有sdk-transport/provider，总10文件。官方SandboxClient无close，实际用既有createRunSdkTransport+new SandboxClient(transport)，finally关闭真实transport，不虚构SDK方法。adapter.test.ts 3/3、fail0/skip0，Node语法/精确patch/隔离argv/绑定与生命周期检查、Orchestrator typecheck/定向eslint通过。私有manifest SHA256=`0d2a60a353a249dc985d9eafe7892ecfb75c5a47eb01a6535bcbc56c4f25048a`，源位置和完整before/after仅留私有调查回执。执行adapter专项需显式BENTO_A7_ADAPTER_MANIFEST与BENTO_A7_ADAPTER_MANIFEST_SHA256，不进常规CI。未调用bootstrap/模型/SDK/Docker；Linux实际import新增a7-bootstrap.default检查，仍待T0-remote。
+
+T2b PASS：2026-11-23，resources.ts/resources.test.ts/host.ts落盘；host复用commandHost/serveExecution，不用localHost。资源实现daemon/owner/image/mount/无写者检查、完整inventory、tar归档fsync、独立保全卷验证、同名空卷恢复、固定官方delete与CLI create；恢复后waitReady/实际ID发布由T4runner下一强制阶段执行。source保全/摘要坏/写者/额外挂载负例在command double下验证，零真实Docker/SDK调用；inventory helper另在本机临时目录实际运行验证字节及单反斜杠文件名拒绝。固定resources+adapter专项11/11、fail0/skip0，Orchestrator typecheck、三文件eslint、格式/diff通过。command double不证明真实卷/官方RPC能力；下一步停在T0-remote，等MASTER窗口与实值证据。T6仍须将backup/audit纯本地测试接常规corefast，当前尚未将远端或adapter私有用例接CI。
