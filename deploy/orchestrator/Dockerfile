@@ -1,9 +1,12 @@
 FROM golang:1.25-bookworm AS go-build
 WORKDIR /build
 COPY apps/orchestrator/go.mod apps/orchestrator/go.sum ./
-RUN go mod download
+RUN --mount=type=cache,id=bento-go-mod-1.25,target=/go/pkg/mod \
+    go mod download
 COPY apps/orchestrator/src/control/main.go apps/orchestrator/src/control/temporal.go ./src/control/
-RUN CGO_ENABLED=0 go build -trimpath -o /out/bento-orchestrator ./src/control
+RUN --mount=type=cache,id=bento-go-mod-1.25,target=/go/pkg/mod \
+    --mount=type=cache,id=bento-go-build-1.25,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -o /out/bento-orchestrator ./src/control
 
 FROM node:22-bookworm-slim
 WORKDIR /app
