@@ -78,6 +78,8 @@ Non-goals：Go 权威账本迁移、旧部署兼容、新备份产品、远程 H
 
 对账器只读数据库，规范排序比较全部表行，敏感值仅在内存比较，公开报告输出布尔断言/计数及合成文件摘要。原 HTTP DTO 与同键重放结果另存内存比较。不得写 SQL 修复状态、注入 receipt、篡改 epoch 或补齐假历史。
 
+真实接线修复：官方API上的owner标签不保证复制到Docker容器。源sandbox以官方namespace/name/workspace/id、实际image/mount/stopped、卷owner/project及官方ref.owner共同核验；若Docker显式携带冲突owner仍拒绝。纯本地fixture沿实际Docker标签形状，不虚构自定义owner标签。
+
 ## 用户当前执行约束
 
 B独立完成本RUNBOOK及PR，不以A进度、A合入或共享测试服务为前置。`sourceBaseCommit`记录当前源码实际共同基线，不表示另一任务已完成。使用B专属测试容器、网络、Gateway、Temporal、业务状态和卷；基础镜像及不可变依赖缓存可复用。以下历史作者记录中与此相反的等待约束不再适用。私有适配器的独立网络endpoint替换已按精确patch和SHA专项3/3验证；工作区只用文件工具，`requireFullEnforcement:true`不改，partial subprocess能力由严格guard实际拒绝，不声明完整subprocess验收。

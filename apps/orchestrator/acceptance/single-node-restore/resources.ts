@@ -148,12 +148,13 @@ async function stopped(
         const [info] = JSON.parse(
             await run('docker', ['container', 'inspect', id]),
         );
-        assert(
-            info.Config?.Labels?.['bento.web08'] === config.caseId,
-            'resource_owner_mismatch',
-        );
+        const labels = info.Config?.Labels;
         if (name === binding.volume) {
-            const labels = info.Config?.Labels;
+            assert(
+                labels?.['bento.web08'] === undefined ||
+                    labels['bento.web08'] === config.caseId,
+                'resource_owner_mismatch',
+            );
             assert(
                 info.Id === id &&
                     labels?.['openshell.ai/sandbox-name'] === binding.sandbox &&
@@ -173,6 +174,11 @@ async function stopped(
                 namespace: config.gatewayOwner,
             });
         }
+        if (name !== binding.volume)
+            assert(
+                labels?.['bento.web08'] === config.caseId,
+                'resource_owner_mismatch',
+            );
         assert(info.State?.Running === false, 'resource_writer_active');
         assert(info.Image === config.runtimeImageId, 'resource_image_mismatch');
         const mounts = info.Mounts.filter(

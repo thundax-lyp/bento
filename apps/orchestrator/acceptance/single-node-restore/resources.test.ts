@@ -134,12 +134,16 @@ async function fixture(mode = 'pass') {
                     Id: 'container-1',
                     Config: {
                         Labels: {
-                            'bento.web08': owner,
+                            ...(mode === 'container-owner'
+                                ? { 'bento.web08': 'other-owner' }
+                                : {}),
                             'openshell.ai/sandbox-name': binding.sandbox,
                             'openshell.ai/sandbox-id': 'official-sandbox-id',
                             'openshell.ai/sandbox-workspace': 'default',
                             'openshell.ai/sandbox-namespace':
-                                config.gatewayOwner,
+                                mode === 'namespace'
+                                    ? 'other-gateway'
+                                    : config.gatewayOwner,
                         },
                     },
                     State: { Running: mode === 'running' },
@@ -208,7 +212,14 @@ async function fixture(mode = 'pass') {
     };
     return { root, config, run, calls, volumes };
 }
-for (const mode of ['owner', 'daemon', 'extra', 'running'])
+for (const mode of [
+    'owner',
+    'daemon',
+    'extra',
+    'running',
+    'namespace',
+    'container-owner',
+])
     test(
         'resource preflight refuses ' + mode + ' before any mutation',
         async () => {
