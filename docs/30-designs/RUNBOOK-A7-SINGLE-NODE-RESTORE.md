@@ -244,25 +244,9 @@ export async function restoreWorkspace(
 
 本节固定本地与远端的分段执行；当前等待MASTER审核本地链。新增文件在对应步骤创建后验证并提交，后步才消费干净提交；远端能力不作为前序本地提交的条件。
 
-### T3：只读对账与脱敏报告
-
-前置状态：T1已通过并提交（2026-11-23：backup.test.ts 6/6、fail0/skip0；Orchestrator typecheck与两文件eslint通过；backup.ts为同目录实现）；仅使用本地临时SQLite/合成文件与内存报告，不导入host/resources、不读取部署配置。
-允许修改：同目录 `audit.ts`、`audit.test.ts`、本 RUNBOOK；专核 Store 与 SessionHistory，合计5文件。
-执行：实现前述只读接口，完整比较所有非内部表行；原 receipt/历史前缀/Run 与 binding 单列断言。CaseReport 的 RPO/RTO 用 performance.now 单调差记录时长，UTC时点仅供追溯；RPO lostAcknowledgedRecords 必须由前后集合计算，不能写死0。
-本地接口固定：`readLedger(state)`只读state中的business/authority/history三库，返回key为`<库basename>/<表名>`的全表行数组；数据库/表/字段按名称排序，`sqlite_%`内部表排除，标识符双引号转义。启用readBigInts，integer用`{type:'integer',value:十进制string}`、real用`{type:'real',value:number}`、text用`{type:'text',value:string}`、blob用`{type:'blob',value:base64string}`、null用`{type:'null',value:null}`规范化；每行按已排字段顺序生成后以canonical JSON排序，避免无PK表顺序漂移。`assertSameLedger`比较完整canonical结构，失败只给`ledger_mismatch`，不输出敏感行。report写入由T4 runner消费本节结构；T3只验证计算和脱敏，不采样真实RTO或构造“已通过”的A7报告。临时测试使用独立DatabaseSync创建合成库后关闭写句柄，注入每项差异由测试数据准备完成，不导入远端resources或修改生产数据库。
-
-验证：
-
-```sh
-node --import ./register-paths.mjs --test apps/orchestrator/acceptance/single-node-restore/audit.test.ts
-pnpm --filter @bento/orchestrator typecheck
-```
-
-PASS：完整快照一致通过、任一数据库字段/receipt/历史改变失败；卷inventory差异由T2b资源测试及T5真实恢复验收负责，敏感canary不出现在report或错误文本，readOnly源hash不变。STOP：未知表无法稳定编码、报告泄漏。只保留失败证据，不修SQL；通过后提交。
-
 ### T2a：锁定私有 adapter 派生装配
 
-前置状态：T3已提交。
+前置状态：T3已通过并提交（2026-11-23：audit.test.ts 7/7、fail0/skip0；Orchestrator typecheck与定向eslint通过；本地三库全表规范编码与脱敏报告已落盘）。
 允许修改：adapter.test.ts、本 RUNBOOK，以及私有派生 daemon/worker-loopback/a7-bootstrap 三文件；专核历史 daemon、worker-loopback、model-relay、volume-io、base.candidate 五文件，合计10文件。历史四文件校验与 inventory 已在T0形成固定证据；relay-host不参与当前进程装配，不新增依赖。
 执行：仅按前述四类适配生成派生本轮源及manifest；不得改原始历史源。bootstrap使用已选createBootstrap/官方DeepSeekAdapter/SDK/provider，既有shim路径不变。
 验证：
@@ -474,3 +458,5 @@ T0调用不修改production或本任务接线。其结果只确定既有官方�
 未决项因此不再包括“B历史镜像是否存在”的泛化调查，而是：A窗口释放及合入基线、新应用镜像身份、本轮独立受控配置、目标Linux导入/helper/tar与官方RPC/挂载能力。仅凭历史镜像仍在不能放行T0-remote；T1不依赖这些镜像。T0-remote保持未通过，等待窗口后针对本轮真实目标补证；不再阻塞获审本地步骤。
 
 T1 本地PASS：2026-11-23，backup.ts/backup.test.ts已实现四种owner、离线SQLite backup/健康检查/hash、完整成员预验证与排他空目标恢复；固定六类测试6/6，无失败或跳过，typecheck及定向eslint通过。此为本地工具证据，不代表A7真实部署验收。
+
+T3 本地PASS：2026-11-23，audit.ts/audit.test.ts七项通过，覆盖全部SQL值类型、精确integer、空表/带引号表名、全字段/receipt/history/表缺失拒绝、源hash不变、用户sqliteX表和物理行顺序、报告白名单与RPO实际集合差。typecheck/定向eslint通过；此非真实A7报告。
