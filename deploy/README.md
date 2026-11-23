@@ -74,7 +74,7 @@ PASS 时两项测试通过，零失败、零跳过。三库演练报告三个备
 
 声明范围为单执行节点的执行子部署：正式 commandHost、生产 Go Orchestrator、真实 Temporal、官方 DSH/OpenShell、独立工作区卷及真实模型。正常持久轮次完成后停止执行进程和写入者；OpenShell Gateway 的身份、证书及模型服务在演练中保留。账号 MySQL、Keycloak/Postgres、S3 和完整网站恢复不属于该集合。
 
-在独立 Linux/amd64、Node.js 22 环境准备 Docker CLI、Git、官方 SDK/CLI、受控 bootstrap 和私有配置。配置包含独立资源归属、精确镜像 ID、源码提交、Gateway 身份及通过的能力门禁；不接受缺失证明或其他 owner 的资源。DSH 和官方文件/DeepSeek 插件固定 `0.2.1-rc.4`，Cordis 固定 `4.0.5`，按 frozen lockfile 安装。私有配置、凭据、数据库、备份和报告放在仓库外受限目录。
+在独立 Linux/amd64、Node.js 22 环境准备 Docker CLI、Git、官方 SDK/CLI、受控 bootstrap 和私有配置。配置包含独立资源归属、精确镜像 ID、源码提交、Gateway 身份及通过的能力门禁；不接受缺失证明或其他 owner 的资源。DSH 和官方文件/DeepSeek 插件固定 `0.2.1-rc.4`，Cordis 固定 `4.0.5`，按 frozen lockfile 安装。私有配置、凭据、数据库、备份和报告放在仓库外受限目录。T0 在核实 `sourceCommit` 对应的干净源码及受控适配器后，用 `executionSourceDigest(runtimeRoot)` 记录实际执行树的 `sourceTreeSha256`，同时记录宿主配置的 `hostConfigSha256`，适配器清单与 bootstrap 必须位于该执行源码树根目录，随后冻结运行目录。执行入口重新核对实际源码、lockfile、Dockerfile、宿主配置、适配器输出/base/relay 摘要；旧证明不能授权变化后的文件，不能为绕过拒绝而只重算摘要。
 
 ```sh
 BENTO_A7_CONFIG=/absolute/private/case-restart.json node apps/orchestrator/acceptance/single-node-restore/run.mjs --case restart

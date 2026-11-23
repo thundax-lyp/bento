@@ -21,6 +21,8 @@ import {
     assertHistoryPreserved,
     authoritySnapshot,
     executionPlan,
+    executionSourceDigest,
+    verifyExecutionInputs,
     enforceOrder,
     loadCase,
     restoreDatabaseLayout,
@@ -68,6 +70,8 @@ function inputs(root = '/tmp/' + caseId): {
         dockerDaemonId: config.dockerDaemonId,
         environmentVersion: config.environmentVersion,
         adapterManifestSha256: adapterSha,
+        sourceTreeSha256: 'a'.repeat(64),
+        hostConfigSha256: 'b'.repeat(64),
         lockSha256: 'd'.repeat(64),
         dockerfileSha256: 'f'.repeat(64),
         builtAt: '2026-11-23T00:00:00Z',
@@ -139,6 +143,8 @@ test('real gate rejects changed source, image, daemon and adapter identities', (
         { adapterManifestSha256: 'f'.repeat(64) },
         { orchestratorImageId: 'pending-build' },
         { builtAt: '2026-11-23' },
+        { sourceTreeSha256: '' },
+        { hostConfigSha256: '' },
     ]) {
         const { config, proof } = inputs();
         assert.throws(() =>
@@ -331,4 +337,103 @@ test('the same order guard used by runCase rejects early report and skipped pres
         () => complete('publish_report'),
         /^Error: case_phase_order$/,
     );
+});
+
+test('execution proof rejects changed live source, host wiring and private adapter outputs before admission', async () => {
+    const temporary = await mkdtemp(join(tmpdir(), 'bento-a7-identity-'));
+    const root = join(temporary, caseId),
+        tree = join(temporary, 'runtime');
+    await mkdir(root);
+    await mkdir(tree);
+    const { config, proof } = inputs(root);
+    config.adapterManifest = join(tree, 'adapter.json');
+    const digest = (s: string) => createHash('sha256').update(s).digest('hex');
+    const files: Record<string, string> = {
+        'apps/orchestrator/service.ts': 'export const service = 1;',
+        'apps/worker/worker.ts': 'export const worker = 1;',
+        'shared/value.ts': 'export const value = 1;',
+        'register-paths.mjs': '// loader',
+        'package.json': '{}',
+        'pnpm-lock.yaml': 'lock',
+        'deploy/orchestrator/Dockerfile': 'FROM scratch',
+    };
+    try {
+        for (const [path, body] of Object.entries(files)) {
+            await mkdir(join(tree, path, '..'), { recursive: true });
+            await writeFile(join(tree, path), body);
+        }
+        const names = [
+            'a7-bootstrap.ts',
+            'host-daemon.mjs',
+            'worker-loopback.mjs',
+            'base.candidate.ts',
+            'model-relay.mjs',
+            'volume-io.mjs',
+        ];
+        for (const name of names) await writeFile(join(tree, name), name);
+        await writeFile(config.hostConfig, '{}');
+        const manifest = JSON.stringify({
+            schema: 1,
+            outputs: names
+                .slice(0, 3)
+                .map((path) => ({ path, sha256: digest(path) })),
+            sources: [{ role: 'base', sha256: digest('base.candidate.ts') }],
+            sharedSources: Object.fromEntries(
+                names.slice(4).map((name) => [name, digest(name)]),
+            ),
+        });
+        await writeFile(config.adapterManifest, manifest, { mode: 0o600 });
+        Object.assign(proof, {
+            sourceTreeSha256: await executionSourceDigest(tree),
+            lockSha256: digest('lock'),
+            dockerfileSha256: digest('FROM scratch'),
+            adapterManifestSha256: digest(manifest),
+            hostConfigSha256: digest('{}'),
+        });
+        await verifyExecutionInputs(config, proof, tree);
+        const originalManifest = config.adapterManifest;
+        config.adapterManifest = join(root, 'adapter.json');
+        await writeFile(config.adapterManifest, manifest, { mode: 0o600 });
+        await assert.rejects(
+            verifyExecutionInputs(config, proof, tree),
+            /adapter_source_tree_mismatch/,
+        );
+        config.adapterManifest = originalManifest;
+        for (const [path, body] of Object.entries(files)) {
+            await writeFile(join(tree, path), body + '// changed');
+            await assert.rejects(
+                verifyExecutionInputs(config, proof, tree),
+                /execution_source_mismatch/,
+            );
+            await writeFile(join(tree, path), body);
+        }
+        await writeFile(
+            join(tree, 'apps/worker/added.ts'),
+            'export const added = 1;',
+        );
+        await assert.rejects(
+            verifyExecutionInputs(config, proof, tree),
+            /execution_source_mismatch/,
+        );
+        await rm(join(tree, 'apps/worker/added.ts'));
+        await writeFile(config.hostConfig, '{"changed":true}');
+        await assert.rejects(
+            verifyExecutionInputs(config, proof, tree),
+            /host_config_identity_mismatch/,
+        );
+        await writeFile(config.hostConfig, '{}');
+        for (const name of names) {
+            await writeFile(join(tree, name), name + '// changed');
+            await assert.rejects(
+                verifyExecutionInputs(config, proof, tree),
+                /adapter_output_identity_mismatch/,
+            );
+            await writeFile(join(tree, name), name);
+        }
+        await verifyExecutionInputs(config, proof, tree);
+        for (const name of ['source', 'restore', 'evidence'])
+            await assert.rejects(readdir(join(root, name)), { code: 'ENOENT' });
+    } finally {
+        await rm(temporary, { recursive: true, force: true });
+    }
 });

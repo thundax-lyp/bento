@@ -4,11 +4,14 @@ import {
     mkdir,
     open,
     readFile,
+    readdir,
+    realpath,
     rename,
     writeFile,
 } from 'node:fs/promises';
-import { basename, isAbsolute, join } from 'node:path';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
+import { fileURLToPath } from 'node:url';
 import { commandHost } from '@/apps/orchestrator/src/execution-service/command-host.ts';
 import { acquireTemporal } from '@/apps/orchestrator/acceptance/temporal-retry/tool.ts';
 import {
@@ -57,6 +60,8 @@ export type GateProof = {
     dockerDaemonId: string;
     environmentVersion: string;
     adapterManifestSha256: string;
+    sourceTreeSha256: string;
+    hostConfigSha256: string;
     lockSha256: string;
     dockerfileSha256: string;
     builtAt: string;
@@ -146,6 +151,8 @@ export function validateGate(
         proof.dockerDaemonId !== config.dockerDaemonId ||
         proof.environmentVersion !== config.environmentVersion ||
         proof.adapterManifestSha256 !== adapterSha ||
+        !/^[a-f0-9]{64}$/.test(proof.sourceTreeSha256) ||
+        !/^[a-f0-9]{64}$/.test(proof.hostConfigSha256) ||
         !/^[a-f0-9]{64}$/.test(proof.lockSha256) ||
         !/^[a-f0-9]{64}$/.test(proof.dockerfileSha256) ||
         typeof proof.builtAt !== 'string' ||
@@ -178,6 +185,103 @@ async function privateJson(path: string) {
     )
         fail('private_input_invalid');
     return JSON.parse(await readFile(path, 'utf8'));
+}
+const executionRoot = fileURLToPath(new URL('../../../../', import.meta.url));
+/** Capture at T0 from the approved clean commit, then freeze that runtime tree. */
+export async function executionSourceDigest(root: string): Promise<string> {
+    const rows: [string, string][] = [];
+    async function file(path: string) {
+        const full = join(root, path),
+            stat = await lstat(full);
+        if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1)
+            fail('execution_source_invalid');
+        rows.push([path, hash(await readFile(full))]);
+    }
+    async function walk(path: string) {
+        const stat = await lstat(join(root, path));
+        if (!stat.isDirectory() || stat.isSymbolicLink())
+            fail('execution_source_invalid');
+        for (const entry of await readdir(join(root, path), {
+            withFileTypes: true,
+        })) {
+            if (['node_modules', 'dist', 'build', '.git'].includes(entry.name))
+                continue;
+            const next = path + '/' + entry.name;
+            if (entry.isDirectory()) await walk(next);
+            else if (/\.(?:ts|mjs|json|go)$|\/go\.(?:mod|sum)$/.test(next))
+                await file(next);
+        }
+    }
+    for (const path of ['apps/orchestrator', 'apps/worker', 'shared'])
+        await walk(path);
+    for (const path of [
+        'register-paths.mjs',
+        'package.json',
+        'pnpm-lock.yaml',
+        'deploy/orchestrator/Dockerfile',
+    ])
+        await file(path);
+    rows.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return hash(JSON.stringify(rows));
+}
+export async function verifyExecutionInputs(
+    config: CaseConfig,
+    proof: GateProof,
+    root = executionRoot,
+) {
+    // The bootstrap imports repository files relative to its own directory.
+    // Keep that tree identical to the one whose handler is executing here.
+    if (
+        (await realpath(dirname(config.adapterManifest))) !==
+        (await realpath(root))
+    )
+        fail('adapter_source_tree_mismatch');
+    if (
+        (await executionSourceDigest(root)) !== proof.sourceTreeSha256 ||
+        hash(await readFile(join(root, 'pnpm-lock.yaml'))) !==
+            proof.lockSha256 ||
+        hash(await readFile(join(root, 'deploy/orchestrator/Dockerfile'))) !==
+            proof.dockerfileSha256
+    )
+        fail('execution_source_mismatch');
+    if (hash(await readFile(config.hostConfig)) !== proof.hostConfigSha256)
+        fail('host_config_identity_mismatch');
+    const bytes = await readFile(config.adapterManifest);
+    if (hash(bytes) !== proof.adapterManifestSha256)
+        fail('adapter_identity_mismatch');
+    const manifest = await privateJson(config.adapterManifest);
+    const outputs = manifest.outputs as { path: string; sha256: string }[];
+    const names = ['a7-bootstrap.ts', 'host-daemon.mjs', 'worker-loopback.mjs'];
+    if (
+        manifest.schema !== 1 ||
+        !Array.isArray(outputs) ||
+        JSON.stringify(outputs.map((item) => item.path).sort()) !==
+            JSON.stringify(names)
+    )
+        fail('adapter_identity_mismatch');
+    const base = manifest.sources?.find(
+        (item: { role: string }) => item.role === 'base',
+    );
+    const expected = [
+        ...outputs,
+        { path: 'base.candidate.ts', sha256: base?.sha256 },
+        ...['model-relay.mjs', 'volume-io.mjs'].map((path) => ({
+            path,
+            sha256: manifest.sharedSources?.[path],
+        })),
+    ];
+    for (const item of expected) {
+        const path = join(dirname(config.adapterManifest), item.path),
+            stat = await lstat(path);
+        if (
+            !/^[a-f0-9]{64}$/.test(item.sha256) ||
+            !stat.isFile() ||
+            stat.isSymbolicLink() ||
+            stat.nlink !== 1 ||
+            hash(await readFile(path)) !== item.sha256
+        )
+            fail('adapter_output_identity_mismatch');
+    }
 }
 export async function loadCase(
     path: string,
@@ -476,6 +580,7 @@ export async function runCase(
     )
         fail('case_root_invalid');
     await verifyRuntime(config, proof); // Before any service/volume/process creation.
+    await verifyExecutionInputs(config, proof);
     const source = join(config.root, 'source', 'state'),
         restored = join(config.root, 'restore', 'state');
     const sourceTemporal = join(config.root, 'temporal', 'source'),
