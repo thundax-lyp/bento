@@ -159,6 +159,8 @@ docker compose -f deploy/compose.yaml --profile worker-image build bento-worker
 
 这些回调仅交给可信模块。业务 HTTP 不开放结案、可信对账或审计读取。
 
+SDK 宿主要提供安全重试，须具备 `sdk.decodeExecEvent`、独立的 `observeWorkerExit` 和 `taskRecovery.observeSdkRetrySafety(binding,runId,generation)`。最后一项由沙盒外的受信部署适配器生成，不能由 Worker、模型或 HTTP 调用者提交。服务核验同一 Run、绑定和代次的独立退出、SDK 停止与撤权、新代 READY/无 capability、UNKNOWN 为零及 History 静止后，才持久化停止证明；恢复仍须验证双检查点和独占写入。缺少任一能力或完整证据时保持待核对，不因 SDK 或回调存在而开放重试。字段与时间约束见 [Web 设计](../docs/30-designs/WEB-DESIGN.md)。
+
 项目删除和账号注销清理需要可信宿主实现幂等的工作区删除。命令宿主处理 `{action:"purge",binding}`，只删除该绑定独占的沙盒与卷，独立确认两者不存在后返回 `{sandbox,volume,absent:true}`。自定义宿主实现 `ExecutionHost.purge(binding)`。删除失败应报错，Bento 会保留清理请求以便重试。Docker 驱动的宿主可用 [dockerOpenShellPurge](../apps/orchestrator/src/execution-service/docker-openshell-purge.ts)，并提供与部署时一致的卷标签。
 
 ### Task 事件投影

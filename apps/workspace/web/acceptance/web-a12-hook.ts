@@ -50,6 +50,12 @@ type Outputs = {
     };
     inspectBeforeAdmit: {
         attemptId: string;
+        sourceBindingDigest: string;
+        retryBindingDigest: string;
+        sourceRunId: string;
+        newRunId: string;
+        attempts: number;
+        stopProofSha256: string;
         workspaceCheckpointSha256: string;
         workspaceActualSha256: string;
         historyCheckpointSha256: string;
@@ -96,6 +102,12 @@ const schemas: Record<keyof Inputs, Record<string, string>> = {
     },
     inspectBeforeAdmit: {
         attemptId: 'uuid',
+        sourceBindingDigest: 'digest',
+        retryBindingDigest: 'digest',
+        sourceRunId: 'uuid',
+        newRunId: 'uuid',
+        attempts: 'count',
+        stopProofSha256: 'digest',
         workspaceCheckpointSha256: 'digest',
         workspaceActualSha256: 'digest',
         historyCheckpointSha256: 'digest',
@@ -137,59 +149,125 @@ function record(value: unknown): Record<string, unknown> {
     assert(value && typeof value === 'object' && !Array.isArray(value));
     return value as Record<string, unknown>;
 }
-async function nativeConnection() {
-    const entry = process.env.BENTO_WEB_A12_BROWSER_HOOK;
-    const lease = process.env.BENTO_WEB_A12_LEASE_FILE;
-    assert(entry && lease && isAbsolute(entry) && isAbsolute(lease));
-    assert(lease.endsWith('/.bento-web-a12-r6/registry/lease.json'));
-    assert.equal(await realpath(lease), lease);
-    const st = await lstat(lease);
+async function protectedBytes(path: string) {
+    assert(isAbsolute(path));
+    assert.equal(await realpath(path), path);
+    const st = await lstat(path);
     assert(
         st.isFile() &&
             st.uid === process.getuid?.() &&
             (st.mode & 0o777) === 0o600 &&
             st.nlink === 1,
     );
-    const bytes = await readFile(lease);
-    assert.equal(
-        createHash('sha256').update(bytes).digest('hex'),
-        'e06ed2996c52d1fb4030a0c8a021f2bf3b6cafdca6c056b898e6dcfcef35f983',
+    return readFile(path);
+}
+const hash = (bytes: Buffer) =>
+    createHash('sha256').update(bytes).digest('hex');
+export async function nativeConnection() {
+    const entry = process.env.BENTO_WEB_A12_BROWSER_HOOK;
+    const lease = process.env.BENTO_WEB_A12_LEASE_FILE;
+    assert(entry && lease && isAbsolute(entry) && isAbsolute(lease));
+    assert(lease.endsWith('/.bento-web-a12-r6/registry/lease.json'));
+    const bytes = await protectedBytes(lease);
+    const binding = record(JSON.parse(bytes.toString()));
+    const state = binding.stateDir;
+    assert(typeof state === 'string' && isAbsolute(state));
+    assert(typeof binding.leaseId === 'string' && uuid.test(binding.leaseId));
+    assert(
+        typeof binding.lockedCommit === 'string' &&
+            /^[a-f0-9]{40}$/.test(binding.lockedCommit),
     );
-    const binding = JSON.parse(bytes.toString()) as {
-        leaseId: string;
-        lockedCommit: string;
-        stateDir: string;
-    };
-    assert.equal(binding.leaseId, 'a6fdb0ab-6614-4ede-9c35-02fd79774a59');
-    assert.equal(
-        binding.lockedCommit,
-        '640bc24ff1adcd3f9b7a7b8a1eb02fb197b92e88',
+    assert.equal(state, resolve(lease, '../../state', binding.leaseId));
+    for (const field of ['composeProject', 'workspace', 'owner', 'realm'])
+        assert.equal(binding[field], 'bento-a-web-a12');
+    assert.equal(binding.publicOrigin, 'https://bento-a12.test:19443');
+    assert.equal(binding.gateway, 'https://127.0.0.1:19445');
+    assert(
+        typeof binding.windowStart === 'string' &&
+            typeof binding.windowEnd === 'string',
     );
-    assert.equal(resolve(binding.stateDir, '../../registry/lease.json'), lease);
+    const start = Date.parse(binding.windowStart),
+        end = Date.parse(binding.windowEnd);
+    assert(
+        Number.isFinite(start) &&
+            Number.isFinite(end) &&
+            start <= Date.now() &&
+            end > Date.now() &&
+            end - start <= 7_200_000,
+    );
+    const host = record(
+        JSON.parse(
+            (
+                await protectedBytes(
+                    join(state, 'configuration/a12-host-binding.json'),
+                )
+            ).toString(),
+        ),
+    );
+    assert.equal(host.leaseId, binding.leaseId);
+    assert.equal(host.registryPath, lease);
+    assert.equal(host.leaseSha256, hash(bytes));
+    const manifestPath = join(
+        state,
+        'archive/debug-workspace/web-a12/private/materialized/manifest.json',
+    );
+    assert.equal(host.materializedManifest, manifestPath);
+    const manifestBytes = await protectedBytes(manifestPath);
+    assert.equal(host.manifestSha256, hash(manifestBytes));
+    const manifest = record(JSON.parse(manifestBytes.toString()));
+    assert.equal(manifest.phase, 'materialized');
+    const configured = record(manifest.bindings);
+    assert.equal(configured.leaseId, binding.leaseId);
+    assert.equal(configured.revision, binding.lockedCommit);
+    const candidateBytes = await protectedBytes(
+        join(state, 'bundle/candidate.json'),
+    );
+    assert.equal(host.candidateSha256, hash(candidateBytes));
+    const candidate = record(JSON.parse(candidateBytes.toString()));
+    assert.equal(candidate.revision, binding.lockedCommit);
+    assert(
+        typeof candidate.attemptId === 'string' &&
+            uuid.test(candidate.attemptId),
+    );
+    assert.equal(candidate.attemptId, host.attemptId);
+    assert.equal(
+        candidate.runtimeManifestSha256,
+        manifest.currentRuntimeManifestSha256,
+    );
+    const runtimeBytes = await protectedBytes(
+        join(state, 'bundle/runtime/runtime-manifest.json'),
+    );
+    assert.equal(hash(runtimeBytes), candidate.runtimeManifestSha256);
+    const runtime = record(JSON.parse(runtimeBytes.toString()));
+    assert.equal(runtime.revision, binding.lockedCommit);
+    assert(Array.isArray(runtime.files));
+    const rows = runtime.files
+        .map(record)
+        .filter((row) => row.path === 'register-paths.mjs');
+    assert.equal(rows.length, 1);
+    const registration = join(state, 'archive/register-paths.mjs');
+    assert.equal(
+        hash(await protectedBytes(registration)),
+        rows[0]!.renderedSha256,
+    );
+    const resolver = join(state, 'private/resolve-a12.mjs');
+    assert.equal(hash(await protectedBytes(resolver)), host.resolverSha256);
+    const sources = record(candidate.privateSources);
     assert.equal(
         entry,
-        join(binding.stateDir, 'archive/debug-workspace/web-a12/hook.mjs'),
+        join(state, 'archive/debug-workspace/web-a12/hook.mjs'),
     );
-    assert.equal(
-        createHash('sha256')
-            .update(await readFile(entry))
-            .digest('hex'),
-        'e342eb64f164be486cff04bfc9bf5c50392e8bd665a14423ffd1a71506bdf171',
-    );
+    assert.equal(hash(await protectedBytes(entry)), sources['hook.mjs']);
     return {
         entry,
         lease,
-        registration: join(binding.stateDir, 'archive/register-paths.mjs'),
+        registration,
         env: {
             PATH: '/usr/local/bin:/usr/bin:/bin',
-            HOME: resolve(binding.stateDir, '../../..'),
+            HOME: resolve(state, '../../..'),
             NODE_NO_WARNINGS: '1',
-            NODE_OPTIONS:
-                '--import=' + join(binding.stateDir, 'private/resolve-a12.mjs'),
-            NODE_EXTRA_CA_CERTS: join(
-                binding.stateDir,
-                'private/foundation/tls/ca.crt',
-            ),
+            NODE_OPTIONS: '--import=' + resolver,
+            NODE_EXTRA_CA_CERTS: join(state, 'private/foundation/tls/ca.crt'),
         },
     };
 }

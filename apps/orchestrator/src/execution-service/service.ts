@@ -408,7 +408,14 @@ export async function serveExecution(options: Options) {
         async function stopAndProve(run: Run) {
             const generation = run.admittedGeneration;
             const recovery = host.taskRecovery;
-            if (generation === null || !recovery || host.sdk) return false;
+            if (generation === null || !recovery) return false;
+            if (
+                host.sdk &&
+                (!host.sdk.decodeExecEvent ||
+                    !host.observeWorkerExit ||
+                    !recovery.observeSdkRetrySafety)
+            )
+                return false;
             const binding = db.binding(run);
             const exit = await taskExit(run, binding, generation);
             if (!exit) return false;
@@ -423,14 +430,41 @@ export async function serveExecution(options: Options) {
             await reconcileFixtureWrite(run, binding, generation);
             if (execution.hasUnknownOperations(binding.session, generation))
                 return false;
-            const effect = await recovery.retryObservation(
-                binding,
-                run.id,
-                generation,
-            );
+            let effect;
+            if (host.sdk) {
+                const observed = await recovery.observeSdkRetrySafety!(
+                    binding,
+                    run.id,
+                    generation,
+                );
+                if (!observed) return false;
+                const exitedAt = Date.parse(observed.exitedAt);
+                const observedAt = Date.parse(observed.observedAt);
+                if (
+                    observed.sessionId !== binding.session ||
+                    observed.runId !== run.id ||
+                    observed.generation !== generation ||
+                    observed.bindingDigest !==
+                        executionBindingDigest(binding) ||
+                    observed.exitedAt !== exit.exitedAt ||
+                    !Number.isFinite(exitedAt) ||
+                    !Number.isFinite(observedAt) ||
+                    exitedAt > observedAt ||
+                    observedAt > Date.now()
+                )
+                    return false;
+                effect = observed;
+            } else {
+                effect = await recovery.retryObservation(
+                    binding,
+                    run.id,
+                    generation,
+                );
+            }
             const history = execution.historyQuiescence(binding.session);
             if (
-                !effect.workspaceOnly ||
+                !effect ||
+                effect.workspaceOnly !== true ||
                 effect.unknownOperations !== 0 ||
                 history.handleOpen ||
                 history.pendingBatches !== 0
