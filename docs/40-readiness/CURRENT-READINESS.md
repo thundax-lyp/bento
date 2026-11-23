@@ -346,3 +346,10 @@
 - **首次准备**：本机已下载并校验官方源码；两个 macOS 平台工具包首次下载因速度和 HTTP/2 流错误未能在原安装阶段完成，随后在仓库外续传补齐，按官方 lockfile 的 SHA-512 核验后填入 npm 缓存。此预热不计作测试通过，也不证明冷缓存环境的网络准备已恢复。
 - **通过记录**：预热后运行原入口 `pnpm --filter @bento/orchestrator check:core:fast`，退出 0。Node 测试 143 项中 141 项通过、2 项原有条件跳过；此前 SDK 安装 hook 阻断的 10 项 A1-03 测试全部通过。Worker runtime 14 项通过、无跳过；Go test/vet、类型检查及两个包清单检查通过。缓存命中的 SDK 安装日志记录 npm HTTP fetch 为零。新增 5 项缓存用例覆盖重复复用、坏缓存拒绝、下载中断、摘要错误及并发原子发布，并已纳入上述 Node 测试。SDK 改动文件的 ESLint、Prettier 及 diff 检查通过。
 - **未覆盖**：两项条件跳过为 Temporal Activity 重投和双槽位公平派发场景；本轮不替代相应独立验收。未运行完整 worker-reuse 长时验收、Temporal retry acceptance 或真实部署验收，不修改需求完成状态。缓存外的网络依赖仍需首次准备，缓存损坏时保持明确失败。
+
+## 2026-11-23 PR #90 HTTP 接收期限评论修复
+
+- **来源与边界**：Codex comment `4661280198`，基线 `67fc90d` 加本地 HTTP 修复。期限到达时按公开的 `IncomingMessage.complete` 判断请求是否已收完，不再将未消费流的完整 GET 处理耗时当作接收超时；未完成请求仍保留原期限保护。
+- **回归**：新增正常运行与关闭期间两项未消费 GET 用例，100 ms 接收期限下允许 250 ms 后端处理完成；修复前均返回 408，修复后 HTTP 生命周期 7/7、API 62/62 及 Go test/vet 通过。
+- **复用与补验**：复用上一轮 `pnpm check` 已通过的 Workspace、Orchestrator 核心 141 项（另有 2 项原有条件跳过）、Worker runtime 14/14 和 Worker 复用 24/24，包含 64 轮同 PID 隔离；该轮使用随后形成 `67fc90d` 的 SDK 缓存准备器。官方 Temporal CLI 1.5.1 的 macOS arm64 归档大小及固定 SHA-256 核验一致，通过既有 `BENTO_A6_TEMPORAL_ARCHIVE` 入口补跑 `test:temporal-retry` 9/9。Temporal 包契约、`pnpm check:worker`、`pnpm lint`（19 项规则测试）和干净源码副本的 `pnpm format:check` 均通过，补齐此前失败阶段及其后检查。
+- **未覆盖**：未声明冷缓存直连网络恢复，未运行真实外部模型/OpenShell 部署验收。归档及下载缓存保存在仓库外，不纳入源码或发布包；正在独立修改的 Temporal 下载器不属于该 HTTP 修复提交。不改变需求完成状态。

@@ -74,3 +74,40 @@ test(
         await closed;
     },
 );
+
+for (const shutdown of [false, true]) {
+    test(
+        `a bodyless GET can finish after its receive deadline without consuming the stream${shutdown ? ' during shutdown' : ''}`,
+        { timeout: 3000 },
+        async (t) => {
+            let started!: () => void;
+            const input = new Promise<void>((resolve) => {
+                started = resolve;
+            });
+            let completed = false;
+            const listener = httpListener((request, response) => {
+                started();
+                void delay(250).then(() => {
+                    completed = request.complete;
+                    response.end('finished');
+                });
+            }, 100);
+            t.after(async () => {
+                listener.server.closeAllConnections();
+                if (listener.server.listening) await listener.close();
+            });
+            listener.server.listen(0, '127.0.0.1');
+            await once(listener.server, 'listening');
+            const address = listener.server.address();
+            assert(address && typeof address !== 'string');
+            const response = fetch(`http://127.0.0.1:${address.port}/`);
+            await input;
+            const closed = shutdown ? listener.close() : undefined;
+            const result = await response;
+            assert.equal(result.status, 200);
+            assert.equal(await result.text(), 'finished');
+            assert.equal(completed, true);
+            await (closed ?? listener.close());
+        },
+    );
+}

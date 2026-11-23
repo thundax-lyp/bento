@@ -25,6 +25,9 @@ export function httpListener(
         const entry = {
             timer: setTimeout(() => {
                 receiving.delete(socket);
+                // Parser completion does not depend on the handler consuming
+                // IncomingMessage or receiving its readable 'end' event.
+                if (entry.response?.req.complete) return;
                 if (!entry.response?.headersSent && socket.writable)
                     socket.end(
                         'HTTP/1.1 408 Request Timeout\r\nConnection: close\r\nContent-Length: 0\r\n\r\n',
