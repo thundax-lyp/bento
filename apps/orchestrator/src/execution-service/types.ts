@@ -54,6 +54,12 @@ export type WorkerExitObservation = {
     exitedAt: string;
 };
 
+export type SdkRetrySafetyObservation = WorkerExitObservation & {
+    observedAt: string;
+    unknownOperations: number;
+    workspaceOnly: boolean;
+};
+
 export type FixtureWriteReceipt = Pick<
     WorkerExitObservation,
     'sessionId' | 'runId' | 'generation' | 'bindingDigest'
@@ -102,6 +108,11 @@ export interface ExecutionHost extends SingleHostSandbox {
         generation: number,
     ): Promise<RetryCleanupObservation | null>;
     taskRecovery?: {
+        observeSdkRetrySafety?(
+            binding: Binding,
+            runId: string,
+            generation: number,
+        ): Promise<SdkRetrySafetyObservation | null>;
         retryObservation(
             binding: Binding,
             runId: string,

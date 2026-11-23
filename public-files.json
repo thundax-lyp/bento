@@ -176,6 +176,7 @@
         "apps/orchestrator/tests/execution-service/task-results.test.ts",
         "apps/orchestrator/tests/execution-service/task-retry-checkpoint.test.ts",
         "apps/orchestrator/tests/execution-service/task-retry.test.ts",
+        "apps/orchestrator/tests/execution-service/task-retry-sdk.test.ts",
         "apps/workspace/web/acceptance/task-submission-fixture.ts",
         "apps/workspace/web/acceptance/web-task-submission.spec.ts",
         "apps/workspace/web/playwright.task-submission.config.ts",
