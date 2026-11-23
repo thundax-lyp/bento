@@ -230,6 +230,7 @@
         "apps/workspace/api/src/space-project-deletion.ts",
         "apps/workspace/api/src/space-upload.ts",
         "apps/workspace/api/tests/http-listener.test.ts",
+        "scripts/import-extensions.test.mjs",
         "apps/workspace/web/src/pages/auth/account-settings/index.tsx",
         "apps/workspace/web/src/pages/auth/login/index.tsx",
         "apps/workspace/web/src/pages/auth/register/index.tsx",
