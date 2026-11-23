@@ -120,3 +120,48 @@ for (const mode of [
         }
     });
 }
+
+test('manifest omission rejects before touching source or an occupied restore target', async () => {
+    const f = await fixture();
+    try {
+        const sourceBefore = await Promise.all(
+            names.map((name) => f.hash(join(f.source, name))),
+        );
+        const archiveBefore = await Promise.all(
+            names.map((name) => f.hash(join(f.archive, name))),
+        );
+        await mkdir(f.target);
+        await writeFile(join(f.target, 'canary'), 'keep-target');
+        const targetBefore = await f.hash(join(f.target, 'canary'));
+        await assert.rejects(
+            verifyBackup(f.archive, f.members.slice(1)),
+            /^Error: backup_invalid$/,
+        );
+        await assert.rejects(
+            restoreSqlite(f.archive, f.target, f.members.slice(1)),
+            /^Error: backup_invalid$/,
+        );
+        assert.deepEqual(
+            await Promise.all(
+                names.map((name) => f.hash(join(f.source, name))),
+            ),
+            sourceBefore,
+        );
+        assert.deepEqual(
+            await Promise.all(
+                names.map((name) => f.hash(join(f.archive, name))),
+            ),
+            archiveBefore,
+        );
+        assert.equal(await f.hash(join(f.target, 'canary')), targetBefore);
+        const subset = join(f.root, 'subset');
+        await mkdir(subset);
+        await writeFile(
+            join(subset, names[0]!),
+            await readFile(join(f.archive, names[0]!)),
+        );
+        await verifyBackup(subset, [f.members[0]!]);
+    } finally {
+        await rm(f.root, { recursive: true, force: true });
+    }
+});

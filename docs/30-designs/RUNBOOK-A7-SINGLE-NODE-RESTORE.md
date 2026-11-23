@@ -80,7 +80,7 @@ Non-goals：Go 权威账本迁移、旧部署兼容、新备份产品、远程 H
 
 ## 分段前置门禁与执行顺序
 
-执行顺序固定为：**T0-local → T1 → T3 → T2a → T2b → T0-remote → T4 → T5 → T6**。保留既有步骤编号，按此物理顺序执行，不按编号猜测依赖。T1与T3分别提供可独立验证提交的本地产物，不消费尚未创建的adapter、镜像、配置或远端API。
+执行顺序固定为：**T0-local → T1 → T3 → T1a → T2a → T2b → T0-remote → T4 → T5 → T6**。保留既有步骤编号，按此物理顺序执行，不按编号猜测依赖。T1与T3分别提供可独立验证提交的本地产物，不消费尚未创建的adapter、镜像、配置或远端API。
 
 ### T0-local：本地基线、来源与接口门禁
 
@@ -246,7 +246,7 @@ export async function restoreWorkspace(
 
 ### T2a：锁定私有 adapter 派生装配
 
-前置状态：T3已通过并提交（2026-11-23：audit.test.ts 7/7、fail0/skip0；Orchestrator typecheck与定向eslint通过；本地三库全表规范编码与脱敏报告已落盘）。
+前置状态：T1a已通过并提交（backup.test.ts 7/7，manifest遗漏负例及合法单库子集均验证，typecheck/定向eslint通过），T3已通过并提交（2026-11-23：audit.test.ts 7/7、fail0/skip0；Orchestrator typecheck与定向eslint通过；本地三库全表规范编码与脱敏报告已落盘）。
 允许修改：adapter.test.ts、本 RUNBOOK，以及私有派生 daemon/worker-loopback/a7-bootstrap 三文件；专核历史 daemon、worker-loopback、model-relay、volume-io、base.candidate 五文件，合计10文件。历史四文件校验与 inventory 已在T0形成固定证据；relay-host不参与当前进程装配，不新增依赖。
 执行：仅按前述四类适配生成派生本轮源及manifest；不得改原始历史源。bootstrap使用已选createBootstrap/官方DeepSeekAdapter/SDK/provider，既有shim路径不变。
 验证：
@@ -460,3 +460,7 @@ T0调用不修改production或本任务接线。其结果只确定既有官方�
 T1 本地PASS：2026-11-23，backup.ts/backup.test.ts已实现四种owner、离线SQLite backup/健康检查/hash、完整成员预验证与排他空目标恢复；固定六类测试6/6，无失败或跳过，typecheck及定向eslint通过。此为本地工具证据，不代表A7真实部署验收。
 
 T3 本地PASS：2026-11-23，audit.ts/audit.test.ts七项通过，覆盖全部SQL值类型、精确integer、空表/带引号表名、全字段/receipt/history/表缺失拒绝、源hash不变、用户sqliteX表和物理行顺序、报告白名单与RPO实际集合差。typecheck/定向eslint通过；此非真实A7报告。
+
+T0-remote同名能力补齐：第一次官方delete/waitDeleted及实际容器卸载后，只删除本轮空卷，明确volume absent，再排他创建**相同volume名和sandbox名**，沿同一固定CLI argv重新创建。同名卷必须先证明空内容再挂载；Docker volume无独立稳定ID，不断言volume-ID变化、不靠CreatedAt秒级差。第二次必须SDK waitReady、独立核新sandbox ref.id与新container.Id均不同于首次，且tenant/project/session语义绑定不变、volume名字/labels/实际mount目标与image一致。核第二次stop状态后再官方delete/waitDeleted，精确卸载/删本轮卷/tag。只有第二次同名重建和清理全PASS，T0-remote才通过；T5不再作为首次同名重建试验。任何失败保留两次实际ID和断言，不假定第一次create证明恢复。
+
+T1a PASS：verifyBackup对root受管DB名集合与manifest.path集合精确比较；四库root+slice(1)拒绝，source/archive/occupied target canary摘要不变；独立单库root合法。固定backup suite7/7、typecheck/eslint通过。T0-remote已补两次同名创建与sandbox/container ID变化、卷absent→排他create→空内容→实际mount；不虚构volume ID。

@@ -1,6 +1,14 @@
 import { createHash } from 'node:crypto';
 import { constants } from 'node:fs';
-import { copyFile, lstat, mkdir, open, readFile, rm } from 'node:fs/promises';
+import {
+    copyFile,
+    lstat,
+    mkdir,
+    open,
+    readFile,
+    readdir,
+    rm,
+} from 'node:fs/promises';
 import { basename, isAbsolute, join } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
 
@@ -95,6 +103,12 @@ export async function verifyBackup(
 ): Promise<void> {
     try {
         if (!isAbsolute(root) || members.length < 1 || members.length > 4)
+            throw failure();
+        const actual = (await readdir(root))
+            .filter((name) => Object.hasOwn(owners, name))
+            .sort();
+        const declared = members.map((member) => member.path).sort();
+        if (JSON.stringify(actual) !== JSON.stringify(declared))
             throw failure();
         const seen = new Set<string>();
         for (const member of members) {
