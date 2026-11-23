@@ -64,7 +64,7 @@ function inputs(root = '/tmp/' + caseId): {
     const proof: GateProof = {
         schema: 1,
         sourceCommit: config.sourceCommit,
-        aIntegratedCommit: '2'.repeat(40),
+        sourceBaseCommit: '2'.repeat(40),
         dockerDaemonId: config.dockerDaemonId,
         environmentVersion: config.environmentVersion,
         adapterManifestSha256: adapterSha,
@@ -133,6 +133,7 @@ for (const key of [
 test('real gate rejects changed source, image, daemon and adapter identities', () => {
     for (const change of [
         { sourceCommit: '3'.repeat(40) },
+        { sourceBaseCommit: 'pending-other-task' },
         { dockerDaemonId: 'other' },
         { workerImageId: 'sha256:' + 'f'.repeat(64) },
         { adapterManifestSha256: 'f'.repeat(64) },

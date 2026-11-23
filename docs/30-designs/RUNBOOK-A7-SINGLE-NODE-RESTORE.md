@@ -78,6 +78,10 @@ Non-goals：Go 权威账本迁移、旧部署兼容、新备份产品、远程 H
 
 对账器只读数据库，规范排序比较全部表行，敏感值仅在内存比较，公开报告输出布尔断言/计数及合成文件摘要。原 HTTP DTO 与同键重放结果另存内存比较。不得写 SQL 修复状态、注入 receipt、篡改 epoch 或补齐假历史。
 
+## 用户当前执行约束
+
+B独立完成本RUNBOOK及PR，不以A进度、A合入或共享测试服务为前置。`sourceBaseCommit`记录当前源码实际共同基线，不表示另一任务已完成。使用B专属测试容器、网络、Gateway、Temporal、业务状态和卷；基础镜像及不可变依赖缓存可复用。以下历史作者记录中与此相反的等待约束不再适用。私有适配器的独立网络endpoint替换已按精确patch和SHA专项3/3验证；工作区只用文件工具，`requireFullEnforcement:true`不改，partial subprocess能力由严格guard实际拒绝，不声明完整subprocess验收。
+
 ## 分段前置门禁与执行顺序
 
 执行顺序固定为：**T0-local → T1 → T3 → T1a → T2a → T2b → T4-local → T0-remote → T4-real → T5-real → T6-final**。保留既有步骤编号，按此物理顺序执行，不按编号猜测依赖。T1与T3分别提供可独立验证提交的本地产物，不消费尚未创建的adapter、镜像、配置或远端API。
@@ -260,16 +264,16 @@ pnpm exec eslint apps/orchestrator/acceptance/single-node-restore/driver.ts apps
 
 | 字段               | 类型与来源                                                                | 消费/证明                                                                                                                                     |
 | ------------------ | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| sourceCommit       | 40位hex string，当前已纳A主线的干净source HEAD                            | 必须与proof.sourceCommit及实际应用/Worker image revision label一致                                                                            |
+| sourceCommit       | 40位hex string，当前B独立验收的干净source HEAD                            | 必须与proof.sourceCommit及实际应用/Worker image revision label一致                                                                            |
 | environmentVersion | sha256前缀摘要string，实际image/policy身份                                | proof同字段、commandHost实际版本一致                                                                                                          |
-| gateProof          | 仓库外绝对路径string，完整T0-remote私有回执                               | schema/source/A合入边界/实际daemon与三镜像/adapter/lock/Dockerfile/control摘要/平台/构建时间/五项能力全部校验                                 |
+| gateProof          | 仓库外绝对路径string，完整T0-remote私有回执                               | schema/source/自身源码基线/实际daemon与三镜像/adapter/lock/Dockerfile/control摘要/平台/构建时间/五项能力全部校验                              |
 | serviceTokenFile   | 绝对路径string，部署端新建独占服务身份文件                                | 普通单链接0600文件，32–1024可见ASCII；只用于API bearer，不入proof/report                                                                      |
 | controlBinary      | 绝对路径string，从上述Orchestrator构建产物提取的生产Go控制器              | 可执行普通文件，实际字节SHA与proof.controlBinarySha256一致；仅本case进程设置既有BENTO_GO_CONTROL，finally恢复原环境，不在测试中临时改生产接线 |
 | temporal           | `{namespace:string,taskQueue:string}`，本轮独立部署身份，二者以caseId开头 | source/reopen均沿用；port由既有freePort动态取得并保持到还原，官方工具由既有acquireTemporal核验                                                |
 
 原A7Config的root是已准备私有部署根，basename必须等caseId且权限0700；source/restore/backup/evidence/temporal子树由driver排他创建，拒绝复用旧执行状态。source、restore、Temporal各数据路径固定，四库先整体验证还原到新staging，再仅移动新target的Temporal DB至独立目录并各自复验；不拆manifest绕过完整集合校验。
 
-GateProof.required：schema=1、sourceCommit/aIntegratedCommit 40位hex、dockerDaemonId与config相等、environmentVersion相等、adapterManifestSha256为实际manifest字节SHA、lockSha256/dockerfileSha256/controlBinarySha256均64位hex、platform=`linux/amd64`、实际orchestratorImageId/workerImageId/runtimeImageId、builtAt有效UTC构建时间、checks中linuxImports/helpers/native/officialLifecycle/sameNameRecreate各严格true。后续完整T0生成器只能从实际构建及命令回执写这些字段；短probe33.011s仅支持官方生命周期/同名重建子项，不能填造其余true。
+GateProof.required：schema=1、sourceCommit/sourceBaseCommit 40位hex、dockerDaemonId与config相等、environmentVersion相等、adapterManifestSha256为实际manifest字节SHA、lockSha256/dockerfileSha256/controlBinarySha256均64位hex、platform=`linux/amd64`、实际orchestratorImageId/workerImageId/runtimeImageId、builtAt有效UTC构建时间、checks中linuxImports/helpers/native/officialLifecycle/sameNameRecreate各严格true。后续完整T0生成器只能从实际构建及命令回执写这些字段；短probe33.011s仅支持官方生命周期/同名重建子项，不能填造其余true。
 
 driver实际启动前再次核控制器字节、daemon和三镜像的ID/平台/源码标签。宿主停启不拼虚假generation：从真实authority三库规范快照构造现有stop/start参数，绑定不匹配/整数越界拒绝。运行时阶段序列约束先gate、停服、完整四库与保全，再还原、重新观测官方ref/mount；只更新本轮部署manifest容器/sandbox ID，不写权威SQL。RTO在原执行停止接收起算，到还原服务实际回读且第二轮成功时取单调时长，不将清理时间当服务恢复时间。报告仅在全部实际断言及本轮清理成功后输出。
 
@@ -296,9 +300,9 @@ MASTER确认本地范围为package/public-files/check-package/RUNBOOK四改文�
 
 执行：
 
-1. A按顺序合入后，普通merge纳入新主线；核对恢复相关变化，不覆盖A证据。若A尚未合入但MASTER仅释放短T0能力窗口，可只验固定runtime/helper/官方API，正式T4前仍须纳A新主线并重建应用镜像。记录两者证据版本，不能把旧构建当新基线。
+1. 使用B当前干净源码及其实际共同基线独立验收，不等待A合入。测试runner、Gateway、Temporal、业务库、卷和网络由B排他创建；不使用A服务或状态。其他任务后续变更只有实际影响共享生产符号时，才定向复验相应契约。
 2. 消费T4-local干净源码提交，通过已有Dockerfile构建本轮应用/Worker；构建是本门禁的产物，不是T1/T3前提。固定调用：`docker build --file deploy/orchestrator/Dockerfile --label org.opencontainers.image.revision="$BENTO_A7_SOURCE_SHA" --tag "$BENTO_A7_CASE_ID-orchestrator" .`，Worker同形使用`deploy/worker/Dockerfile`及`"$BENTO_A7_CASE_ID-worker"`。只用部署环境已授权的网络/代理配置，不自行新建代理或复用A租约。构建失败保留本轮回执，不降级到旧应用镜像。
-3. 从精确tag的image inspect读实际ID；proof必含schema=1、sourceCommit、aIntegratedCommit、dockerfileSha256、lockSha256、controlBinarySha256、adapterManifestSha256、dockerDaemonId、platform、orchestratorImageId、workerImageId、runtimeImageId、environmentVersion、builtAt及checks五项真实命令断言。runtime image可为已核历史sandbox运行镜像，但必须另验helper与固定SDK/provider；不声称它带本轮源码。构建后才将image ID写入本轮私有config并以proof约束不可变身份。
+3. 从精确tag的image inspect读实际ID；proof必含schema=1、sourceCommit、sourceBaseCommit、dockerfileSha256、lockSha256、controlBinarySha256、adapterManifestSha256、dockerDaemonId、platform、orchestratorImageId、workerImageId、runtimeImageId、environmentVersion、builtAt及checks五项真实命令断言。runtime image可为已核历史sandbox运行镜像，但必须另验helper与固定SDK/provider；不声称它带本轮源码。构建后才将image ID写入本轮私有config并以proof约束不可变身份。
 4. 执行末节已固定的Linux实际import、tar/helper、SDK官方卷生命周期及挂载核验。资源只属本轮；生成脱敏断言，原始证据留受控目录。全部关闭并独立确认资源状态后才发布门禁通过回执。
 
 验证：末节“必须等待MASTER释放窗口的精确证据”表及“最终调用约束”的固定命令/argv全部实际通过；并执行`git diff --check`。本门禁使用的是已提交接线和已有官方能力，不在此临时开发新的业务API。
@@ -333,7 +337,7 @@ PASS：真实卷完整inventory/权限一致、四库健康、三库整表一致
 
 ### T6-final：真实验收后的长期落点与删除 RUNBOOK
 
-前置状态：T6-local已通过并提交，T4-real/T5-real均实际通过；A 已合入，当前分支按普通 merge 纳新主线，受影响契约定向复验。若 A 尚未合入则等待，不能先B合并。
+前置状态：T6-local已通过并提交，T4-real/T5-real均在B独立环境实际通过；以当前任务源码及实际验收证据收口，不等待其他任务。
 允许修改：deploy README、应用设计、Readiness、Orchestrator package、`apps/orchestrator/acceptance/single-node-restore/check-package.mjs`、`public-files.json`、本 RUNBOOK；专核根package files，合计8文件。根package无需新增files模式，新源均由现有apps/orchestrator覆盖；backup.test.ts及runner只以显式.ts路径导入同目录backup.ts，pack正向同时检查消费者与backup.ts，禁止出现包内悬空依赖。部署README经既有run入口引用备份能力，不扩根files或旧pack白名单。
 执行：保留T6-local已接入的精确四suite/corefast/CI和13源公开登记及打包闭包检查，不使用acceptance通配符引入real-restore/adapter私有用例。实际完整门禁对齐最终合入版本，按受影响范围复验；Readiness分别写A7-01/02及声明范围、实际commit、四库/卷/外部Gateway保留边界、真实结果与RPO/RTO；原fixture和A证据保留。删除本RUNBOOK并检查残留引用。
 验证：
@@ -346,7 +350,7 @@ node apps/orchestrator/acceptance/single-node-restore/run.mjs --case restore
 git diff --check
 ```
 
-PASS：backup/audit本地测试由check:core:fast实际执行且无skip；远端及私有adapter用例仍仅显式执行；本轮所有新用例无skip；全量门禁exit0；两场景在含A新主线版本通过；包边界通过；至少A7-01完整已实现，A7-02独立通过后已实现。STOP：任何范围扩大、远端未释放、缺当前版本证据。所有scope满足后迁移并删RUNBOOK，按既有授权执行单PR、当前HEAD Codex和CI门禁、普通merge与同步清理；未通过不删RUNBOOK、不将失败写成已实现。
+PASS：backup/audit本地测试由check:core:fast实际执行且无skip；远端及私有adapter用例仍仅显式执行；本轮所有新用例无skip；全量门禁exit0；两场景在本任务已固定源码版本通过；包边界通过；至少A7-01完整已实现，A7-02独立通过后已实现。STOP：任何范围扩大、远端未释放、缺当前版本证据。所有scope满足后迁移并删RUNBOOK，按既有授权执行单PR、当前HEAD Codex和CI门禁、普通merge与同步清理；未通过不删RUNBOOK、不将失败写成已实现。
 
 ## 最终 T0 未核定清单（2026-11-23，本地闭包检查后）
 

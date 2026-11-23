@@ -53,7 +53,7 @@ export type CaseConfig = A7Config & {
 export type GateProof = {
     schema: 1;
     sourceCommit: string;
-    aIntegratedCommit: string;
+    sourceBaseCommit: string;
     dockerDaemonId: string;
     environmentVersion: string;
     adapterManifestSha256: string;
@@ -142,7 +142,7 @@ export function validateGate(
     if (
         proof.schema !== 1 ||
         proof.sourceCommit !== config.sourceCommit ||
-        !/^[a-f0-9]{40}$/.test(proof.aIntegratedCommit) ||
+        !/^[a-f0-9]{40}$/.test(proof.sourceBaseCommit) ||
         proof.dockerDaemonId !== config.dockerDaemonId ||
         proof.environmentVersion !== config.environmentVersion ||
         proof.adapterManifestSha256 !== adapterSha ||
