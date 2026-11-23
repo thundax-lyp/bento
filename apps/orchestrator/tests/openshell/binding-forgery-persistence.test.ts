@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { test } from 'node:test';
+import { SessionSeq } from '@deepseek-ai/dsh-session';
 import { materializeAppendBatch } from '@deepseek-ai/dsh-session-persistence';
 import {
     createBindingFixture,
@@ -10,19 +11,29 @@ import {
 
 const expectedEvents = {
     A: [
-        { type: 'turn/start', seq: 0, time: 1700000000001, data: { turn: 1 } },
+        {
+            type: 'turn/start',
+            seq: SessionSeq(0),
+            time: 1700000000001,
+            data: { turn: 1 },
+        },
         {
             type: 'turn/end',
-            seq: 1,
+            seq: SessionSeq(1),
             time: 1700000000002,
             data: { turn: 1, reason: { kind: 'completed' } },
         },
     ],
     B: [
-        { type: 'turn/start', seq: 0, time: 1700000000101, data: { turn: 1 } },
+        {
+            type: 'turn/start',
+            seq: SessionSeq(0),
+            time: 1700000000101,
+            data: { turn: 1 },
+        },
         {
             type: 'turn/end',
-            seq: 1,
+            seq: SessionSeq(1),
             time: 1700000000102,
             data: { turn: 1, reason: { kind: 'completed' } },
         },

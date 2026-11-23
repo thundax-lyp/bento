@@ -1,14 +1,23 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
 
 export type Paths = { authority: string; history: string };
 export const sha256 = (value: string | Uint8Array) =>
     createHash('sha256').update(value).digest('hex');
 
 export function snapshot(paths: Paths, volumes: readonly string[]) {
-    function tables(path: string, names: readonly string[]) {
+    function tables<T extends string>(
+        path: string,
+        names: readonly T[],
+    ): Record<
+        T,
+        Record<
+            string,
+            SQLOutputValue | { present: boolean; sha256: string | null }
+        >[]
+    > {
         const db = new DatabaseSync(path, { readOnly: true });
         try {
             return Object.fromEntries(
@@ -39,7 +48,13 @@ export function snapshot(paths: Paths, volumes: readonly string[]) {
                     );
                     return [name, rows];
                 }),
-            );
+            ) as Record<
+                T,
+                Record<
+                    string,
+                    SQLOutputValue | { present: boolean; sha256: string | null }
+                >[]
+            >;
         } finally {
             db.close();
         }

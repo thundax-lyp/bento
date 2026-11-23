@@ -97,19 +97,9 @@ const expectedEvents = {
 
 PASS：基线匹配、无归属不明改动、命令0且无skip；wire与本文一致。STOP：任何冲突、来源缺失、依赖失败。作者已核 wire 与 remote-session.test.ts、SessionHistory.request 一致；2026-11-23 Node v22.23.2、pnpm12.15.0、OpenSSL3.5.9，以上baseline测试4/4 PASS、fail0skip0。HEAD仍为起始基线；当前唯一改动为本未跟踪草稿。T0技术前置已通过，Executable与分支/开工仍待MASTER。
 
-## T4：以官方 SDK 和真实 mTLS 验证目标沙盒拒绝
-
-前置：control+persistence 两suite已提交，9/9 PASS、fail0skip0；5项Session攻击真实HTTP403，A/B非空事件完整回读、同库reopen与快照不变。允许修改：gateway.ts、sdk.test.ts、fixture.ts、本稿；专核 sdk-ingress.ts、binding-grants/sdk.ts、sdk-probe.ts（sdk.test.ts 唯一路径为 binding-forgery-sdk.test.ts）。
-
-执行：before prepareSdk并probeSdk，after dispose；gateway只接受本fixture的两个sandbox，官方schema decode请求，再按sandbox映射自己卷读取canary，GetSandbox回官方空response、Exec两种回frame(sdk.exit(0))；upstream calls及实际文件读取另行记录。CA/server/client仅在本次临时目录，serverAuth/clientAuth与IP SAN沿既有fixture；不修改它。合法A/B三方法各成功0且正确目标。A token+B sandbox三方法各独立test返回7，calls和snapshot不增，无B canary泄漏；同库重开后重建ingress且复验。
-
-验证：`node --import ./register-paths.mjs --test --test-concurrency=1 --test-timeout=900000 apps/orchestrator/tests/openshell/binding-forgery-sdk.test.ts`。
-
-PASS：官方prepare/probe成功，不降mock；三项负测和合法控制全部执行无skip；upstream真实mTLS认证通过且攻击零到达；合法请求实际读取自己文件。STOP：SDK/网络/证书失败或目标检查失效，不放宽TLS/断言。清理仅本fixture网络/证书及SDK本次构建目录。
-
 ## T5：固定公开边界与完整验证
 
-前置：T4已提交。允许修改：check-package.mjs、public-files.json、apps/orchestrator/package.json、本稿；专核根package.json、binding-grants/check-package.mjs、.github/workflows/checks.yml（共7文件）。
+前置：T4 gateway/sdk suite已提交，三组全量focused 12/12 PASS、fail0skip0，tsc --noEmit通过。MASTER批准本步直接类型修正 apps/orchestrator/tests/openshell/binding-forgery/state.ts 的泛型表名键及 apps/orchestrator/tests/openshell/binding-forgery-persistence.test.ts 的官方SessionSeq构造，原完整事件断言不缩减。允许修改：check-package.mjs、public-files.json、apps/orchestrator/package.json、本稿；专核根package.json、binding-grants/check-package.mjs、.github/workflows/checks.yml（共7文件）。
 
 执行：public-files精确登记7个新代码文件；根files不变。test默认openshell/*.test.ts已收三个新suite；check:core:fast末尾加 `node tests/openshell/binding-forgery/check-package.mjs`。新检查器用现有pack检查同等正负断言，确认7文件各入包一次且无node_modules/SQLite/私钥/证书/日志/临时目录。CI当前Orchestrator路径覆盖自动执行，无CI改动；若实际未覆盖STOP向MASTER报。
 
