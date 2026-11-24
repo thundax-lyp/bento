@@ -20,6 +20,7 @@ import {
     type Binding,
     type ExecutionHost,
     type FileText,
+    type TaskVolumeStopObservation,
     type WorkerRequest,
     type WorkerResult,
 } from './types.ts';
@@ -31,9 +32,11 @@ type Review = {
     runId: string;
     failedGeneration: number;
     readyGeneration: number;
-    stableOperationId: string;
     expectedSnapshotSha256: string;
-};
+} & (
+    | { stableOperationId: string; sdkOperationId?: never }
+    | { stableOperationId?: never; sdkOperationId: string }
+);
 
 export { snapshotSha256 } from './snapshot.ts';
 type Options = {
@@ -218,6 +221,7 @@ export async function serveExecution(options: Options) {
                 failedGeneration,
                 readyGeneration,
                 stableOperationId,
+                sdkOperationId,
                 expectedSnapshotSha256,
             } = review;
             if (
@@ -225,12 +229,25 @@ export async function serveExecution(options: Options) {
                 failedGeneration < 1 ||
                 !Number.isSafeInteger(readyGeneration) ||
                 readyGeneration <= failedGeneration ||
-                typeof stableOperationId !== 'string' ||
-                !stableOperationId ||
                 !/^[0-9a-f]{64}$/.test(expectedSnapshotSha256)
             )
                 throw new Error('Invalid review proof');
-            const op = operationId(runId, stableOperationId);
+            let op: string;
+            if (sdkOperationId !== undefined) {
+                if (
+                    stableOperationId !== undefined ||
+                    typeof sdkOperationId !== 'string' ||
+                    !/^sdk:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(
+                        sdkOperationId,
+                    )
+                )
+                    throw new Error('Invalid review proof');
+                op = sdkOperationId;
+            } else {
+                if (typeof stableOperationId !== 'string' || !stableOperationId)
+                    throw new Error('Invalid review proof');
+                op = operationId(runId, stableOperationId);
+            }
             const proof = JSON.stringify({
                 failedGeneration,
                 readyGeneration,
@@ -250,6 +267,17 @@ export async function serveExecution(options: Options) {
                     'Run is not awaiting recovery review.',
                 );
             const binding = db.binding(run);
+            if (
+                sdkOperationId !== undefined &&
+                (run.taskSequence === null ||
+                    run.admittedGeneration !== failedGeneration ||
+                    run.admittedBindingDigest !==
+                        executionBindingDigest(binding))
+            )
+                throw conflict(
+                    'review_unavailable',
+                    'Run execute admission changed.',
+                );
             const checkBinding = () => {
                 const current = execution.inspect(run.sessionId);
                 if (
@@ -305,6 +333,12 @@ export async function serveExecution(options: Options) {
         }
 
         function supportsCancellation(run: Run) {
+            if (
+                run.taskSequence !== null &&
+                host.taskCancellationRequiresTrustedObservation === true
+            )
+                return host.supportsTaskRunningCancellation === true;
+
             return (
                 host.supportsRunningCancellation === true ||
                 (run.taskSequence !== null &&
@@ -405,7 +439,10 @@ export async function serveExecution(options: Options) {
             );
         }
 
-        async function stopAndProve(run: Run) {
+        async function stopAndProve(
+            run: Run,
+            mode: 'settle' | 'observe-ready' = 'settle',
+        ) {
             const generation = run.admittedGeneration;
             const recovery = host.taskRecovery;
             if (generation === null || !recovery) return false;
@@ -417,17 +454,31 @@ export async function serveExecution(options: Options) {
             )
                 return false;
             const binding = db.binding(run);
+            const nextGeneration = generation + 1;
+            if (
+                mode === 'observe-ready' &&
+                !readyBinding(binding, nextGeneration)
+            )
+                return false;
             const exit = await taskExit(run, binding, generation);
             if (!exit) return false;
-            if (!readyBinding(binding, generation + 1))
+            if (!readyBinding(binding, nextGeneration)) {
+                if (mode === 'observe-ready') return false;
                 await execution.takeover(binding.session, generation);
-            if (!readyBinding(binding, generation + 1)) return false;
+            }
+            if (!readyBinding(binding, nextGeneration)) return false;
+            if (
+                mode === 'observe-ready' &&
+                execution.hasUnknownOperations(binding.session, generation)
+            )
+                return false;
             const prior = db.readStopProof(run.id);
             if (prior) {
                 readProof(run, generation, generation + 1);
                 return true;
             }
-            await reconcileFixtureWrite(run, binding, generation);
+            if (mode === 'settle')
+                await reconcileFixtureWrite(run, binding, generation);
             if (execution.hasUnknownOperations(binding.session, generation))
                 return false;
             let effect;
@@ -470,7 +521,12 @@ export async function serveExecution(options: Options) {
                 history.pendingBatches !== 0
             )
                 return false;
-            if (!readyBinding(binding, generation + 1)) return false;
+            if (!readyBinding(binding, nextGeneration)) return false;
+            if (
+                mode === 'observe-ready' &&
+                execution.hasUnknownOperations(binding.session, generation)
+            )
+                return false;
             const proof = {
                 taskId: run.projectId,
                 runId: run.id,
@@ -507,13 +563,18 @@ export async function serveExecution(options: Options) {
             supportsCancellation,
         });
 
-        async function closeTaskRun(input: {
+        type TaskClosureInput = {
             runId: string;
             decision: 'failed' | 'unconfirmed';
             expectedGeneration: number;
-        }) {
+        };
+        const closingTaskRuns = new Map<string, Promise<void>>();
+
+        async function closeTaskRun(input: TaskClosureInput) {
             if (input.decision !== 'failed' && input.decision !== 'unconfirmed')
                 throw conflict('review_unavailable', 'Invalid closure.');
+            const active = closingTaskRuns.get(input.runId);
+            if (active) await active;
             const prior = db.readTaskClosure(input.runId);
             if (prior) {
                 if (
@@ -526,28 +587,98 @@ export async function serveExecution(options: Options) {
                     );
                 return;
             }
+            const task = finishTaskClosure(input);
+            closingTaskRuns.set(input.runId, task);
+            try {
+                await task;
+            } finally {
+                closingTaskRuns.delete(input.runId);
+            }
+        }
+
+        async function finishTaskClosure(input: TaskClosureInput) {
             const run = db.findRun(input.runId);
             const generation = run.admittedGeneration;
             const binding = db.binding(run);
-            const history = execution.historyQuiescence(binding.session);
-            const exit =
-                generation === null
-                    ? undefined
-                    : await taskExit(run, binding, generation);
-            if (
-                run.taskSequence === null ||
-                run.status !== 'needs_review' ||
-                generation === null ||
-                !exit ||
-                input.expectedGeneration <= generation ||
-                !readyBinding(binding, input.expectedGeneration) ||
-                history.handleOpen ||
-                history.pendingBatches
-            )
-                throw conflict(
+            const unavailable = () =>
+                conflict(
                     'review_unavailable',
                     'Task closure evidence unavailable.',
                 );
+            const canClose = () => {
+                const current = db.findRun(run.id);
+                if (
+                    stop.signal.aborted ||
+                    current.taskSequence === null ||
+                    current.status !== 'needs_review' ||
+                    current.receipt ||
+                    current.admittedGeneration !== generation ||
+                    current.admittedBindingDigest !==
+                        executionBindingDigest(binding) ||
+                    executing.has(run.id) ||
+                    [...assigned.values()].includes(run.id) ||
+                    db.hasActiveTaskRetry(run.projectId) ||
+                    !readyBinding(binding, input.expectedGeneration)
+                )
+                    return false;
+                const history = execution.historyQuiescence(binding.session);
+                return !history.handleOpen && !history.pendingBatches;
+            };
+            if (
+                generation === null ||
+                !Number.isSafeInteger(input.expectedGeneration) ||
+                input.expectedGeneration <= generation ||
+                !canClose()
+            )
+                throw unavailable();
+            const exit = await taskExit(run, binding, generation);
+            if (!exit || !canClose()) throw unavailable();
+            let observation: TaskVolumeStopObservation | undefined;
+            if (input.decision === 'failed') {
+                try {
+                    await stopAndProve(run, 'observe-ready');
+                } catch {
+                    // Invalid retry evidence cannot authorize a retry.
+                }
+            } else {
+                let observed;
+                try {
+                    observed = await host.observeTaskVolumeStopped?.(
+                        binding,
+                        run.id,
+                        generation,
+                    );
+                } catch {
+                    throw unavailable();
+                }
+                const observedAt = Date.parse(observed?.observedAt ?? '');
+                if (
+                    !observed ||
+                    observed.sessionId !== binding.session ||
+                    observed.runId !== run.id ||
+                    observed.generation !== generation ||
+                    observed.bindingDigest !==
+                        executionBindingDigest(binding) ||
+                    observed.restoreIdle !== true ||
+                    observed.volumeWriters !== 0 ||
+                    observed.sandboxStopped !== true ||
+                    !Number.isFinite(observedAt) ||
+                    observedAt < Date.parse(exit.exitedAt) ||
+                    observedAt > Date.now()
+                )
+                    throw unavailable();
+                observation = {
+                    sessionId: observed.sessionId,
+                    runId: observed.runId,
+                    generation: observed.generation,
+                    bindingDigest: observed.bindingDigest,
+                    restoreIdle: true,
+                    volumeWriters: 0,
+                    sandboxStopped: true,
+                    observedAt: observed.observedAt,
+                };
+            }
+            if (!canClose()) throw unavailable();
             db.closeTaskRun(
                 run.id,
                 input.decision,
@@ -558,6 +689,7 @@ export async function serveExecution(options: Options) {
                         bindingDigest: executionBindingDigest(binding),
                         oldGeneration: generation,
                         newGeneration: input.expectedGeneration,
+                        ...(observation && { observation }),
                     }),
                 ),
             );
@@ -1485,6 +1617,7 @@ export async function serveExecution(options: Options) {
             closeTaskRun,
             closeTaskRetry,
             reconcileTaskRetry,
+            listPendingRunReviews: () => db.listPendingRunReviews(),
             readTaskClosure: (id: string) => db.readTaskClosure(id),
             readTaskRetryClosure: (id: string) =>
                 db.readTaskRetryClosure(id) ?? null,

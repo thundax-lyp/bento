@@ -1742,6 +1742,18 @@ export class Store {
         );
     }
 
+    listPendingRunReviews(): readonly { runId: string; updatedAt: string }[] {
+        return this.db
+            .prepare(
+                "SELECT id AS runId, updatedAt FROM runs WHERE taskSequence IS NOT NULL AND status='needs_review' ORDER BY id",
+            )
+            .all()
+            .map((row) => ({
+                runId: row.runId as string,
+                updatedAt: row.updatedAt as string,
+            }));
+    }
+
     readTaskClosure(runId: string) {
         return this.evidence.readTaskClosure(runId);
     }

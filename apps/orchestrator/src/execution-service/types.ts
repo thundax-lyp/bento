@@ -78,6 +78,17 @@ export type RestoreObservation = {
     sha256: string;
 };
 
+export type TaskVolumeStopObservation = {
+    sessionId: string;
+    runId: string;
+    generation: number;
+    bindingDigest: string;
+    restoreIdle: true;
+    volumeWriters: 0;
+    sandboxStopped: true;
+    observedAt: string;
+};
+
 export type RetryCleanupObservation = {
     attemptId: string;
     generation: number;
@@ -102,6 +113,11 @@ export interface ExecutionHost extends SingleHostSandbox {
         runId: string,
         generation: number,
     ): Promise<WorkerExitObservation | null>;
+    observeTaskVolumeStopped?(
+        binding: Binding,
+        runId: string,
+        generation: number,
+    ): Promise<TaskVolumeStopObservation | null>;
     observeRetryCleanup?(
         binding: Binding,
         attemptId: string,
@@ -147,6 +163,7 @@ export interface ExecutionHost extends SingleHostSandbox {
     /** The trusted launcher can independently confirm the exit of this Worker. */
     supportsRunningCancellation?: true;
     supportsTaskRunningCancellation?: true;
+    taskCancellationRequiresTrustedObservation?: true;
     warmWorker?(signal: AbortSignal): () => Promise<void>;
     worker(
         request: WorkerRequest,

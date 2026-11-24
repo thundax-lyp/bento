@@ -14,6 +14,7 @@ type InstallReview = (
     closeTaskRetry: ExecutionService['closeTaskRetry'],
     readTaskRetryClosure: ExecutionService['readTaskRetryClosure'],
     reconcileTaskRetry: ExecutionService['reconcileTaskRetry'],
+    listPendingRunReviews: ExecutionService['listPendingRunReviews'],
 ) => () => void | Promise<void>;
 
 async function main() {
@@ -128,6 +129,7 @@ async function main() {
             service.closeTaskRetry,
             service.readTaskRetryClosure,
             service.reconcileTaskRetry,
+            service.listPendingRunReviews,
         );
         if (installReview && typeof stopReview !== 'function')
             throw new Error(

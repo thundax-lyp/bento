@@ -36,6 +36,7 @@ type Settings = {
     prewarmWorker?: boolean;
     workerSlots?: 1 | 2;
     controlTimeoutMs?: number;
+    taskObservationModule?: string;
 };
 
 async function loadSchemas(raw: string) {
@@ -122,6 +123,35 @@ export async function schemaExecEventDecoder(
     };
 }
 
+type TaskObservations = Required<
+    Pick<
+        ExecutionHost,
+        'observeWorkerExit' | 'observeTaskVolumeStopped' | 'taskRecovery'
+    >
+>;
+
+async function loadTaskObservations(path: string): Promise<TaskObservations> {
+    const loaded = (await import(pathToFileURL(path).href)) as {
+        default?: Partial<TaskObservations>;
+    };
+    const observations = loaded.default;
+    if (
+        typeof observations?.observeWorkerExit !== 'function' ||
+        typeof observations.observeTaskVolumeStopped !== 'function' ||
+        typeof observations.taskRecovery?.retryObservation !== 'function' ||
+        typeof observations.taskRecovery.queryRestore !== 'function' ||
+        typeof observations.taskRecovery.restoreTask !== 'function' ||
+        typeof observations.taskRecovery.observeSdkRetrySafety !== 'function'
+    )
+        throw new Error('Invalid trusted Task observation module');
+    return {
+        observeWorkerExit: observations.observeWorkerExit.bind(observations),
+        observeTaskVolumeStopped:
+            observations.observeTaskVolumeStopped.bind(observations),
+        taskRecovery: observations.taskRecovery,
+    };
+}
+
 /** One trusted command owns deployment-specific operations; the service owns all worker grants. */
 export async function commandHost(configPath: string): Promise<ExecutionHost> {
     const settings = object(
@@ -155,13 +185,31 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
     if (!settings.workspace)
         throw new Error('Gateway workspace scope required');
     const configFile = (path: string) => resolve(dirname(configPath), path);
+    const observationModule = settings.taskObservationModule;
+    if (
+        observationModule !== undefined &&
+        (typeof observationModule !== 'string' ||
+            !observationModule.trim() ||
+            settings.prewarmWorker !== true)
+    )
+        throw new Error(
+            'Trusted Task observations require a module and warm workers',
+        );
     const upstream = new URL(settings.gateway);
-    const [ca, cert, key, decode] = await Promise.all([
+    const sdkRaw = configFile(settings.sdkRaw);
+    const [ca, cert, key, decode, raw, taskObservations] = await Promise.all([
         readFile(configFile(settings.ca)),
         readFile(configFile(settings.cert)),
         readFile(configFile(settings.key)),
-        schemaDecoder(configFile(settings.sdkRaw)),
+        schemaDecoder(sdkRaw),
+        import(pathToFileURL(sdkRaw).href) as Promise<Record<string, unknown>>,
+        observationModule === undefined
+            ? undefined
+            : loadTaskObservations(configFile(observationModule)),
     ]);
+    const decodeExecEvent = raw.ExecSandboxEventSchema
+        ? await schemaExecEventDecoder(sdkRaw)
+        : undefined;
     async function call(
         action: string,
         binding: Binding,
@@ -196,6 +244,11 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
     }
     return {
         environmentVersion,
+        taskCancellationRequiresTrustedObservation: true,
+        ...(taskObservations && {
+            ...taskObservations,
+            supportsTaskRunningCancellation: true as const,
+        }),
         async provisionTask(binding, files, version) {
             const result = object(
                 await call('provisionTask', binding, files, version),
@@ -209,6 +262,7 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
             workspace: settings.workspace,
             credentials: { ca, cert, key },
             decode,
+            ...(decodeExecEvent && { decodeExecEvent }),
         },
         provision: async (binding, files) =>
             observation(await call('provision', binding, files)),
