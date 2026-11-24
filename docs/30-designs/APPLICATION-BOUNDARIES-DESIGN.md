@@ -60,7 +60,7 @@
 
 单执行宿主交付包含 A7 的备份还原。第一条纵向实现优先完成 A1～A5、A8。调度架构可以同步实现，但 Activity 重试不能越过副作用对账。Temporal 的单执行宿主接入及故障验证见[需求完成状况](../40-readiness/CURRENT-READINESS.md)。首版范围允许明确限定为单执行节点；是否支持 PTY/SSH、真实多租户不可信代码、跨节点卷，应作为产品和部署能力开关及验收边界，而非默认开放。
 
-单执行节点的计划停服恢复采用四库（执行账本、授权、Session 历史、Temporal）及真实工作区卷的一致停写集合。恢复仅写入独立空目标，先校验摘要、数据库健康及资源绑定，再通过正式入口回读原 Run 并在原 Session 继续执行。Gateway 身份与模型服务作为保留依赖；账号、身份数据库及 S3 的整站灾备另行验收。命令与失败保全方式见[部署说明](../../deploy/README.md#单执行节点真实备份恢复与重启验收)，实测版本和 RPO/RTO 见[A7 证据](../40-readiness/CURRENT-READINESS.md#a7-单执行节点真实恢复验收)。
+单执行节点的计划停服恢复采用四库（执行账本、授权、Session 历史、Temporal）及真实工作区卷的一致停写集合。恢复仅写入独立空目标，先校验摘要、数据库健康及资源绑定，再通过正式入口回读原 Run 并在原 Session 继续执行。Gateway 身份与模型服务作为保留依赖；账号、身份数据库及 S3 的整站灾备另行验收。命令与失败保全方式见[部署说明](../../deploy/README.md#单执行节点真实备份恢复与重启验收)，实测版本和 RPO/RTO 见[A7 证据](../40-readiness/evidence/A7.md#a7-单执行节点真实恢复验收)。
 
 ### 实现与复用
 
@@ -84,7 +84,7 @@ OpenShell Gateway interceptor 的固定源码白名单可以管理部分一元�
 
 历史通过生产 HTTP 的 create/stage/append/reconcile/flush/close 写入两套非空事件，再分别合法读回。A 的当次 capability 请求 B 的 stat/open/read，或 create 提交不匹配的 header.id，均须返回 403 GrantDenied，不改变历史或资源。SDK 复用官方源码准备器和 protobuf 编解码，通过生产 ingress 到独立真实 mTLS HTTP2 服务；GetSandbox、ExecSandbox、ExecSandboxInteractive 分别检查跨 sandbox 请求返回 gRPC 7、上游调用数为零，合法请求实际读取自己的卷。两类网络入口均在同库重开后复验。
 
-三个 suite 由既有 Orchestrator 测试通配符自动执行，[打包检查](../../apps/orchestrator/tests/openshell/binding-forgery/check-package.mjs)核对七个显式公开源文件及私有材料排除。测试不改变生产授权契约，不证明外部 OpenShell 的实际挂载、Docker/OS 隔离或恶意宿主防护，也不替代 A1-03 撤权与 A3 停止观察。实际基线、结果和未覆盖范围见 [A1-02 验收记录](../40-readiness/CURRENT-READINESS.md#a1-02-伪造资源绑定本地验收)。
+三个 suite 由既有 Orchestrator 测试通配符自动执行，[打包检查](../../apps/orchestrator/tests/openshell/binding-forgery/check-package.mjs)核对七个显式公开源文件及私有材料排除。测试不改变生产授权契约，不证明外部 OpenShell 的实际挂载、Docker/OS 隔离或恶意宿主防护，也不替代 A1-03 撤权与 A3 停止观察。实际基线、结果和未覆盖范围见 [A1-02 验收记录](../40-readiness/evidence/A1.md#a1-02-伪造资源绑定本地验收)。
 
 ## A1-03 旧执行授权验收接线
 
@@ -96,7 +96,7 @@ OpenShell Gateway interceptor 的固定源码白名单可以管理部分一元�
 
 真实 mTLS/HTTP2、HTTP 与 SQLite 用于验证平台入口的拒绝；upstream 是独立受控服务器，模型和沙盒观察是 fixture。只读独立连接核对权威状态、operation 与历史；无历史行时按生产 fence 的 absence 契约处理，不冒充真实历史行撤销。历史拒绝另复用既有官方 Provider fixture，先正常 checkpoint，再真实撤权，以旧 writer.append 观察 stage403/SessionOwnershipLostError、四表不变、真实历史行 epoch/owner/handle 栅栏和同库 reopen；该子链不修改原 A2 场景或 flush 时序。
 
-[发布检查](../../apps/orchestrator/tests/openshell/binding-grants/check-package.mjs) 在固定 Orchestrator check 中核对实际安装树的 npm pack 清单，保留根 files/patterns，精确登记新源并拒绝依赖、TLS/数据库和私有证据。实际验证结果和未覆盖项见 [A1-03 Readiness](../40-readiness/CURRENT-READINESS.md#a1-03-旧执行授权本地验收)。本接线不证明外部 OpenShell/Docker 进程停止、全部署绑定或 A3 接管就绪，也不关闭 A1 的其他子项。
+[发布检查](../../apps/orchestrator/tests/openshell/binding-grants/check-package.mjs) 在固定 Orchestrator check 中核对实际安装树的 npm pack 清单，保留根 files/patterns，精确登记新源并拒绝依赖、TLS/数据库和私有证据。实际验证结果和未覆盖项见 [A1-03 Readiness](../40-readiness/evidence/A1.md#a1-03-旧执行授权本地验收)。本接线不证明外部 OpenShell/Docker 进程停止、全部署绑定或 A3 接管就绪，也不关闭 A1 的其他子项。
 
 ## A2 Provider 验收接线
 
@@ -104,13 +104,13 @@ OpenShell Gateway interceptor 的固定源码白名单可以管理部分一元�
 
 写句柄只能经官方 `ctx.agents.create/resume` 获取，AgentLoop 保存 constructor/setup suffix，避免裸 prepare/enter 遗漏 seed marker。官方 checkpoint policy 在 pre-step/model dispatch 前调用 `ctx.sessions.flush`，经生产 RemoteSession→真实 HTTP persistenceIngress/WorkerGate→SessionHistory SQLite 完成 stage/append/reconcile/flush；正常轮末再显式等待 checkpoint，然后先处置 Agent 再关闭 root Context。两库同路径重开后官方 resume 保留原历史并允许合法新代续写。
 
-测试代理原样转发生产 ingress，只在上游 append 成功且独立 SQL 确认提交后丢一次下游响应，用原 Provider pending 批次验证原回执重投。三种旧代操作各用独立活句柄，分别观察真实授权拒绝；append 在 stage 入口已被拒，不将该结果描述为 backend append 分支已执行。数据库、HTTP 和官方生命周期为真实实现；模型与沙盒观察为受控 fixture。实际结果及外部边界见 [A2 Readiness 证据](../40-readiness/CURRENT-READINESS.md#a2-官方-provider-本地验收)。
+测试代理原样转发生产 ingress，只在上游 append 成功且独立 SQL 确认提交后丢一次下游响应，用原 Provider pending 批次验证原回执重投。三种旧代操作各用独立活句柄，分别观察真实授权拒绝；append 在 stage 入口已被拒，不将该结果描述为 backend append 分支已执行。数据库、HTTP 和官方生命周期为真实实现；模型与沙盒观察为受控 fixture。实际结果及外部边界见 [A2 Readiness 证据](../40-readiness/evidence/A2.md#a2-官方-provider-本地验收)。
 
 [A2-04/05崩溃恢复验收](../../apps/orchestrator/tests/openshell/provider-crash.test.ts)复用[共享官方runtime](../../apps/orchestrator/tests/openshell/provider-lifecycle/runtime.ts)，由[独立子进程](../../apps/orchestrator/tests/openshell/provider-lifecycle/crash-child.ts)运行真实持久化host与官方DSH caller。子进程入口及cwd从import.meta.url定位仓库根目录，根focused与Orchestrator聚合入口一致。COMMIT前后分别真实SIGKILL持久化进程；caller另在stage/append已提交、下游ACK尚未收到时SIGKILL。测试专用包装仅在子进程拦截公开DatabaseSync.exec边界，不增加生产debug endpoint或复制生产事务写SQL；独立readOnly的priorCommitted与事务自身transactionView分开，合法先提交批次逐项核对，重开四表无半批。
 
 正式恢复沿`runDshWorker`的prior分支，在交给官方AgentLoop前调用`reconcileSessionPersistence`；RemoteSession只用当前Session open(write)→无batch参数reconcile→close。控制面先通过takeover/admit撤旧句柄并授予新代，持久intent仍由SessionHistory自行读取；未提交时以新代提交，已提交时按intent.epoch找到并复用旧receipt，随后删除intent。父进程/旧caller不得向新Worker提供batch/events/receipt来协助发现。共享runtime唯一显式处置AgentHandle与root Context；测试bootstrap以小包装委托官方Agent，WeakMap映射回真实Session作flush identity校验，不伪造或过滤历史。snapshot局部类型适配只校验生产实际消费字段，保留官方header.reason字符串，不能当作完整SDK/生产窄shape兼容证明。
 
-四场景均要求同双库重开、SQL/Provider读回及合法新代正常轮，reconcile本身的seq/revision/receipt变化与之后官方resume后缀单独核对。模型、沙盒观察和bootstrap仍为fixture；本地强杀不等于真实外部OpenShell故障接管或独立停止证明，实际证据见[Readiness](../40-readiness/CURRENT-READINESS.md#a2-崩溃恢复本地验收)。
+四场景均要求同双库重开、SQL/Provider读回及合法新代正常轮，reconcile本身的seq/revision/receipt变化与之后官方resume后缀单独核对。模型、沙盒观察和bootstrap仍为fixture；本地强杀不等于真实外部OpenShell故障接管或独立停止证明，实际证据见[Readiness](../40-readiness/evidence/A2.md#a2-崩溃恢复本地验收)。
 
 ## Worker 正式 base 与每轮资源所有权
 
@@ -124,4 +124,4 @@ OpenShell Gateway interceptor 的固定源码白名单可以管理部分一元�
 
 长期验收沿[real-reuse.test.ts](../../apps/orchestrator/acceptance/worker-reuse/real-reuse.test.ts)正式prewarmedWorker→run-worker --warm→runDshWorkerLoop→runDshWorker→base链路。默认长时模式为1个reference与64测量Session、8tenant同原生PID运行至少315秒；PR CI使用连续模式，保留相同64轮与隔离断言但不主动补足每轮5秒间隔，main CI仍运行长时模式。连续模式仅验证轮次复用，不代替长时间驻留证据。两种模式每轮持久历史/模型请求独立，凭据/监听器/连接/文件namespace分项负测。旧Context事件在下一base创建之前触发，避免当轮合法200ms批次刷盘干扰归属；父端有界IPC与真实server计数同时覆盖SDK/模型及persistence/operation，整轮与轮间继续查迟到旧身份请求。观测包装不替代生产清理。
 
-R独立验证正式takeover撤权时持有输入流关闭与旧凭据重连拒绝，Worker退出补位；沙盒退出未独立确认时仍为UNKNOWN。E在模型disposer注入失败并确认其余资源关闭；L验证空闲pool停止/同库重开/继续新Session且旧events和receipts完整不变。资源、模型、沙盒helper的实际边界与64轮结果见[验收证据](../40-readiness/CURRENT-READINESS.md#a6-05-worker-长期池复用)，可信运行时配置与恢复操作见[部署手册](../../deploy/README.md#worker-正式运行时与复用验证)。
+R独立验证正式takeover撤权时持有输入流关闭与旧凭据重连拒绝，Worker退出补位；沙盒退出未独立确认时仍为UNKNOWN。E在模型disposer注入失败并确认其余资源关闭；L验证空闲pool停止/同库重开/继续新Session且旧events和receipts完整不变。资源、模型、沙盒helper的实际边界与64轮结果见[验收证据](../40-readiness/evidence/A6.md#a6-05-worker-长期池复用)，可信运行时配置与恢复操作见[部署手册](../../deploy/README.md#worker-正式运行时与复用验证)。

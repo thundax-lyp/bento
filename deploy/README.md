@@ -83,7 +83,7 @@ BENTO_A7_CONFIG=/absolute/private/case-restore.json node apps/orchestrator/accep
 
 两个用例分别使用全新业务状态和独立归属。恢复用例停止服务并备份执行账本、授权账本、Session 历史和 Temporal 四个 SQLite 数据库，校验 integrity、外键和 SHA-256，同时归档真实工作区卷并建立独立保全副本。独立数据库快照固定为 DELETE journal mode；校验拒绝未纳入清单的 WAL、SHM 和 journal 文件。恢复前校验绑定和完整清单，仅写入空目标。归档 helper 断网并只读挂载源卷；解包使用受控 root 恢复新卷的文件所有权。无法证明停写、归属冲突、非空目标和损坏备份均拒绝继续。
 
-PASS 要求八项断言全部通过：完整业务账本、原回执、原工作流、Session 历史、文件字节、幂等、owner 可见性和原 Session 后续执行。CaseReport 记录源码、恢复版本、已确认记录丢失数、实测 RTO 及停止/清理结果。RTO 从停止边界计到恢复后第二轮完成，属于本次演练观测值。失败时保留源数据库、卷及备份，核对本次资源身份后处理；不得执行全局清理或覆盖曾运行的状态目录。成功时仅清理本轮资源，失败现场先归档保全。实际结果见 [A7 证据](../docs/40-readiness/CURRENT-READINESS.md#a7-单执行节点真实恢复验收)。
+PASS 要求八项断言全部通过：完整业务账本、原回执、原工作流、Session 历史、文件字节、幂等、owner 可见性和原 Session 后续执行。CaseReport 记录源码、恢复版本、已确认记录丢失数、实测 RTO 及停止/清理结果。RTO 从停止边界计到恢复后第二轮完成，属于本次演练观测值。失败时保留源数据库、卷及备份，核对本次资源身份后处理；不得执行全局清理或覆盖曾运行的状态目录。成功时仅清理本轮资源，失败现场先归档保全。实际结果见 [A7 证据](../docs/40-readiness/evidence/A7.md#a7-单执行节点真实恢复验收)。
 
 本入口验证计划停服及进程重启，不覆盖在线备份、机器掉电、Gateway 灾备、完整子进程 confinement、多节点或 HA。
 
@@ -208,7 +208,7 @@ pnpm --dir apps/orchestrator test:temporal-retry
 
 测试自己创建 loopback 临时端口、专属 namespace/taskQueue、Temporal DB 和执行宿主 SQLite；不读取部署 Temporal 配置。先完成内部 HTTP→生产 Go Workflow/Activity→生产 TS 宿主→真实文件/回执的正常路径，再注入成功回包丢失、宿主/Worker 重启与原 Temporal DB 重启。执行 host 明确为本地 fixture，不需 Docker、真实模型、OpenShell、IdP 或对象存储。全九项测试通过、三例业务输出 passed 且 cleanup 全 true 才是成功，实际副作用一次、原 receipt/Run/execution/结果保持一致。
 
-结束或失败时按持有的 ChildProcess 关闭 host/proxy/Go/server，等待 close 后才删运行目录；正常 close 有界，失败升级只针对本任务准确句柄。不能确认停止时保留该例私有现场并硬失败，修复后从相同固定入口复跑。工具/binary/DB/log/evidence 保持仓库外，发布检查以实际已安装依赖树执行 npm pack 正负断言。该入口已纳入 `pnpm check`；范围及未覆盖项见[A6-02证据](../docs/40-readiness/CURRENT-READINESS.md#a6-02-真实-temporal-重投)。
+结束或失败时按持有的 ChildProcess 关闭 host/proxy/Go/server，等待 close 后才删运行目录；正常 close 有界，失败升级只针对本任务准确句柄。不能确认停止时保留该例私有现场并硬失败，修复后从相同固定入口复跑。工具/binary/DB/log/evidence 保持仓库外，发布检查以实际已安装依赖树执行 npm pack 正负断言。该入口已纳入 `pnpm check`；范围及未覆盖项见[A6-02证据](../docs/40-readiness/evidence/A6.md#a6-02-真实-temporal-重投)。
 
 ## 空间上传实栈验收
 
@@ -257,4 +257,4 @@ node apps/orchestrator/acceptance/worker-reuse/check-package.mjs
 
 默认 `soak` 模式成功须五case无skip、64轮四项隔离全通过、跨度至少315秒、同一实际PID，以及撤权/清理失败换PID、同库重开与资源归零。PR CI 显式设置 `BENTO_A6_WORKER_REUSE_MODE=burst`，保留全部64轮与逐轮断言但不补足轮间5秒等待；main CI及本地默认使用 `soak`。本地可在上述命令前设置同名变量复现连续模式，其他值直接失败。诊断输出记录模式、间隔和实际跨度；连续模式通过不能作为长期驻留证据。测试失败按对应case和分项定位，保留失败结论；只清理本次准确拥有的临时资源，不删除其他服务状态。SDK默认走原[官方准备工具](../apps/orchestrator/tests/openshell/binding-grants/sdk.ts)及六项schema探针；固定源码revision为`ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47`，TLS/安装和构建预算不变。官方源码归档首次下载并通过固定SHA-256校验后，保存到仓库旁的`../bento-sdk-cache/openshell/<revision>/source.tar.gz`；后续准备逐次复验并复用，npm/Buf下载内容分别缓存在同级`npm/`和`buf/`。每次构建仍使用独立临时目录，清理测试不会删除缓存；源码缓存损坏时明确失败，应先核对原因再删除该版本缓存并重新获取。
 
-本轮本地可显式指定`BENTO_A6_WORKER_REUSE_SDK_BUNDLE`为仓库外、已经审核身份的受控输入；wrapper逐项核验固定历史清单/完整SHA，隔离复制并执行相同六探针，错误不回退来源。该本地输入绑定本轮已核SDK，不能自行重签manifest或将任意SDK路径当成受控输入；CI不设置该变量，按官方来源真实构建。验收模式必须与[Readiness](../docs/40-readiness/CURRENT-READINESS.md#a6-05-worker-长期池复用)证据对应，受控来源通过不表示默认网络准备已恢复。临时SDK、mTLS材料、config、数据库和trace均在仓库外，不进入npm包；完整门禁保留真实Temporal九项。
+本轮本地可显式指定`BENTO_A6_WORKER_REUSE_SDK_BUNDLE`为仓库外、已经审核身份的受控输入；wrapper逐项核验固定历史清单/完整SHA，隔离复制并执行相同六探针，错误不回退来源。该本地输入绑定本轮已核SDK，不能自行重签manifest或将任意SDK路径当成受控输入；CI不设置该变量，按官方来源真实构建。验收模式必须与[Readiness](../docs/40-readiness/evidence/A6.md#a6-05-worker-长期池复用)证据对应，受控来源通过不表示默认网络准备已恢复。临时SDK、mTLS材料、config、数据库和trace均在仓库外，不进入npm包；完整门禁保留真实Temporal九项。

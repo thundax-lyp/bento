@@ -42,6 +42,7 @@
         "docs/30-designs/APPLICATION-BOUNDARIES-DESIGN.md",
         "docs/30-designs/WEB-DESIGN.md",
         "docs/40-readiness/CURRENT-READINESS.md",
+        "docs/40-readiness/evidence/*.md",
         "deploy/README.md",
         "public-files.json",
         "!apps/**/node_modules/**"
