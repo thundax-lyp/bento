@@ -461,6 +461,24 @@ export function localHost(root: string): ExecutionHost {
             return { ...(await running(binding)), environmentVersion };
         },
         observeWorkerExit,
+        async observeTaskVolumeStopped(binding, runId, generation) {
+            if (!(await observeWorkerExit(binding, runId, generation)))
+                return null;
+            try {
+                return await withStoppedVolume(binding, async () => ({
+                    sessionId: binding.session,
+                    runId,
+                    generation,
+                    bindingDigest: executionBindingDigest(binding),
+                    restoreIdle: true as const,
+                    volumeWriters: 0 as const,
+                    sandboxStopped: true as const,
+                    observedAt: new Date().toISOString(),
+                }));
+            } catch {
+                return null;
+            }
+        },
         async observeRetryCleanup(binding, attemptId, generation) {
             return withStoppedVolume(binding, async () => ({
                 attemptId,

@@ -178,7 +178,7 @@ export class TaskEvidenceStore {
                 .run(
                     decision === 'unconfirmed'
                         ? '执行结果无法确认。'
-                        : '执行失败。',
+                        : '可信核对确认执行失败。',
                     time,
                     runId,
                 );

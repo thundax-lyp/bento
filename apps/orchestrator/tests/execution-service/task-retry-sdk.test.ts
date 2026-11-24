@@ -14,7 +14,15 @@ import {
     type WorkerExitObservation,
     type WorkerRequest,
 } from '@/apps/orchestrator/src/execution-service/types.ts';
-import { barrier, fixtureSdk, start, until } from './fixtures/service.ts';
+import {
+    barrier,
+    client,
+    fixtureSdk,
+    project,
+    start,
+    submit as submitRun,
+    until,
+} from './fixtures/service.ts';
 import {
     taskRetryTestClient,
     taskRetryTestInput,
@@ -30,6 +38,8 @@ async function scenario(t: TestContext, fault: string, mode = 'cancel') {
     let calls = 0;
     let restores = 0;
     let observations = 0;
+    let stopCalls = 0;
+    let observationReleased = false;
     let source: WorkerRequest | undefined;
     const host: ExecutionHost = {
         ...base,
@@ -47,6 +57,10 @@ async function scenario(t: TestContext, fault: string, mode = 'cancel') {
         async observeWorkerExit(_binding, runId) {
             return fault === 'no exit' ? null : (exits.get(runId) ?? null);
         },
+        async stop(binding) {
+            stopCalls++;
+            return base.stop(binding);
+        },
         async stopped(binding) {
             return source && fault === 'sandbox not stopped'
                 ? false
@@ -56,7 +70,11 @@ async function scenario(t: TestContext, fault: string, mode = 'cancel') {
             ...base.taskRecovery!,
             async observeSdkRetrySafety(binding, runId, generation) {
                 observations++;
-                if (fault === 'null') return null;
+                if (
+                    fault === 'null' ||
+                    (fault === 'delayed observation' && !observationReleased)
+                )
+                    return null;
                 if (fault === 'throws')
                     throw new Error('Observation unavailable');
                 const exit = exits.get(runId);
@@ -263,10 +281,11 @@ async function scenario(t: TestContext, fault: string, mode = 'cancel') {
     assert(source);
     if (mode === 'fail') release.resolve();
     else assert.equal((await api(run + '/cancel', 'POST')).status, 200);
-    const denied = fault !== 'complete';
+    const delayed = fault === 'delayed observation';
+    const denied = fault !== 'complete' && !delayed;
     const staysCancelling = ['no exit', 'sandbox not stopped'].includes(fault);
     let lastStatus = '';
-    const terminal = await until(
+    let terminal = await until(
         async () => {
             const response = await api(run);
             lastStatus = response.text;
@@ -276,7 +295,7 @@ async function scenario(t: TestContext, fault: string, mode = 'cancel') {
             r.json().run.status ===
             (staysCancelling
                 ? 'cancelling'
-                : denied
+                : denied || delayed
                   ? 'needs_review'
                   : mode === 'fail'
                     ? 'failed'
@@ -285,6 +304,51 @@ async function scenario(t: TestContext, fault: string, mode = 'cancel') {
     ).catch((error) => {
         throw new Error(error.message + ': ' + lastStatus);
     });
+    if (delayed) {
+        assert.equal(terminal.json().run.retryReason, 'needs_review');
+        const authority = new DatabaseSync(join(state, 'authority.sqlite'), {
+            readOnly: true,
+        });
+        try {
+            assert.equal(
+                authority
+                    .prepare(
+                        "SELECT count(*) AS n FROM operations WHERE session=? AND state='UNKNOWN'",
+                    )
+                    .get(source.binding.session)?.n,
+                0,
+            );
+            const ready = () =>
+                authority
+                    .prepare(
+                        'SELECT state,generation FROM execution_sessions WHERE session=?',
+                    )
+                    .get(source!.binding.session);
+            const prior = {
+                state: 'READY',
+                generation: source.grant.generation + 1,
+            };
+            assert.deepEqual({ ...ready() }, prior);
+            const stops = stopCalls;
+            observationReleased = true;
+            await controller.closeTaskRun({
+                runId,
+                decision: 'failed',
+                expectedGeneration: source.grant.generation + 1,
+            });
+            assert.deepEqual({ ...ready() }, prior);
+            assert.equal(
+                stopCalls,
+                stops,
+                'Trust observation must not invoke takeover',
+            );
+        } finally {
+            authority.close();
+        }
+        terminal = await api(run);
+        assert.equal(terminal.json().run.status, 'failed');
+        assert.equal(terminal.json().run.summary, '可信核对确认执行失败。');
+    }
     if (staysCancelling) await delay(100);
     const key = randomUUID();
     const retry = await api(run + '/retry', 'POST', undefined, key);
@@ -405,6 +469,12 @@ for (const mode of ['cancel', 'fail'])
         (t) => scenario(t, 'complete', mode),
     );
 
+test(
+    'trusted failure confirms a safely cancelled SDK Task without taking over again',
+    { timeout: 15_000 },
+    (t) => scenario(t, 'delayed observation'),
+);
+
 for (const fault of [
     'no decoder',
     'no observer',
@@ -436,3 +506,126 @@ for (const fault of [
         { timeout: 15_000 },
         (t) => scenario(t, fault),
     );
+
+test(
+    'configured SDK Task requires trusted cancellation while existing hosts retain it',
+    { timeout: 15_000 },
+    async (t) => {
+        for (const mode of [
+            'configured-untrusted',
+            'configured-trusted',
+            'legacy-sdk',
+            'local',
+        ] as const) {
+            await t.test(mode, async (t) => {
+                const state = await mkdtemp(
+                    join(tmpdir(), 'bento-task-cancel-gate-'),
+                );
+                const base = localHost(join(state, 'volume'));
+                const entered = barrier();
+                const release = barrier();
+                const abort = barrier();
+                const ordinaryEntered = barrier();
+                const ordinaryAbort = barrier();
+                let aborted = false;
+                const host: ExecutionHost = {
+                    ...base,
+                    ...(mode !== 'local' && {
+                        sdk: fixtureSdk,
+                        supportsRunningCancellation: true as const,
+                    }),
+                    ...(mode.startsWith('configured-') && {
+                        taskCancellationRequiresTrustedObservation:
+                            true as const,
+                    }),
+                    async worker(request, signal, _slot, onWorkerExit) {
+                        if (request.mode !== 'execute') return 'review';
+                        if (request.prompt === 'ordinary') {
+                            ordinaryEntered.resolve();
+                            await delay(60000, undefined, { signal }).catch(
+                                () => {},
+                            );
+                            ordinaryAbort.resolve();
+                            onWorkerExit?.();
+                            return 'review';
+                        }
+                        entered.resolve();
+                        const onAbort = () => {
+                            aborted = true;
+                            abort.resolve();
+                        };
+                        signal.addEventListener('abort', onAbort, {
+                            once: true,
+                        });
+                        await Promise.race([release.promise, abort.promise]);
+                        signal.removeEventListener('abort', onAbort);
+                        return 'review';
+                    },
+                };
+                if (mode === 'configured-untrusted' || mode === 'legacy-sdk')
+                    delete host.supportsTaskRunningCancellation;
+                const service = await start(state, host);
+                t.after(async () => {
+                    release.resolve();
+                    await service.close();
+                    await rm(state, { recursive: true, force: true });
+                });
+                const api = taskRetryTestClient(() => service.url);
+                const created = await api(
+                    '/tasks',
+                    'POST',
+                    taskRetryTestInput(),
+                    randomUUID(),
+                );
+                assert.equal(created.status, 202, created.text);
+                const path = '/tasks/' + created.json().task.id;
+                await until(
+                    () => api(path),
+                    (r) => r.json().task.status === 'ready',
+                    'Task ready',
+                );
+                const submit = await api(
+                    path + '/runs',
+                    'POST',
+                    { prompt: 'noop' },
+                    randomUUID(),
+                );
+                const run = path + '/runs/' + submit.json().run.id;
+                await entered.promise;
+                const allowed = mode !== 'configured-untrusted';
+                assert.equal((await api(run)).json().run.canCancel, allowed);
+                const cancelled = await api(run + '/cancel', 'POST');
+                assert.equal(
+                    cancelled.status,
+                    allowed ? 200 : 409,
+                    cancelled.text,
+                );
+                if (allowed) await abort.promise;
+                else
+                    assert.equal(
+                        cancelled.json().error.code,
+                        'run_not_cancellable',
+                    );
+                assert.equal(aborted, allowed);
+                if (mode === 'configured-untrusted') {
+                    release.resolve();
+                    const legacyApi = client(service.url);
+                    const projectPath = await project(legacyApi);
+                    const legacyRun = await submitRun(
+                        legacyApi,
+                        projectPath,
+                        'ordinary',
+                        randomUUID(),
+                    );
+                    await ordinaryEntered.promise;
+                    const response = await legacyApi(
+                        legacyRun + '/cancel',
+                        'POST',
+                    );
+                    assert.equal(response.status, 200, response.text);
+                    await ordinaryAbort.promise;
+                }
+            });
+        }
+    },
+);

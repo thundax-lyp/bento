@@ -417,7 +417,7 @@ function TaskDetailsContent({ account, id }: { account: string; id: string }) {
                                 </p>
                             )}
                             {selected.status === 'needs_review' && (
-                                <p>上一次操作结果未确认。</p>
+                                <p>上一次操作结果未确认。请等待可信侧核对。</p>
                             )}
                             {selected.canCancel && (
                                 <Button
