@@ -1,7 +1,14 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+    mkdtemp,
+    readFile,
+    readdir,
+    rm,
+    stat,
+    writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -12,7 +19,10 @@ import { dockerOpenShellPurge } from '@/apps/orchestrator/src/execution-service/
 import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
 import { Store } from '@/apps/orchestrator/src/execution-service/store.ts';
 import { serveExecution } from '@/apps/orchestrator/src/execution-service/service.ts';
-import { type ExecutionHost } from '@/apps/orchestrator/src/execution-service/types.ts';
+import {
+    type Binding,
+    type ExecutionHost,
+} from '@/apps/orchestrator/src/execution-service/types.ts';
 import {
     testToken,
     readme,
@@ -26,6 +36,133 @@ import {
 const controllerFixtureFile = fileURLToPath(
     new URL('./fixtures/controller.ts', import.meta.url),
 );
+
+test('A4-02 project import replay preserves the ready workspace', async (t) => {
+    const state = await mkdtemp(join(tmpdir(), 'bento-import-replay-'));
+    t.after(() => rm(state, { recursive: true, force: true }));
+    const root = join(state, 'volume');
+    const base = localHost(root);
+    const provisioned: Binding[] = [];
+    const service = await start(state, {
+        ...base,
+        async provision(binding, files) {
+            provisioned.push(binding);
+            return base.provision(binding, files);
+        },
+    });
+    try {
+        const api = client(service.url);
+        const key = 'a4-02-project-import';
+        const input = { name: 'Replay fixture', files: readme };
+        const created = await api('', 'POST', input, key);
+        assert.equal(created.status, 201);
+        const { id } = created.json();
+        const path = '/' + id;
+        const ready = await until(
+            () => api(path),
+            (res) => res.status === 200 && res.json().status === 'ready',
+            'original import ready',
+        );
+        assert.equal(provisioned.length, 1);
+        const [binding] = provisioned;
+        assert(binding);
+        assert.equal(binding.project, id);
+
+        const volume = join(root, id, 'volume');
+        const sha256 = (bytes: string | Buffer) =>
+            createHash('sha256').update(bytes).digest('hex');
+        async function manifest() {
+            const paths = (await readdir(volume, { recursive: true })).sort();
+            return Promise.all(
+                paths.map(async (file) => ({
+                    path: file,
+                    sha256: sha256(await readFile(join(volume, file))),
+                })),
+            );
+        }
+        async function volumeIdentity() {
+            const { dev, ino } = await stat(volume, { bigint: true });
+            return { dev, ino };
+        }
+        function sessions() {
+            const authority = new DatabaseSync(
+                join(state, 'authority.sqlite'),
+                {
+                    readOnly: true,
+                },
+            );
+            try {
+                return authority
+                    .prepare(
+                        'SELECT session, project, volume, generation, state FROM execution_sessions',
+                    )
+                    .all();
+            } finally {
+                authority.close();
+            }
+        }
+        const originalSessions = sessions();
+        assert.equal(originalSessions.length, 1);
+        assert.deepEqual(
+            { ...originalSessions[0] },
+            {
+                session: binding.session,
+                project: id,
+                volume: binding.volume,
+                generation: 1,
+                state: 'READY',
+            },
+        );
+        const originalVolume = await volumeIdentity();
+        assert.deepEqual(
+            await manifest(),
+            readme.map(({ path, text }) => ({
+                path,
+                sha256: sha256(text),
+            })),
+        );
+
+        const modified = [
+            { path: 'README.md', text: '# Uncommitted edit\n' },
+            { path: 'draft.txt', text: 'Uncommitted new file\n' },
+        ];
+        for (const file of modified) {
+            await writeFile(join(volume, file.path), file.text);
+        }
+        const modifiedManifest = modified.map(({ path, text }) => ({
+            path,
+            sha256: sha256(text),
+        }));
+        assert.deepEqual(await manifest(), modifiedManifest);
+
+        async function assertWorkspacePreserved() {
+            const listed = await api('');
+            assert.equal(listed.status, 200);
+            assert.deepEqual(listed.json().projects, [ready.json()]);
+            assert.deepEqual(sessions(), originalSessions);
+            assert.equal(provisioned.length, 1);
+            assert.deepEqual(await volumeIdentity(), originalVolume);
+            assert.deepEqual(await manifest(), modifiedManifest);
+        }
+
+        const replay = await api('', 'POST', input, key);
+        assert.equal(replay.status, 200);
+        assert.deepEqual(replay.json(), ready.json());
+        await assertWorkspacePreserved();
+
+        const conflict = await api(
+            '',
+            'POST',
+            { ...input, files: modified },
+            key,
+        );
+        assert.equal(conflict.status, 409);
+        assert.match(conflict.text, /idempotency_conflict/);
+        await assertWorkspacePreserved();
+    } finally {
+        await service.close();
+    }
+});
 
 test('project deletion execution HTTP', async () => {
     const state = await mkdtemp(join(tmpdir(), 'bento-project-http-'));
