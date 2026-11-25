@@ -1,7 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
-import { expect, test, type Page, type Response } from '@playwright/test';
-import type { Session, Task, TaskRun } from '../src/api.ts';
+import { readFile, writeFile } from 'node:fs/promises';
+import {
+    expect,
+    test,
+    type Page,
+    type Response,
+    type Browser,
+} from '@playwright/test';
+import type { Session, Task, TaskEvent, TaskRun } from '../src/api.ts';
 import { callA10Hook } from './web-a10-hook.ts';
 
 type Login = { account: string; username: string; password: string };
@@ -37,7 +43,7 @@ async function login(page: Page, identity: Login, origin: string) {
     ).toBe(true);
 }
 
-async function createTask(page: Page) {
+async function sourceTask(page: Page) {
     await page.goto('/workspaces');
     await page.getByLabel('空间项目名称').fill('WEB-A10 ' + randomUUID());
     await page.getByRole('button', { name: '新建空间项目' }).click();
@@ -48,6 +54,10 @@ async function createTask(page: Page) {
         buffer: Buffer.from('original\n'),
     });
     await page.getByRole('button', { name: '确认上传' }).click();
+    return selectTask(page);
+}
+
+async function selectTask(page: Page) {
     const input = page.getByRole('checkbox', { name: file, exact: true });
     await expect(input).toBeEnabled({ timeout: 60_000 });
     await input.check();
@@ -65,7 +75,7 @@ async function send(
     task: Task,
     role: string,
     marker: string,
-): Promise<Run> {
+): Promise<Run & { key: string }> {
     const path = '/api/tasks/' + encodeURIComponent(task.id) + '/runs';
     await page.getByLabel('任务要求').fill('WEB-A10 ' + role + ' ' + marker);
     const response = page.waitForResponse(posted(path));
@@ -74,7 +84,10 @@ async function send(
     expect(accepted.status()).toBe(202);
     const { run } = (await accepted.json()) as { run: TaskRun };
     expect(run.taskId).toBe(task.id);
+    const key = (await accepted.request().allHeaders())['idempotency-key'];
+    expect(key).toMatch(/^[a-f0-9-]{36}$/);
     return {
+        key,
         id: run.id,
         taskId: task.id,
         path: path + '/' + encodeURIComponent(run.id),
@@ -99,9 +112,16 @@ function waitStatus(run: Run, status: TaskRun['status']) {
 async function waitReview(run: Run) {
     await waitStatus(run, 'needs_review');
     await expect(run.page.getByText(nextStep, { exact: true })).toBeVisible();
-    expect((await run.page.request.get(run.path + '/results')).ok()).toBe(
-        false,
+    expect((await run.page.request.get(run.path + '/results')).status()).toBe(
+        409,
     );
+    expect(
+        (
+            await run.page.request.get(
+                run.path + '/results/1/diff?view=cumulative',
+            )
+        ).status(),
+    ).toBe(409);
 }
 
 async function freeze(run: Run, marker: string) {
@@ -168,9 +188,9 @@ async function expectPatch(run: Run, marker: string) {
 
 async function interruptedCase([a, b, c]: TenantPages) {
     const [taskA, taskB, taskC] = await Promise.all([
-        createTask(a),
-        createTask(b),
-        createTask(c),
+        sourceTask(a),
+        sourceTask(b),
+        sourceTask(c),
     ]);
     const caseId = randomUUID();
     const marker = randomUUID();
@@ -218,13 +238,17 @@ async function interruptedCase([a, b, c]: TenantPages) {
     });
     await expectPatch(runB, markerB);
     await waitStatus(runC, 'succeeded');
+    expect(
+        (await callA10Hook('readRunEvidence', { runId: runC.id }))
+            .workerIdentitySha256,
+    ).toMatch(/^[a-f0-9]{64}$/);
     await readInterrupted(runA);
 
     return { run: runA, marker, task: taskA };
 }
 
 async function verifySafeRetry(page: Page) {
-    const task = await createTask(page);
+    const task = await sourceTask(page);
     const original = await send(page, task, 'A-cancel', randomUUID());
     await waitStatus(original, 'running');
     await page.getByRole('button', { name: '请求停止', exact: true }).click();
@@ -279,11 +303,121 @@ async function closeUnconfirmed(run: Run) {
     await expect(
         run.page.getByRole('button', { name: '发送要求' }),
     ).toHaveCount(0);
-    expect((await run.page.request.get(run.path + '/results')).ok()).toBe(
-        false,
+    expect((await run.page.request.get(run.path + '/results')).status()).toBe(
+        409,
     );
+    expect(
+        (
+            await run.page.request.get(
+                run.path + '/results/1/diff?view=cumulative',
+            )
+        ).status(),
+    ).toBe(409);
     expect(await callA10Hook('readClosure', { runId: run.id })).toMatchObject({
         closed: true,
+    });
+}
+
+async function saveIdentities(rows: object) {
+    const evidence = process.env.BENTO_WEB_A10_OBSERVATION_INPUT;
+    if (!evidence)
+        throw new Error('WEB-A10 requires a private observation input file');
+    await writeFile(evidence, JSON.stringify(rows) + '\n', {
+        mode: 0o600,
+        flag: 'wx',
+    });
+}
+
+async function verifyContinuation(
+    browser: Browser,
+    baseURL: string,
+    identity: Login,
+    original: { run: Run; task: Task; marker: string },
+) {
+    const { run, task, marker } = original;
+    const eventPath = '/api/tasks/' + task.id + '/events?after=0';
+    const readEvents = async (page: Page) => {
+        const raw = await page.request.get(eventPath);
+        expect(raw.status()).toBe(200);
+        return ((await raw.json()) as { items: TaskEvent[] }).items;
+    };
+    const version = (await current(run)).resultVersion;
+    expect(version).not.toBeNull();
+    const baselineDiff =
+        run.path + '/results/' + version + '/diff?view=cumulative';
+    const originalBytes = await (
+        await run.page.request.get(baselineDiff)
+    ).body();
+    const events = await readEvents(run.page);
+    expect(
+        events.some((event) => event.kind === 'step' && event.runId === run.id),
+    ).toBe(true);
+    expect(new Set(events.map((event) => event.sequence)).size).toBe(
+        events.length,
+    );
+    expect(events.map((event) => event.sequence)).toEqual(
+        events.map((event) => event.sequence).sort((a, b) => a - b),
+    );
+    const context = await browser.newContext({ baseURL });
+    try {
+        const second = await context.newPage();
+        await login(second, identity, new URL(baseURL).origin);
+        await second.goto('/tasks/' + task.id + '?run=' + run.id);
+        await context.setOffline(true);
+        await context.setOffline(false);
+        await second.reload();
+        expect(await readEvents(second)).toEqual(events);
+        expect(await (await second.request.get(baselineDiff)).body()).toEqual(
+            originalBytes,
+        );
+    } finally {
+        await context.close();
+    }
+    const newMarker = randomUUID();
+    const next = await send(run.page, task, 'C', newMarker);
+    await waitStatus(next, 'succeeded');
+    const replay = await run.page.request.post(
+        '/api/tasks/' + task.id + '/runs',
+        {
+            headers: { 'Idempotency-Key': next.key },
+            data: { prompt: 'WEB-A10 C ' + newMarker },
+        },
+    );
+    expect(replay.status()).toBe(200);
+    expect((await replay.json()).run.id).toBe(next.id);
+    const currentVersion = (await current(next)).resultVersion;
+    const combinedResponse = await run.page.request.get(
+        next.path + '/results/' + currentVersion + '/diff?view=cumulative',
+    );
+    expect(combinedResponse.status()).toBe(200);
+    const combined = await combinedResponse.text();
+    expect(combined).toContain(marker);
+    expect(combined).toContain(newMarker);
+    expect(await (await run.page.request.get(baselineDiff)).body()).toEqual(
+        originalBytes,
+    );
+    expect((await readEvents(run.page)).slice(0, events.length)).toEqual(
+        events,
+    );
+    expect(task.sourceSpaceId).toBeTruthy();
+    await run.page.goto('/space/' + task.sourceSpaceId);
+    const independent = await selectTask(run.page);
+    const independentMarker = randomUUID();
+    const fresh = await send(run.page, independent, 'C', independentMarker);
+    await waitStatus(fresh, 'succeeded');
+    const freshVersion = (await current(fresh)).resultVersion;
+    const independentResponse = await run.page.request.get(
+        fresh.path + '/results/' + freshVersion + '/diff?view=cumulative',
+    );
+    expect(independentResponse.status()).toBe(200);
+    const freshDiff = await independentResponse.text();
+    expect(freshDiff).toContain(independentMarker);
+    expect(freshDiff).not.toContain(marker);
+    expect(freshDiff).not.toContain(newMarker);
+    await saveIdentities({
+        original: { taskId: task.id, runId: run.id },
+        continuation: { taskId: task.id, runId: next.id },
+        independent: { taskId: independent.id, runId: fresh.id },
     });
 }
 
@@ -297,6 +431,30 @@ test('WEB-A10 preserves other tenants and reconciles the original Run', async ({
         throw new Error('WEB-A10 requires the isolated login fixture');
     const origin = new URL(baseURL).origin;
     const identities = JSON.parse(await readFile(input, 'utf8')) as Login[];
+    const smokeOnly = process.env.BENTO_WEB_A10_SMOKE_ONLY === '1';
+    if (smokeOnly) {
+        const probe = identities[0];
+        expect(identities.length).toBe(1);
+        const context = await browser.newContext({ baseURL });
+        try {
+            const page = await context.newPage();
+            await login(page, probe!, origin);
+            const task = await sourceTask(page);
+            const marker = process.env.BENTO_WEB_A10_PREPARE_MARKER;
+            if (
+                !marker ||
+                !/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(marker)
+            )
+                throw new Error('WEB-A10 requires its assigned smoke marker');
+            const run = await send(page, task, 'C', marker);
+            await waitStatus(run, 'succeeded');
+            await expectPatch(run, marker);
+            await saveIdentities({ probe: { taskId: task.id, runId: run.id } });
+        } finally {
+            await context.close();
+        }
+        return;
+    }
     expect(identities.length).toBe(3);
     expect(new Set(identities.map((identity) => identity.account)).size).toBe(
         3,
@@ -320,6 +478,7 @@ test('WEB-A10 preserves other tenants and reconciles the original Run', async ({
         ).toMatchObject({ confirmed: true });
         await waitStatus(confirmed.run, 'succeeded');
         await expectPatch(confirmed.run, confirmed.marker);
+        await verifyContinuation(browser, baseURL, identities[0]!, confirmed);
 
         const failed = await interruptedCase([a, b, c]);
         expect(
@@ -332,19 +491,34 @@ test('WEB-A10 preserves other tenants and reconciles the original Run', async ({
         await expect(
             a.getByRole('button', { name: '安全重试', exact: true }),
         ).toHaveCount(0);
-        expect((await a.request.get(failed.run.path + '/results')).ok()).toBe(
-            false,
-        );
+        expect(
+            (await a.request.get(failed.run.path + '/results')).status(),
+        ).toBe(409);
         const unsafe = await a.request.post(failed.run.path + '/retry', {
             headers: { 'Idempotency-Key': randomUUID() },
         });
-        expect(unsafe.ok()).toBe(false);
+        expect(unsafe.status()).toBe(409);
+        expect((await current(failed.run)).retryReason).toBeTruthy();
+        const attempts = await a.request.get(
+            '/api/tasks/' + failed.task.id + '/runs',
+        );
+        expect(
+            (await attempts.json()).items.map((run: TaskRun) => run.id),
+        ).toEqual([failed.run.id]);
 
         await verifySafeRetry(a);
 
         const closing = await interruptedCase([a, b, c]);
         await closeUnconfirmed(closing.run);
-        const independent = await createTask(a);
+        const blocked = await a.request.post(
+            '/api/tasks/' + closing.task.id + '/runs',
+            {
+                headers: { 'Idempotency-Key': randomUUID() },
+                data: { prompt: 'WEB-A10 C ' + randomUUID() },
+            },
+        );
+        expect(blocked.status()).toBe(409);
+        const independent = await sourceTask(a);
         expect(independent.id).not.toBe(closing.task.id);
         const fresh = await send(a, independent, 'C', randomUUID());
         await waitStatus(fresh, 'succeeded');

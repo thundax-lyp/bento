@@ -115,26 +115,7 @@ A 私有 launcher 已完成一次性预备正控 focused 6/6，原 0400 回退�
 
 A 私有 relay 叶证书已签发，CA、127.0.0.1 目标、服务端/客户端用途、key 配对和 0600 权限检查通过。仅可信 relay 读取私钥；上游限定网关 28881，下游限定本租约 Orchestrator netns 的 18789。真实 mTLS 和正控证据待 T2b 同候选审批后取得。
 
-### T2a：完成最终候选与私有编排
-
-前置状态：A10_ROOT 私有 review/entry/relay/bootstrap 与 observation 已保全，focused 6/6 通过，真实候选仍未启动。本步公开源码在本地 `/Volumes/storage/workspace/bento-a` 修改并验证，私有 ops.mjs 在 A SSH 宿主的 A10_ROOT 编写与语法验证，运行时读服务器冻结归档。允许改 `apps/workspace/web/acceptance/web-a10.spec.ts`、`apps/workspace/web/acceptance/web-a10-hook.ts`、`apps/orchestrator/acceptance/web-a10/run.mjs`、`ops.mjs` 和 RUNBOOK（5），另查 `deploy/orchestrator/observe-web-a11.mjs` 和 `apps/orchestrator/src/execution-service/task-run-view.ts`（2）。本步完成矩阵及 WEB-07 受影响用例。私有正控 focused 与证书静态校验已通过，ops 在获审 prepare 中为 smoke 生成一个 UUID，仅向 launcher 传其摘要，并将 UUID 传给 smoke spec，正式矩阵不得复用。ops 将正控记录的 runId 与预备浏览器回执核对。冻结 runner 绑定 relay 两个 0600 文件的 SHA-256，最终 configurationSha256 同时绑定 relay 证书指纹与原 CA 证书摘要，prepare 重验证书链、目标、期限、权限及摘要。prepare 启动 A 私有 launcher 必须加入同租约 Orchestrator 容器 netns、复核候选镜像与只读 Linux Docker CLI 及 scoped socket 挂载，Docker socket 仅可信 launcher 可见。Orchestrator 绑定 netns 后 warm 槽可按既有 replenish 接入，两槽 ready 后才允许常规 admission。运行器的项目与 lease 路径换成 A 专属，保留路径、owner/mode、白名单及同版本检查。私有 `ops.mjs` 仅接受 build/prepare/verify/cleanup，runner 校验其摘要后调用。运行路径必须是只读候选归档。build 从已冻结归档构建并输出实际镜像与配置绑定报告；prepare 核对合法批准、启动专属 Compose、配置 Temporal、seed OIDC 与 MinIO、做正常 admission；verify 从实际浏览器执行矩阵；cleanup 按 lease 精确枚举并保全，只删本轮归属。Chromium 镜像和二进制按冻结 Playwright lock 及安装清单核对。归档和审批后才能进入真实部署。
-
-```bash
-cd /Volumes/storage/workspace/bento-a
-node --check apps/orchestrator/acceptance/web-a10/run.mjs
-node --test apps/orchestrator/acceptance/web-a10/run.test.mjs
-pnpm --dir apps/workspace/web exec playwright test --config playwright.web-a10.config.ts --list
-```
-
-在 A 宿主从 A10_ROOT 另执行 `node --check ops.mjs`。从本地同候选源码执行权威流程 focused 测试：
-
-```bash
-cd /Volumes/storage/workspace/bento-a
-node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern 'trusted SDK selector publishes only|Task operation reconciliation stays conservative' apps/orchestrator/tests/execution-service/reconciliation.test.ts
-node --import ./register-paths.mjs --experimental-strip-types --test apps/orchestrator/tests/execution-service/task-retry-sdk.test.ts
-```
-
-PASS：唯一正式 Chromium 用例及三条 runner 白名单用例发现/通过，同版 focused 中 SDK selector、恢复中断及 retry SDK suite 通过，私有动作只有已批准的同版输入可启动。STOP：生产缺陷或命令涉及越权资源。保留候选，按具体失败另审核，提交仅收允许的公开验收文件和 RUNBOOK。
+T2a 的 runner 白名单 3/3，Chromium 发现 1 项，验收源码类型检查通过，SDK reconciliation 7/7，retry SDK 32/32。A 宿主私有 `ops.mjs` 语法、Compose 静态配置和无租约调用拒绝已复核。ops 包含 build/prepare/verify/cleanup 四个入口，复验不可变输入及每次真实动作的同版 approval。prepare 使用只读 Docker CLI 与只供可信 launcher 的 daemon socket，两个槽和 SDK relay 加入同版 Orchestrator netns，先核两槽真实 ready，再做 smoke 和独立上游计数；正式浏览器在同版 Web netns 运行。冻结、实际构建、真实 admission、执行和清理按后续步骤取证。
 
 ### T2b1：将本地提交态只读移交到 A 宿主
 
@@ -243,7 +224,6 @@ T2c 复用 `verifySafeRetry` 验证 07-04 的有证据正控和无证据拒绝�
 | 步骤 | 修改或产物 | 另行核对 | 合计 |
 | --- | --- | --- | ---: |
 | T0 | RUNBOOK（1） | `ENVIRONMENTS.md`、`deploy/compose.yaml`、`deploy/README.md`、`apps/orchestrator/src/execution-service/service.ts`、`apps/orchestrator/src/execution-service/command-host.ts`、`apps/orchestrator/src/execution-service/types.ts`、`apps/orchestrator/acceptance/web-a10/run.mjs`、`apps/workspace/web/acceptance/web-a10.spec.ts`（8） | 9 |
-| T2a | 候选、编排和 RUNBOOK（5） | WEB-A11 观察器和 Run 投影（2） | 7 |
 | T2b1 | 两份 bundle、源码展开目录与 RUNBOOK（4） | ENVIRONMENTS、lease（2） | 6 |
 | T2b | 冻结产物、lease 更新及 RUNBOOK（5） | 只读 approval 等本步白名单（5） | 10 |
 | T2c | 验收、清理产物及 RUNBOOK（3） | 本步白名单（5） | 8 |
