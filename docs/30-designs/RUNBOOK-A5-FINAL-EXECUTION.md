@@ -134,6 +134,8 @@ T1d 实测 PASS。B 公开 Task 真实模型四工具同轮 Playwright 1/1（30.
 
 PASS：合法身份证据、每个禁用入口的拒绝证据及零启动齐备。STOP：缺正常 SSH 能力调用位置或可信独立计数时不得声称通过。恢复只关闭本轮探针租约。提交边界为 spec 与本步清理。
 
+T2 实测 PASS。批准的第 7 文件为本轮私有容器 worker-ipc.mjs，仅独占验收哨兵调用真实 SDK，grant 不外传。Chromium 1/1（4.0 秒），同一正常 Task 租约前后两次 GetSandbox 成功，真实 TTY/SSH 均 gRPC 7。独立观察在接受业务后续正常处理前读取专项窗口：同一 Session 当代 sdk:* 保留为 0，Gateway SSH 对象为 0，只读卷标记为 0，两 Docker 容器 ID 相同。专项观察后 Task 正常完成，回执为 1。首次浏览器等待只读证据时未创建 Run，继续使用该空 Task，只提交一次。
+
 ### T3a：旧代观察
 
 白名单 6 文件：私有 `container/task-observations.mjs`、`container/host.json`、`host/broker.mjs`、只读 `apps/orchestrator/src/execution-service/types.ts`、`apps/orchestrator/src/execution-service/command-host.ts`、本 RUNBOOK。Broker SQLite 对 `bindingDigest,runId,generation` 存已绑定的容器 ID、镜像、startedAt 和实际退出时间。派发前持久记录身份；退出时间只来自独立 Docker wait/inspect，读取端只读。安装原 `taskObservationModule`。 `observeWorkerExit` 返回 `sessionId/runId/generation/bindingDigest/exitedAt`；`observeTaskVolumeStopped` 返回对应身份及 `restoreIdle:true/volumeWriters:0/sandboxStopped:true/observedAt`；`taskRecovery.observeSdkRetrySafety` 返回原退出身份，加 `observedAt/workspaceOnly/unknownOperations`；`taskRecovery.retryObservation` 仅返回后两字段。证据不足返回 null 或拒绝，绝不报告已停止、零 UNKNOWN 或安全。`queryRestore` 无本轮记录返回 null，`restoreTask` 记录调用次数后明确拒绝，保持原卷。A5 路径不执行 WEB-07 restore，两个验收均须审计 `restoreTask` 调用计数为零。
