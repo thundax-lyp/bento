@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstat, realpath, readFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 const exec = promisify(execFile);
@@ -17,6 +17,8 @@ type Action =
     | 'releaseQueueBarrier'
     | 'armWriteFreeze'
     | 'lookupSdkUnknown'
+    // Existing hook name. Inject an exit only into the frozen Run attempt.
+    // Never signal host PIDs or stop or restart shared containers.
     | 'killFrozenWorker'
     | 'readRunEvidence'
     | 'releaseRetryObservation'
@@ -52,6 +54,7 @@ type BarrierInputs = {
 export async function callA10Hook<A extends Action>(
     action: A,
     input: A extends keyof BarrierInputs ? BarrierInputs[A] : { runId: string },
+    timeout = 30_000,
 ): Promise<Record<string, boolean | number | string>> {
     try {
         for (const [key, value] of Object.entries(input)) {
@@ -59,16 +62,23 @@ export async function callA10Hook<A extends Action>(
             else if (key === 'role') assert(value === 'A' || value === 'B');
             else assert.match(value, uuid);
         }
-        const root = join(
-            homedir(),
-            'bento-worker-a-openshell-0616',
-            'web-a10',
+        const checkout = resolve(
+            fileURLToPath(new URL('../../../..', import.meta.url)),
         );
+        // Playwright may run from the frozen candidate under the same lease.
+        const frozenCheckout =
+            /^(.+\/bento-debug\/web-a10)\/state\/([a-f0-9-]+)\/candidate\/source$/.exec(
+                checkout,
+            );
+        const root =
+            frozenCheckout?.[1] ??
+            join(dirname(checkout), 'bento-debug', 'web-a10');
         const leasePath = join(root, 'lease.json');
         assert.equal(process.env.BENTO_WEB_A10_CONFIG, leasePath);
         const lease = JSON.parse((await privateBytes(leasePath)).toString());
         assert.equal(lease.project, 'bento-worker-a-web-a10');
         assert.match(lease.leaseId, uuid);
+        if (frozenCheckout) assert.equal(frozenCheckout[2], lease.leaseId);
         assert.match(lease.sourceTree, /^[a-f0-9]{40}$/);
         assert.match(lease.archiveSha256, sha);
         assert.equal(lease.leaseId, lease.composeApproval.leaseId);
@@ -101,7 +111,7 @@ export async function callA10Hook<A extends Action>(
                 action,
                 JSON.stringify(input),
             ],
-            { cwd: source, timeout: 30_000, maxBuffer: 16 * 1024 },
+            { cwd: source, timeout, maxBuffer: 16 * 1024 },
         );
         const result = JSON.parse(stdout);
         assert(result && typeof result === 'object' && !Array.isArray(result));

@@ -13,12 +13,13 @@ import {
     rm,
     writeFile,
 } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
 import process from 'node:process';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL, URL } from 'node:url';
 
-const root = join(homedir(), 'bento-worker-a-openshell-0616', 'web-a10');
+const root = fileURLToPath(
+    new URL('../../../../../bento-debug/web-a10', import.meta.url),
+);
 const leasePath = join(root, 'lease.json');
 const project = 'bento-worker-a-web-a10';
 const candidates = [
@@ -67,31 +68,61 @@ async function collectFiles(source, directory = source) {
 }
 
 const privateInputs = [
+    'GoControl.Dockerfile',
     'bootstrap.ts',
+    'compose.database.yml',
     'compose.env',
+    'compose.identity.yml',
     'compose.overlay.yml',
+    'compose.storage.yml',
+    'compose.temporal.yml',
+    'compose.web.yml',
     'execution.env',
+    'fault-control.mjs',
+    'formal-source.mjs',
     'host.json',
     'identities.json',
     'launcher.mjs',
     'launcher.test.mjs',
+    'matrix-bootstrap.ts',
+    'matrix-browser-probe.mjs',
+    'matrix-context.mjs',
+    'matrix-identity.mjs',
+    'matrix-notifier.mjs',
+    'matrix-rehearsal-report.json',
+    'matrix-tools.mjs',
+    'matrix-witness.mjs',
     'ops.mjs',
+    'probe-model.mjs',
     'provision-web.mjs',
+    'queue-barrier.mjs',
     'realm.json',
+    'relay/ca.crt',
+    'relay/client.crt',
+    'relay/client.key',
     'relay/tls.crt',
     'relay/tls.key',
+    'restore-volume.mjs',
     'review.mjs',
-    'runtime.json',
     'runtime-image-post-hwe-report.json',
+    'runtime.json',
     'sandbox-control.mjs',
     'sandbox-policy.yaml',
     'sdk-relay.mjs',
+    'sdk-runtime/identity.json',
+    'sdk-runtime/package-lock.json',
+    'sdk-runtime/package.json',
     'slot-proxy.mjs',
+    'source-root.mjs',
+    'storage-pki/ca.crt',
+    'storage-pki/private.key',
+    'storage-pki/public.crt',
     'storage.pki.tar',
     'subpath-probe-report.json',
     'task-observation.mjs',
     'trusted-entry.mjs',
     'trusted-entry.test.mjs',
+    'volume-io.mjs',
     'web.env',
 ];
 
@@ -108,12 +139,23 @@ async function acceptanceInputs(lease) {
         await privatePath(path, false);
         hashes[name] = sha256(await readFile(path));
     }
-    const exchange = join(root, 'inputs', 'exchange-linux-amd64');
-    const exchangeStat = await lstat(exchange);
-    assert(exchangeStat.isFile() && exchangeStat.uid === process.getuid());
-    assert.equal(await realpath(exchange), exchange);
-    assert.equal(exchangeStat.mode & 0o777, 0o500);
-    hashes['inputs/exchange-linux-amd64'] = sha256(await readFile(exchange));
+    for (const name of [
+        'inputs/exchange-linux-amd64',
+        'inputs/exchange-linux-arm64',
+        'tools/openshell',
+    ]) {
+        const executable = join(root, name);
+        const info = await lstat(executable);
+        assert(info.isFile() && info.uid === process.getuid());
+        assert.equal(await realpath(executable), executable);
+        assert.equal(info.mode & 0o777, 0o500);
+        hashes[name] = sha256(await readFile(executable));
+    }
+    const sdk = join(root, 'sdk-runtime', 'dist');
+    assert.equal(await realpath(sdk), sdk);
+    hashes['sdk-runtime/dist'] = sha256(
+        JSON.stringify(await collectFiles(sdk)),
+    );
     return hashes;
 }
 

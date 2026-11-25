@@ -14,6 +14,10 @@ type Login = { account: string; username: string; password: string };
 type Run = { id: string; taskId: string; path: string; page: Page };
 type TenantPages = [Page, Page, Page];
 const file = 'web-a10.txt';
+const executionTimeout = 120_000;
+const exitObservationTimeout = 10_000;
+const reviewTimeout = 30_000;
+const observationRequestTimeout = 2_000;
 const nextStep = '上一次操作结果未确认。请等待可信侧核对。';
 
 function posted(path: string) {
@@ -96,22 +100,38 @@ async function send(
     };
 }
 
-async function current(run: Run) {
-    const response = await run.page.request.get(run.path);
+async function current(run: Run, timeout?: number) {
+    const response = await run.page.request.get(
+        run.path,
+        timeout === undefined ? {} : { timeout },
+    );
     expect(response.status()).toBe(200);
     const { run: value } = (await response.json()) as { run: TaskRun };
     expect(value.id).toBe(run.id);
     return value;
 }
 
-function waitStatus(run: Run, status: TaskRun['status']) {
+function waitStatus(
+    run: Run,
+    status: TaskRun['status'],
+    timeout = executionTimeout,
+    requestTimeout?: number,
+) {
     return expect
-        .poll(async () => (await current(run)).status, { timeout: 120_000 })
+        .poll(async () => (await current(run, requestTimeout)).status, {
+            timeout,
+            message: `Run ${run.id} did not reach ${status}`,
+        })
         .toBe(status);
 }
 
-async function waitReview(run: Run) {
-    await waitStatus(run, 'needs_review');
+async function waitReview(run: Run, afterObservedExit = false) {
+    await waitStatus(
+        run,
+        'needs_review',
+        afterObservedExit ? reviewTimeout : executionTimeout,
+        afterObservedExit ? observationRequestTimeout : undefined,
+    );
     await expect(run.page.getByText(nextStep, { exact: true })).toBeVisible();
     expect((await run.page.request.get(run.path + '/results')).status()).toBe(
         409,
@@ -132,7 +152,7 @@ async function freeze(run: Run, marker: string) {
     ).toMatchObject({ armed: true });
 }
 
-async function killFrozen(run: Run) {
+async function interruptFrozenAttempt(run: Run) {
     await expect
         .poll(
             async () => {
@@ -152,8 +172,34 @@ async function killFrozen(run: Run) {
     ).toMatchObject({ killed: true });
 }
 
+async function observeInterruptedExit(run: Run, workerIdentity: unknown) {
+    expect(workerIdentity).toMatch(/^[a-f0-9]{64}$/);
+    await expect
+        .poll(
+            async () => {
+                try {
+                    return await callA10Hook(
+                        'readRunEvidence',
+                        { runId: run.id },
+                        observationRequestTimeout,
+                    );
+                } catch {
+                    return { observation: 'unavailable' };
+                }
+            },
+            {
+                timeout: exitObservationTimeout,
+                message: `Run ${run.id}: no independent exit evidence for Worker ${workerIdentity}`,
+            },
+        )
+        .toMatchObject({
+            independentlyExited: true,
+            workerIdentitySha256: workerIdentity,
+        });
+}
+
 async function readInterrupted(run: Run) {
-    await waitReview(run);
+    await waitReview(run, true);
     expect(
         await callA10Hook('readRunEvidence', { runId: run.id }),
     ).toMatchObject({
@@ -227,10 +273,12 @@ async function interruptedCase([a, b, c]: TenantPages) {
     expect(
         await callA10Hook('releaseQueueBarrier', { caseId, role: 'A' }),
     ).toMatchObject({ released: true });
-    await killFrozen(runA);
+    await interruptFrozenAttempt(runA);
     expect(
         await callA10Hook('releaseQueueBarrier', { caseId, role: 'B' }),
     ).toMatchObject({ released: true });
+    await observeInterruptedExit(runA, both.aIdentitySha256);
+    await readInterrupted(runA);
     await waitStatus(runB, 'succeeded');
     expect(
         await callA10Hook('readRunEvidence', { runId: runB.id }),
@@ -243,7 +291,6 @@ async function interruptedCase([a, b, c]: TenantPages) {
         (await callA10Hook('readRunEvidence', { runId: runC.id }))
             .workerIdentitySha256,
     ).toMatch(/^[a-f0-9]{64}$/);
-    await readInterrupted(runA);
 
     return { run: runA, marker, task: taskA };
 }
@@ -290,20 +337,40 @@ async function verifySafeRetry(page: Page) {
     });
 }
 
-async function closeUnconfirmed(run: Run) {
+async function closeUnconfirmed(run: Run, origin: string) {
     expect(
         await callA10Hook('closeUnconfirmed', { runId: run.id }),
     ).toMatchObject({ closed: true });
     await waitStatus(run, 'failed');
     await expect(
-        run.page.getByText(/该任务已结案，执行结果无法确认/),
+        run.page.getByText(
+            '该任务已结案，执行结果无法确认。历史交付仍可查看。',
+            { exact: true },
+        ),
     ).toBeVisible();
     await expect(
         run.page.getByRole('link', { name: '下载 diff', exact: true }),
     ).toHaveCount(0);
     await expect(
-        run.page.getByRole('button', { name: '发送要求' }),
-    ).toHaveCount(0);
+        run.page.getByLabel('后续要求', { exact: true }),
+    ).toBeDisabled();
+    await expect(
+        run.page.getByRole('button', { name: '发送要求', exact: true }),
+    ).toBeDisabled();
+    const collection = '/api/tasks/' + encodeURIComponent(run.taskId) + '/runs';
+    const denied = await run.page.request.post(collection, {
+        headers: { 'Idempotency-Key': randomUUID(), Origin: origin },
+        data: { prompt: 'WEB-A10 C ' + randomUUID() },
+    });
+    expect(denied.status()).toBe(409);
+    expect(await denied.json()).toMatchObject({
+        error: { code: 'task_not_ready' },
+    });
+    const runs = await run.page.request.get(collection);
+    expect(runs.status()).toBe(200);
+    expect((await runs.json()).items.map((row: TaskRun) => row.id)).toEqual([
+        run.id,
+    ]);
     expect((await run.page.request.get(run.path + '/results')).status()).toBe(
         409,
     );
@@ -380,7 +447,10 @@ async function verifyContinuation(
     const replay = await run.page.request.post(
         '/api/tasks/' + task.id + '/runs',
         {
-            headers: { 'Idempotency-Key': next.key },
+            headers: {
+                'Idempotency-Key': next.key,
+                Origin: new URL(baseURL).origin,
+            },
             data: { prompt: 'WEB-A10 C ' + newMarker },
         },
     );
@@ -496,7 +566,7 @@ test('WEB-A10 preserves other tenants and reconciles the original Run', async ({
             (await a.request.get(failed.run.path + '/results')).status(),
         ).toBe(409);
         const unsafe = await a.request.post(failed.run.path + '/retry', {
-            headers: { 'Idempotency-Key': randomUUID() },
+            headers: { 'Idempotency-Key': randomUUID(), Origin: origin },
         });
         expect(unsafe.status()).toBe(409);
         expect((await current(failed.run)).retryReason).toBeTruthy();
@@ -510,15 +580,7 @@ test('WEB-A10 preserves other tenants and reconciles the original Run', async ({
         await verifySafeRetry(a);
 
         const closing = await interruptedCase([a, b, c]);
-        await closeUnconfirmed(closing.run);
-        const blocked = await a.request.post(
-            '/api/tasks/' + closing.task.id + '/runs',
-            {
-                headers: { 'Idempotency-Key': randomUUID() },
-                data: { prompt: 'WEB-A10 C ' + randomUUID() },
-            },
-        );
-        expect(blocked.status()).toBe(409);
+        await closeUnconfirmed(closing.run, origin);
         const independent = await sourceTask(a);
         expect(independent.id).not.toBe(closing.task.id);
         const fresh = await send(a, independent, 'C', randomUUID());
@@ -533,13 +595,31 @@ test('WEB-A10 preserves other tenants and reconciles the original Run', async ({
             deletion.getByRole('button', { name: '确认删除' }),
         ).toBeEnabled();
         await deletion.getByRole('button', { name: '确认删除' }).click();
-        await expect(a).toHaveURL(/\/workspaces$/);
+        const checkDeletion = a.getByRole('button', {
+            name: '查询删除进度',
+            exact: true,
+        });
+        await expect
+            .poll(
+                async () => {
+                    if (new URL(a.url()).pathname === '/workspaces')
+                        return true;
+                    if (
+                        (await checkDeletion.isVisible()) &&
+                        (await checkDeletion.isEnabled())
+                    )
+                        await checkDeletion.click();
+                    return false;
+                },
+                { timeout: 30_000 },
+            )
+            .toBe(true);
         expect(
             await callA10Hook('readClosure', { runId: closing.run.id }),
         ).toMatchObject({ closed: true });
 
         const closingAccount = await interruptedCase([b, a, c]);
-        await closeUnconfirmed(closingAccount.run);
+        await closeUnconfirmed(closingAccount.run, origin);
         await b.goto('/auth');
         await b
             .getByRole('checkbox', { name: '确认注销 Bento 账号并清理项目' })
