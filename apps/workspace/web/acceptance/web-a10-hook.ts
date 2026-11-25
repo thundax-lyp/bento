@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { lstat, realpath, readFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -62,7 +62,9 @@ export async function callA10Hook<A extends Action>(
             else if (key === 'role') assert(value === 'A' || value === 'B');
             else assert.match(value, uuid);
         }
-        const checkout = fileURLToPath(new URL('../../../..', import.meta.url));
+        const checkout = resolve(
+            fileURLToPath(new URL('../../../..', import.meta.url)),
+        );
         // Playwright may run from the frozen candidate under the same lease.
         const frozenCheckout =
             /^(.+\/bento-debug\/web-a10)\/state\/([a-f0-9-]+)\/candidate\/source$/.exec(
