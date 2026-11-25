@@ -117,53 +117,7 @@ A 私有 relay 叶证书已签发，CA、127.0.0.1 目标、服务端/客户端�
 
 T2a 的 runner 白名单 3/3，Chromium 发现 1 项，验收源码类型检查通过，SDK reconciliation 7/7，retry SDK 32/32。A 宿主私有 `ops.mjs` 语法、Compose 静态配置和无租约调用拒绝已复核。ops 包含 build/prepare/verify/cleanup 四个入口，复验不可变输入及每次真实动作的同版 approval。prepare 使用只读 Docker CLI 与只供可信 launcher 的 daemon socket，两个槽和 SDK relay 加入同版 Orchestrator netns，先核两槽真实 ready，再做 smoke 和独立上游计数；正式浏览器在同版 Web netns 运行。冻结、实际构建、真实 admission、执行和清理按后续步骤取证。
 
-### T2b1：将本地提交态只读移交到 A 宿主
-
-前置状态：T2a PASS 并已提交，绑定本地 repo。允许产物本地临时 `candidate.bundle`、A 宿主 `inputs/candidate.bundle`、`source` 源码归档展开目录和 RUNBOOK（4），另查 `ENVIRONMENTS.md`、`lease.json`（2）。禁止以 rsync/scp 上传工作区或私有运行配置。以下脚本在本地 `/Volumes/storage/workspace/bento-a` 执行。使用环境说明的 SSH 命令和终端认证流程。
-
-```bash
-cd /Volumes/storage/workspace/bento-a
-set -euo pipefail
-test -z "$(git status --porcelain)"
-stage="$(mktemp -d -t bento-a-web-a10)"
-trap 'rm -f "$stage/candidate.bundle"; rmdir "$stage"' EXIT
-git bundle create "$stage/candidate.bundle" HEAD
-chmod 400 "$stage/candidate.bundle"
-candidate_sha="$(shasum -a 256 "$stage/candidate.bundle" | awk '{print $1}')"
-candidate_commit="$(git rev-parse HEAD)"
-candidate_tree="$(git rev-parse HEAD^{tree})"
-python3 - "$stage/candidate.bundle" "$candidate_sha" "$candidate_commit" "$candidate_tree" <<'A10_TRANSFER'
-import pathlib,re,shlex,subprocess,sys
-path,digest,commit,tree=sys.argv[1:]
-assert re.fullmatch(r"[a-f0-9]{64}",digest)
-assert all(re.fullmatch(r"[a-f0-9]{40}",value) for value in [commit,tree])
-source=pathlib.Path("ENVIRONMENTS.md").read_text()
-ssh=shlex.split(re.search(r"^ssh (.+)$",source,re.M).group(1))
-remote = r"""
-set -eu
-umask 077
-root="$HOME/bento-worker-a-openshell-0616/web-a10"
-cd "$root"
-mkdir -p inputs
-test ! -e inputs/candidate.bundle
-test ! -e source
-cat > inputs/candidate.bundle
-chmod 400 inputs/candidate.bundle
-printf '%s  inputs/candidate.bundle\n' DIGEST | sha256sum -c
-git init -q source
-git -C source fetch --no-tags "$root/inputs/candidate.bundle" HEAD
-git -C source checkout --detach --quiet FETCH_HEAD
-test "$(git -C source rev-parse HEAD)" = COMMIT
-test "$(git -C source rev-parse HEAD^{tree})" = TREE
-test -z "$(git -C source status --porcelain)"
-printf 'A10_REMOTE_SOURCE_VERIFIED %s %s\n' COMMIT TREE
-""".replace("DIGEST",digest).replace("COMMIT",commit).replace("TREE",tree)
-with open(path,"rb") as payload:
-    subprocess.run(["ssh",*ssh,remote],stdin=payload,check=True)
-A10_TRANSFER
-```
-
-PASS：服务器 bundle SHA-256 与本地一致，readback commit/tree 精确相同，服务器源码 clean。STOP：既有 source/归档、额外 tracked/untracked 文件或 SHA 不符。SHA 未通过不展开。只清理本步唯一临时文件，保留服务器本轮失败现场。T1a 的 Compose 静态渲染从已有 A 基线源码读取，不在 A10_ROOT 预先创建 source。T2b1 提交仅移除 RUNBOOK 步骤；若此文档提交发生在 bundle 之后，在 T2b 以 bundle 的已授权候选 SHA 为准。
+T2b1 已在 A 宿主从只读 bundle 移交。候选源码 commit 为 `3684eaa97bbb020ab414ff1bc1b670d169b31368`，tree 为 `6026bfa0524492ea149a63c65eed0cdf2ec2aac2`，bundle SHA-256 为 `83de23c000346f10d83a4ecb746e6bb083c4cf1642d25c972ea1c40dd6b9baed`。对端摘要、commit/tree 和 clean 工作区均已核对。T2b 使用该已移交候选，本步骤的文档提交不进入它。
 
 ### T2b：冻结、批准与真实常规 admission
 
@@ -224,7 +178,6 @@ T2c 复用 `verifySafeRetry` 验证 07-04 的有证据正控和无证据拒绝�
 | 步骤 | 修改或产物 | 另行核对 | 合计 |
 | --- | --- | --- | ---: |
 | T0 | RUNBOOK（1） | `ENVIRONMENTS.md`、`deploy/compose.yaml`、`deploy/README.md`、`apps/orchestrator/src/execution-service/service.ts`、`apps/orchestrator/src/execution-service/command-host.ts`、`apps/orchestrator/src/execution-service/types.ts`、`apps/orchestrator/acceptance/web-a10/run.mjs`、`apps/workspace/web/acceptance/web-a10.spec.ts`（8） | 9 |
-| T2b1 | 两份 bundle、源码展开目录与 RUNBOOK（4） | ENVIRONMENTS、lease（2） | 6 |
 | T2b | 冻结产物、lease 更新及 RUNBOOK（5） | 只读 approval 等本步白名单（5） | 10 |
 | T2c | 验收、清理产物及 RUNBOOK（3） | 本步白名单（5） | 8 |
 | T3 | 本步列出的两份正式文档与 RUNBOOK（3） | T2c 的私有 CaseReport、`public-files.json`、`package.json`（3） | 6 |
