@@ -15,7 +15,7 @@ import {
 } from 'node:fs/promises';
 import { dirname, join, relative, sep } from 'node:path';
 import process from 'node:process';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL, URL } from 'node:url';
 
 const root = fileURLToPath(
     new URL('../../../../../bento-debug/web-a10', import.meta.url),
