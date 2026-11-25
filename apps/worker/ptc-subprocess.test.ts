@@ -60,10 +60,16 @@ test('PTC rejects foreign nonce, protocol mixing, late control and incomplete st
         assert.throws(() => [...reader.read(bytes)], /frame rejected/);
     }
     const truncated = new PtcFrameReader(nonce);
-    [...truncated.read(ptcFrame(1, nonce).subarray(0, 10))];
+    assert.deepEqual(
+        [...truncated.read(ptcFrame(1, nonce).subarray(0, 10))],
+        [],
+    );
     assert.throws(() => truncated.finish(), /Incomplete/);
     const unproven = new PtcFrameReader(nonce);
-    [...unproven.read(ptcFrame(1, nonce))];
+    assert.deepEqual(
+        [...unproven.read(ptcFrame(1, nonce))].map(({ tag }) => tag),
+        [1],
+    );
     assert.throws(() => unproven.finish(), /Incomplete/);
     assert.throws(
         () => ptcFrame(2, nonce, Buffer.alloc(ptcFrameBytes + 1)),
