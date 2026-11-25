@@ -16,7 +16,7 @@ function posted(path: string) {
         response.request().method() === 'POST';
 }
 
-async function login(page: Page, identity: Login) {
+async function login(page: Page, identity: Login, origin: string) {
     await page.goto('/auth');
     await page.getByRole('link', { name: '受邀用户登录' }).click();
     try {
@@ -29,7 +29,7 @@ async function login(page: Page, identity: Login) {
     } catch {
         throw new Error('WEB-A10 could not submit the invited login');
     }
-    await expect(page).toHaveURL(/127\.0\.0\.1:28080\/$/);
+    await expect(page).toHaveURL(origin + '/');
     const session = await page.request.get('/api/session');
     expect(session.status()).toBe(200);
     expect(
@@ -295,6 +295,7 @@ test('WEB-A10 preserves other tenants and reconciles the original Run', async ({
     const input = process.env.BENTO_WEB_A10_LOGIN_FILE;
     if (!input || !baseURL)
         throw new Error('WEB-A10 requires the isolated login fixture');
+    const origin = new URL(baseURL).origin;
     const identities = JSON.parse(await readFile(input, 'utf8')) as Login[];
     expect(identities.length).toBe(3);
     expect(new Set(identities.map((identity) => identity.account)).size).toBe(
@@ -307,7 +308,7 @@ test('WEB-A10 preserves other tenants and reconciles the original Run', async ({
         const [a, b, c] = await Promise.all(
             contexts.map(async (context, index) => {
                 const page = await context.newPage();
-                await login(page, identities[index]!);
+                await login(page, identities[index]!, origin);
                 return page;
             }),
         );
@@ -375,7 +376,7 @@ test('WEB-A10 preserves other tenants and reconciles the original Run', async ({
         const target = new URL(
             (await authorization.headerValue('location')) ?? '',
         );
-        expect(target.origin).toBe('http://127.0.0.1:28080');
+        expect(target.origin).toBe(origin);
         expect(target.searchParams.get('prompt')).toBe('login');
         expect(target.searchParams.get('max_age')).toBe('0');
         try {

@@ -8,13 +8,13 @@ const login = process.env.BENTO_WEB_A10_LOGIN_FILE;
 
 if (
     !listOnly &&
-    (origin?.origin !== 'http://127.0.0.1:28080' ||
+    (origin?.origin !== 'http://127.0.0.1:8080' ||
         origin.href !== origin.origin + '/' ||
         !chromium ||
         !isAbsolute(chromium) ||
         !login ||
         !isAbsolute(login) ||
-        process.env.BENTO_WEB_A10_COMPOSE_PROJECT !== 'bento-web-a10')
+        process.env.BENTO_WEB_A10_COMPOSE_PROJECT !== 'bento-worker-a-web-a10')
 ) {
     throw new Error(
         'WEB-A10 requires its isolated deployment and three invited accounts',

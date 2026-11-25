@@ -16,19 +16,27 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 
-const root = join(homedir(), 'bento-web-a10');
+const root = join(homedir(), 'bento-worker-a-openshell-0616', 'web-a10');
 const leasePath = join(root, 'lease.json');
-const project = 'bento-web-a10';
+const project = 'bento-worker-a-web-a10';
+const runbook = 'docs/30-designs/RUNBOOK-WEB-06-RECONCILIATION.md';
 const candidates = [
     'apps/workspace/web/src/pages/tasks/details/index.tsx',
     'apps/workspace/web/playwright.web-a10.config.ts',
     'apps/workspace/web/acceptance/web-a10.spec.ts',
     'apps/workspace/web/acceptance/web-a10-hook.ts',
     'apps/orchestrator/acceptance/web-a10/run.mjs',
+    'apps/orchestrator/acceptance/web-a10/run.test.mjs',
 ];
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 const digest = /^[a-f0-9]{64}$/;
+
+export function assertCandidatePaths(changedPaths) {
+    for (const path of changedPaths)
+        assert(candidates.includes(path), 'Unapproved candidate path: ' + path);
+}
 
 async function privatePath(path, isDirectory) {
     const info = await lstat(path);
@@ -85,7 +93,7 @@ async function acceptanceInputs(lease, state) {
         'adapter/retry-classification.mjs',
     ]);
     const webOidc = lease.webOidc;
-    assert.equal(webOidc.origin, 'http://127.0.0.1:28080');
+    assert.equal(webOidc.origin, 'http://127.0.0.1:8080');
     assert.equal(
         webOidc.issuer,
         webOidc.origin + '/identity/realms/' + project,
@@ -148,26 +156,50 @@ async function freeze(lease, state) {
                 ? { ...process.env, GIT_INDEX_FILE: index }
                 : process.env,
             encoding: 'utf8',
-        }).trim();
+        });
+    const gitPaths = (args, index) =>
+        git(args, index).split('\0').filter(Boolean);
 
     try {
-        const sourceCommit = git(['rev-parse', 'HEAD']);
+        assertCandidatePaths(
+            [
+                ...gitPaths([
+                    'diff',
+                    '--no-renames',
+                    '--name-only',
+                    '-z',
+                    'HEAD',
+                    '--',
+                ]),
+                ...gitPaths([
+                    'ls-files',
+                    '--others',
+                    '--exclude-standard',
+                    '-z',
+                    '--',
+                ]),
+            ].filter((path) => path !== runbook),
+        );
+        const sourceCommit = git(['rev-parse', 'HEAD']).trim();
         const index = join(staging, 'index');
         git(['read-tree', sourceCommit], index);
         git(['add', '--', ...candidates], index);
-        const sourceTree = git(['write-tree'], index);
-        const changed = git([
-            'diff-tree',
-            '--no-commit-id',
-            '--name-only',
-            '-r',
-            sourceCommit,
-            sourceTree,
-        ]).split('\n');
-        assert.deepEqual(
-            changed.sort(),
-            [...candidates].sort(),
-            'Candidate changes must match the approved paths',
+        const sourceTree = git(['write-tree'], index).trim();
+        assertCandidatePaths(
+            gitPaths(
+                [
+                    'diff-tree',
+                    '--no-commit-id',
+                    '--no-renames',
+                    '--name-only',
+                    '-z',
+                    '-r',
+                    sourceCommit,
+                    sourceTree,
+                    '--',
+                ],
+                index,
+            ),
         );
         const bootstrap = lease.bootstrap;
         const netns = lease.netns;
@@ -283,4 +315,5 @@ async function main() {
     await freeze(lease, state);
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+    await main();

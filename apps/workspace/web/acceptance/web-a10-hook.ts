@@ -59,11 +59,15 @@ export async function callA10Hook<A extends Action>(
             else if (key === 'role') assert(value === 'A' || value === 'B');
             else assert.match(value, uuid);
         }
-        const root = join(homedir(), 'bento-web-a10');
+        const root = join(
+            homedir(),
+            'bento-worker-a-openshell-0616',
+            'web-a10',
+        );
         const leasePath = join(root, 'lease.json');
         assert.equal(process.env.BENTO_WEB_A10_CONFIG, leasePath);
         const lease = JSON.parse((await privateBytes(leasePath)).toString());
-        assert.equal(lease.project, 'bento-web-a10');
+        assert.equal(lease.project, 'bento-worker-a-web-a10');
         assert.match(lease.leaseId, uuid);
         assert.match(lease.sourceTree, /^[a-f0-9]{40}$/);
         assert.match(lease.archiveSha256, sha);

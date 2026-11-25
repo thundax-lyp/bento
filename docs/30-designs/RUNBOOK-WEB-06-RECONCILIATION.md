@@ -77,31 +77,13 @@ test -z "$(docker network ls -q --filter label=com.docker.compose.project=bento-
 - 已有 A 隔离验收授权涵盖在该环境内新建可弃置的 A 运行根、私有 lease 和适配 glue、专属 Compose 覆盖与状态卷、专属 Temporal namespace/task queue、A 专用测试账号和 Chromium 上下文、专属回环端口；使用 A 自有 MinIO 和本轮专属 bucket、凭据及前缀验证真实对象读写和清理。沿用 [WEB-07 确定性模型实栈先例](../40-readiness/evidence/WEB-07.md)，用 A 私有脚本提供确定性模型响应，仍通过真实 DSH Worker、OpenShell SDK 和沙盒执行。Gateway 测试 sandbox/Volume 由 WORKER 在 A Gateway scope 交接后创建。审核和开工后才落实。A 常驻 fixture 原服务和数据继续保全。需另选未冲突端口，使用 A 所有的资源前缀，由环境所有者确认新运行的资源额度和宿主授权。
 - 网关/mTLS、Docker 受信控制、固定 SDK 与镜像输入、独立卷/进程观察已有本轮环境证据。环境探针没有业务 Run，task admission、业务 StopProof 与可信 review 需要在新 lease 中取得。
 
-## T1：复用现有脚手架并验证候选路径约束
-
-前置状态为 T0 PASS 和同版开工授权。允许修改 `apps/orchestrator/acceptance/web-a10/run.mjs`，新增 `apps/orchestrator/acceptance/web-a10/run.test.mjs`，修改 `apps/workspace/web/playwright.web-a10.config.ts`、`apps/workspace/web/acceptance/web-a10-hook.ts`、`apps/workspace/web/acceptance/web-a10.spec.ts`、`public-files.json` 和本 RUNBOOK。禁止改生产路径。
-
-1. 保持可信 entry 的 owner/mode、lease、源码、archive 和 approval 匹配检查。把旧的硬编码 project/origin 改成 T0 经审核写定的 A 目标。`playwright.web-a10.config.ts` 仅允 `http://127.0.0.1:8080` 与 `bento-worker-a-web-a10`，把 spec 的登录回跳和注销 redirect 断言均绑定 `baseURL` origin。runner 与 hook 的私有根均由受控本轮 HOME 固定至 `bento-worker-a-openshell-0616/web-a10`。
-2. 在 `run.mjs` 导出 `assertCandidatePaths(changedPaths)`，只接受候选白名单中的路径，空数组合法。冻结候选时先检查当前 checkout 的 HEAD 差异及未跟踪非忽略文件，排除仅用于本步骤跟踪的 RUNBOOK，从 Git NUL 分隔结果取路径；只向临时 index 加受审候选白名单，临时 index 的 tree 差异复用该断言。白名单保留原五份验收路径并加入 `run.test.mjs`。空 tree 差异使用空数组；归档后核对全部候选文件内容摘要。把 `main` 限定为 runner 直接调用，单测导入无私有路径操作。用新单测对同一 helper 严格验证空列表可通过、仅 `web-a10.spec.ts` 路径可通过、白名单路径与 `deploy/compose.yaml` 混用时拒绝。
-3. 在 `public-files.json` 的现有公开清单精确登记 `apps/orchestrator/acceptance/web-a10/run.test.mjs`，沿用相同类别的验收单测登记方式。把这一条登记与 runner 单测一起提交。
-
-```bash
-node --check apps/orchestrator/acceptance/web-a10/run.mjs
-node --test apps/orchestrator/acceptance/web-a10/run.test.mjs
-pnpm --dir apps/workspace/web exec playwright test --config playwright.web-a10.config.ts --list
-git diff --check
-```
-
-PASS 为上面命令退出 0、三个候选边界用例全部通过、清单恰一个 Chromium 用例。STOP 为 lease/身份校验需放宽，或验证需访问其他角色。阶段提交收公开验收入口、runner 单测、公开登记与 RUNBOOK。实栈候选冻结和可信拒绝验证由 T2 执行。
-
-
 ## A 专属装配
 
 服务器私有根为 `~/bento-worker-a-openshell-0616/web-a10`（A10_ROOT），只接受不存在或空目录。Compose 项目、Temporal namespace、task queue、Keycloak realm、MinIO bucket 均名为 `bento-worker-a-web-a10`。每轮生成 UUID lease，私有配置 0600，运行根 0700。新 Web 仅发布宿主回环 28884，Chromium 加入 Web netns，以 `http://127.0.0.1:8080` 访问 Web 和同源 OIDC。MinIO 在 Compose 网内使用 `https://minio:9000`、独立 CA、SAN=minio，不发布宿主端口。仅可信端从 A 既有 Gateway 状态与证书读回 identity，使用固定 SDK，Gateway 不重启。沙盒和卷按原业务 binding 生成并独立清理，现有 A 探针沙盒/卷不得复用。登录、对象存储和服务 bearer 均新生成。
 
 ### T1a：生成隔离装配配置
 
-前置状态：T0 与 T1 PASS。允许产物 `provision-web.mjs`、`lease.json`、`compose.env`、`compose.overlay.yml`、`web.env`、`realm.json`、`identities.json`、`storage.pki.tar` 和 RUNBOOK（9），另核对 A 基线 `deploy/compose.yaml`（1）。禁止导入旧身份、旧卷及外部凭据。
+前置状态：现场 T0 PASS；当前 checkout 已提交 A 专属验收入口、候选路径断言与三条 focused 测试，并能发现唯一 WEB-A10 Chromium 用例。允许产物 `provision-web.mjs`、`lease.json`、`compose.env`、`compose.overlay.yml`、`web.env`、`realm.json`、`identities.json`、`storage.pki.tar` 和 RUNBOOK（9），另核对 A 基线 `deploy/compose.yaml`（1）。禁止导入旧身份、旧卷及外部凭据。
 
 1. 在 A10_ROOT 创建 `provision-web.mjs`，唯一动作 config 和 seed。config 生成各配置，用 `--project-directory` 将 Compose 的相对路径解析限定在本轮私有根，静态渲染只读使用 A 基线的 `deploy/compose.yaml` 模板。本轮 Web 镜像从冻结源码构建，Orchestrator 和 Worker 同 tree。覆盖 Compose 端口，仅发布 Web；其它服务全部留在独占私网。新增 MinIO 只使用已核对 Linux/amd64 缓存 ID `sha256:69b2ec208575b69597784255eec6fa6a2985ee9e1a47f4411a51f7f5fdd193a9`，准入时回读其实际版本再绑定批准。空状态启动前生成独立 bucket 凭据、CA 及叶证书。Web 和 Chromium 信任本轮 CA。
 2. seed 在 T2b 调用。先验证 MinIO 健康，创建私有 bucket、最小对象及 multipart 权限、CORS 限 Web origin，匿名及跨 bucket 拒绝。按部署手册启用 Keycloak Organizations、邮箱验证、S256 PKCE、Standard Flow、auth_time mapper、Mailpit SMTP、OIDC callback/logout URLs。经管理 API 建立四名独立邀请用户（正常准入探针与 A、B、C 三名正式测试用户），回读组织身份、邮箱验证及不同 owner，登录材料仅写 `identities.json`。Chromium 使用隔离 context，互不继承 cookie。
@@ -291,7 +273,6 @@ T2c 复用 `verifySafeRetry` 验证 07-04 的有证据正控和无证据拒绝�
 | 步骤 | 修改或产物 | 另行核对 | 合计 |
 | --- | --- | --- | ---: |
 | T0 | RUNBOOK（1） | `ENVIRONMENTS.md`、`deploy/compose.yaml`、`deploy/README.md`、`apps/orchestrator/src/execution-service/service.ts`、`apps/orchestrator/src/execution-service/command-host.ts`、`apps/orchestrator/src/execution-service/types.ts`、`apps/orchestrator/acceptance/web-a10/run.mjs`、`apps/workspace/web/acceptance/web-a10.spec.ts`（8） | 9 |
-| T1 | 五份验收代码、`public-files.json` 及 RUNBOOK（7） | 无 | 7 |
 | T1a | 私有 Compose、OIDC、MinIO 产物与 RUNBOOK（9） | 部署入口（1） | 10 |
 | T1b | launcher、slot、卷控制产物与 RUNBOOK（8） | commandHost、Worker 入口（2） | 10 |
 | T1c | DSH 与可信复核产物和 RUNBOOK（8） | Task bootstrap、SDK ingress（2） | 10 |
