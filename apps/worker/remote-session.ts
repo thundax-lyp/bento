@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { SessionLogOffset } from '@deepseek-ai/dsh-session';
 import {
     SessionAlreadyExistsError,
     SessionAlreadyOwnedError,
@@ -6,6 +7,10 @@ import {
     SessionOwnershipLostError,
     SessionPersistence,
     SessionPersistenceNotFoundError,
+    SessionPersistenceRevision,
+    assertContiguous,
+    assertVersion,
+    materializeCreateHeader,
     SessionReadOnlyError,
     materializeAppendBatch,
     type SessionHandle,
@@ -37,13 +42,159 @@ type Reconciliation = {
     inFlight?: Promise<unknown>;
 };
 
+type ChildRecord = {
+    header: SessionHeader;
+    events: Event[];
+    revision: string;
+    writer?: MemoryHandle;
+};
+
+class MemoryHandle implements SessionHandle {
+    readonly inheritedEventCount = SessionLogOffset(0);
+    private closed = false;
+
+    private readonly record: ChildRecord;
+    readonly access: SessionHandle['access'];
+    private readonly release: () => void;
+
+    constructor(
+        record: ChildRecord,
+        access: SessionHandle['access'],
+        release: () => void,
+    ) {
+        this.record = record;
+        this.access = access;
+        this.release = release;
+    }
+
+    get id() {
+        return this.record.header.id;
+    }
+
+    get header() {
+        return materializeCreateHeader(this.record.header);
+    }
+
+    private assertOpen(operation: string, signal?: AbortSignal) {
+        signal?.throwIfAborted();
+        if (this.closed) throw new SessionHandleClosedError(this.id, operation);
+    }
+
+    private assertWriter(operation: string, signal?: AbortSignal) {
+        this.assertOpen(operation, signal);
+        if (this.access !== 'write')
+            throw new SessionReadOnlyError(this.id, operation);
+        if (this.record.writer !== this)
+            throw new SessionOwnershipLostError(this.id);
+    }
+
+    async read(
+        offset = 0,
+        length?: number,
+        options?: Parameters<SessionHandle['read']>[2],
+    ) {
+        this.assertOpen('read', options?.signal);
+        if (
+            !Number.isSafeInteger(offset) ||
+            offset < 0 ||
+            (length !== undefined &&
+                (!Number.isSafeInteger(length) || length < 0))
+        )
+            throw new TypeError('Invalid Session read bounds');
+        const end = length === undefined ? undefined : offset + length;
+        return {
+            eventState: 'detached' as const,
+            events: materializeAppendBatch(
+                this.record.events.slice(offset, end),
+            ),
+        };
+    }
+
+    enqueue(event: Event) {
+        if (!this.closed) this.write([event]);
+    }
+
+    private write(events: readonly Event[]) {
+        const batch = materializeAppendBatch(events);
+        assertContiguous(this.id, batch, this.record.events.length);
+        for (const event of batch) this.record.events.push(event);
+        if (batch.length) this.record.revision = randomUUID();
+    }
+
+    async append(
+        events: readonly Event[],
+        options?: Parameters<SessionHandle['append']>[1],
+    ) {
+        this.assertWriter('append', options?.signal);
+        this.write(events);
+    }
+
+    async flush(options?: Parameters<SessionHandle['flush']>[0]) {
+        this.assertWriter('flush', options?.signal);
+    }
+
+    async close() {
+        if (this.closed) return;
+        if (this.access === 'write') this.assertWriter('close');
+        this.closed = true;
+        if (this.record.writer === this) delete this.record.writer;
+        this.release();
+    }
+
+    [Symbol.asyncDispose]() {
+        return this.close();
+    }
+}
+
 class RemoteSession extends SessionPersistence {
-    private readonly writers = new Map<SessionId, Handle>();
-    private readonly handles = new Set<Handle>();
+    private readonly writers = new Map<SessionId, Handle | MemoryHandle>();
+    private readonly handles = new Set<Handle | MemoryHandle>();
     private readonly reconciliations = new Map<SessionId, Reconciliation>();
     private readonly listeners: Array<() => void>;
 
     private readonly options: Options;
+    private parentId?: SessionId;
+    private readonly children = new Map<SessionId, ChildRecord | undefined>();
+
+    bindParent(id: SessionId) {
+        if (this.parentId !== undefined)
+            throw new Error('Session scope already bound');
+        this.parentId = id;
+    }
+
+    registerChild(id: SessionId) {
+        if (
+            this.parentId === undefined ||
+            id === this.parentId ||
+            this.children.has(id)
+        )
+            throw new Error('Invalid child Session identity');
+        this.children.set(id, undefined);
+        return async () => {
+            await Promise.all(
+                [...this.handles]
+                    .filter((handle) => handle.id === id)
+                    .map((handle) => handle.close()),
+            );
+            this.children.delete(id);
+        };
+    }
+
+    private memoryHandle(record: ChildRecord, access: SessionHandle['access']) {
+        if (access === 'write' && record.writer)
+            throw new SessionAlreadyOwnedError(record.header.id);
+        const handle = new MemoryHandle(record, access, () => {
+            this.handles.delete(handle);
+            if (this.writers.get(handle.id) === handle)
+                this.writers.delete(handle.id);
+        });
+        this.handles.add(handle);
+        if (access === 'write') {
+            this.writers.set(handle.id, handle);
+            record.writer = handle;
+        }
+        return handle;
+    }
 
     constructor(ctx: Context, options: Options) {
         super(ctx);
@@ -70,6 +221,13 @@ class RemoteSession extends SessionPersistence {
         fields: Record<string, unknown> = {},
         signal?: AbortSignal,
     ): Promise<T> {
+        if (
+            this.parentId !== undefined &&
+            ((id !== undefined && id !== this.parentId) ||
+                (fields.header !== undefined &&
+                    (fields.header as SessionHeader).id !== this.parentId))
+        )
+            throw new SessionOwnershipLostError(id ?? this.parentId);
         const timeout = AbortSignal.timeout(10000);
         const response = await fetch(new URL('/rpc', this.options.url), {
             method: 'POST',
@@ -113,6 +271,22 @@ class RemoteSession extends SessionPersistence {
         header: SessionHeader,
         options?: Parameters<SessionPersistence['create']>[1],
     ) {
+        if (this.children.has(header.id)) {
+            options?.signal?.throwIfAborted();
+            if (this.children.get(header.id))
+                throw new SessionAlreadyExistsError(header.id);
+            if (header.isSeeded || (options?.inheritedEventCount ?? 0) !== 0)
+                throw new Error('Child Session cannot be seeded');
+            const stored = materializeCreateHeader(header);
+            assertVersion(stored);
+            const record = {
+                header: stored,
+                events: [],
+                revision: randomUUID(),
+            };
+            this.children.set(header.id, record);
+            return this.memoryHandle(record, 'write');
+        }
         return this.adopt(
             await this.rpc<HandleData>(
                 'create',
@@ -133,22 +307,57 @@ class RemoteSession extends SessionPersistence {
         access: SessionHandle['access'],
         options?: Parameters<SessionPersistence['open']>[2],
     ) {
+        if (this.children.has(id)) {
+            options?.signal?.throwIfAborted();
+            const record = this.children.get(id);
+            if (!record) throw new SessionPersistenceNotFoundError(id);
+            return this.memoryHandle(record, access);
+        }
+        return this.openRemote(id, access, options);
+    }
+
+    private async openRemote(
+        id: SessionId,
+        access: SessionHandle['access'],
+        options?: Parameters<SessionPersistence['open']>[2],
+    ) {
         return this.adopt(
             await this.rpc<HandleData>('open', id, { access }, options?.signal),
         );
     }
 
-    stat(id: SessionId, options?: Parameters<SessionPersistence['stat']>[1]) {
+    private childSnapshot(record: ChildRecord): Snapshot {
+        return {
+            header: materializeCreateHeader(record.header),
+            formatStatus: 'current',
+            revision: SessionPersistenceRevision(record.revision),
+            eventCount: record.events.length,
+        };
+    }
+
+    async stat(
+        id: SessionId,
+        options?: Parameters<SessionPersistence['stat']>[1],
+    ) {
+        options?.signal?.throwIfAborted();
+        if (this.parentId !== undefined && id !== this.parentId) {
+            const record = this.children.get(id);
+            return record && this.childSnapshot(record);
+        }
         return this.rpc<Snapshot | undefined>('stat', id, {}, options?.signal);
     }
 
-    list(options?: Parameters<SessionPersistence['list']>[0]) {
-        return this.rpc<readonly Snapshot[]>(
+    async list(options?: Parameters<SessionPersistence['list']>[0]) {
+        const parent = await this.rpc<readonly Snapshot[]>(
             'list',
             undefined,
             {},
             options?.signal,
         );
+        const children = [...this.children.values()].flatMap((record) =>
+            record ? [this.childSnapshot(record)] : [],
+        );
+        return [...parent, ...children];
     }
 
     async flush() {
@@ -182,7 +391,7 @@ class RemoteSession extends SessionPersistence {
 
     private async finishReconciliation(id: SessionId, pending: Reconciliation) {
         // The server can reject close while a durable batch still needs reconciliation.
-        pending.handle ??= await this.open(id, 'write');
+        pending.handle ??= await this.openRemote(id, 'write');
         pending.result ??= { value: await pending.handle.reconcile() };
         await pending.handle.close(true);
         this.reconciliations.delete(id);
@@ -387,6 +596,13 @@ export const remoteSessionPersistence = {
         ctx.effect(() => () => service.dispose(), 'Bento Session persistence');
     },
 };
+
+export function bindWorkerSession(service: SessionPersistence, id: SessionId) {
+    if (!(service instanceof RemoteSession))
+        throw new Error('Bento Session persistence required');
+    service.bindParent(id);
+    return (childId: SessionId) => service.registerChild(childId);
+}
 
 /** Reconcile durable log batches before handing the original Session to DSH AgentLoop. */
 export function reconcileSessionPersistence(
