@@ -43,7 +43,9 @@
 | worker ↔ OpenShell      | 执行 grant、operation 身份、撤权/停止观察、sandbox instance、READY      | 入口/控制器每阶段崩溃、旧连接/重连/子进程、迟到 stop；未完成旧执行停止和 CAS 不放行新代，UNKNOWN 不盲重放。断流与100ms重检不算 detached 停止证明 |
 | 会话 ↔ Workspace/Volume | tenant/workspace/session/sandbox/volume mount、导入状态、引用与回收归属 | 创建部分成功、挂错卷、沙盒删除重建、孤儿资源；正确挂载并恢复文件，不静默建空卷，不因删除一个 Session 误删共享卷或撤销其他 Session                |
 
-数据库事务与远端资源变化不构成同一原子事务。intent、observe/reconcile、可信补偿、receipt 与 READY 必须形成可恢复协议；单机阶段强杀、SSH/PTC停止、工具中断恢复和最新SDK入口各有证据，最终实现仍须在同一链做联合故障验收。
+Docker/OpenShell 故障验收遵循[故障注入约束](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#dockeropenshell-故障注入)。控制器在持久阶段边界中断，Worker 在按 Run、执行代和沙盒实例定位后中断。启动在途时由恢复侧观察原 Docker 请求及容器，再决定是否继续原尝试。
+
+数据库事务与远端资源变化不构成同一原子事务。intent、observe/reconcile、可信补偿、receipt 与 READY 必须形成可恢复协议；本地进程中断、SSH/PTC 停止、工具中断恢复和最新SDK入口各有证据，最终实现仍须在同一链做联合故障验收。
 
 ## 执行链实施设计
 
@@ -51,12 +53,12 @@
 
 ### 实施顺序
 
-| 阶段                 | 交付内容                                                            | 复用基础与必要实现                                                                                   | 放行条件                                                              |
-| -------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| 1 可信绑定和服务入口 | 用户/项目/Session/Run/沙盒/卷映射、动态身份、受控 SDK/SSH 入口      | 现成身份服务、OpenShell 原生认证、已有 ingress/broker；补业务 ACL、capability 生命周期与管理凭据隔离 | A1；未支持入口明确关闭；partial 的部署信任边界明确                    |
-| 2 持久会话和接管     | provider 服务、批次回执、checkpoint、持久 operation 与 READY 状态机 | 既有 provider/CAS/SQLite 实验逻辑、官方 checkpoint、OpenShell stop/observe/start；补可信控制器协调   | A2/A3；在最终入口每阶段强杀，旧代拒写、新代不提前放行、未知结果可对账 |
-| 3 项目纵向执行链     | 真实项目导入、共享卷、真实任务与子 Agent，故障后继续                | 固定插件、外部 Volume、官方 AgentLoop；补 staging、冲突策略和引用回收                                | A4/A5；同一版本/transport 的历史、文件、副作用和权限联合核对          |
-| 4 调度及可运维发布   | Temporal Run 工作流、worker 池、取消审批、限额、部署升级            | Temporal/现成资源控制；补业务流程、池复用/排空与告警                                                 | A6/A8；证据可复跑、依赖固定、回滚可操作、资源超限被拒                 |
+| 阶段                 | 交付内容                                                            | 复用基础与必要实现                                                                                   | 放行条件                                                                        |
+| -------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| 1 可信绑定和服务入口 | 用户/项目/Session/Run/沙盒/卷映射、动态身份、受控 SDK/SSH 入口      | 现成身份服务、OpenShell 原生认证、已有 ingress/broker；补业务 ACL、capability 生命周期与管理凭据隔离 | A1；未支持入口明确关闭；partial 的部署信任边界明确                              |
+| 2 持久会话和接管     | provider 服务、批次回执、checkpoint、持久 operation 与 READY 状态机 | 既有 provider/CAS/SQLite 实验逻辑、官方 checkpoint、OpenShell stop/observe/start；补可信控制器协调   | A2/A3；在最终入口逐阶段中断目标控制器，旧代拒写、新代不提前放行、未知结果可对账 |
+| 3 项目纵向执行链     | 真实项目导入、共享卷、真实任务与子 Agent，故障后继续                | 固定插件、外部 Volume、官方 AgentLoop；补 staging、冲突策略和引用回收                                | A4/A5；同一版本/transport 的历史、文件、副作用和权限联合核对                    |
+| 4 调度及可运维发布   | Temporal Run 工作流、worker 池、取消审批、限额、部署升级            | Temporal/现成资源控制；补业务流程、池复用/排空与告警                                                 | A6/A8；证据可复跑、依赖固定、回滚可操作、资源超限被拒                           |
 
 单执行宿主交付包含 A7 的备份还原。第一条纵向实现优先完成 A1～A5、A8。调度架构可以同步实现，但 Activity 重试不能越过副作用对账。Temporal 的单执行宿主接入及故障验证见[需求完成状况](../40-readiness/CURRENT-READINESS.md)。首版范围允许明确限定为单执行节点；是否支持 PTY/SSH、真实多租户不可信代码、跨节点卷，应作为产品和部署能力开关及验收边界，而非默认开放。
 
@@ -110,7 +112,7 @@ OpenShell Gateway interceptor 的固定源码白名单可以管理部分一元�
 
 正式恢复沿`runDshWorker`的prior分支，在交给官方AgentLoop前调用`reconcileSessionPersistence`；RemoteSession只用当前Session open(write)→无batch参数reconcile→close。控制面先通过takeover/admit撤旧句柄并授予新代，持久intent仍由SessionHistory自行读取；未提交时以新代提交，已提交时按intent.epoch找到并复用旧receipt，随后删除intent。父进程/旧caller不得向新Worker提供batch/events/receipt来协助发现。共享runtime唯一显式处置AgentHandle与root Context；测试bootstrap以小包装委托官方Agent，WeakMap映射回真实Session作flush identity校验，不伪造或过滤历史。snapshot局部类型适配只校验生产实际消费字段，保留官方header.reason字符串，不能当作完整SDK/生产窄shape兼容证明。
 
-四场景均要求同双库重开、SQL/Provider读回及合法新代正常轮，reconcile本身的seq/revision/receipt变化与之后官方resume后缀单独核对。模型、沙盒观察和bootstrap仍为fixture；本地强杀不等于真实外部OpenShell故障接管或独立停止证明，实际证据见[Readiness](../40-readiness/evidence/A2.md#a2-崩溃恢复本地验收)。
+四场景均要求同双库重开、SQL/Provider读回及合法新代正常轮，reconcile本身的seq/revision/receipt变化与之后官方resume后缀单独核对。模型、沙盒观察和bootstrap仍为fixture；退出证据适用于测试直接持有的本地子进程。真实 OpenShell 接管需要独立观察宿主和沙盒实例，现有本地证据见[Readiness](../40-readiness/evidence/A2.md#a2-崩溃恢复本地验收)。
 
 ## Worker 正式 base 与每轮资源所有权
 
