@@ -85,6 +85,7 @@ async function send(
     const { run } = (await accepted.json()) as { run: TaskRun };
     expect(run.taskId).toBe(task.id);
     const key = (await accepted.request().allHeaders())['idempotency-key'];
+    if (!key) throw new Error('Missing Run submission idempotency key');
     expect(key).toMatch(/^[a-f0-9-]{36}$/);
     return {
         key,
