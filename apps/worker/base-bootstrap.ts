@@ -18,11 +18,15 @@ import type { Transport } from '@connectrpc/connect';
 import type { DshWorkerBootstrap } from './dsh-worker.ts';
 import type { OpenShellProviderConfig } from './provider.ts';
 import { createRunSdkTransport } from './sdk-transport.ts';
+import { bindWorkerSession } from './remote-session.ts';
+import type { PublicWorkerEvent } from './protocol.ts';
+import type { TrustedTaskCheck } from './task-projection.ts';
 
 export type BaseBootstrapConfig = {
     schema: 1;
     sdkModule: string;
     modelAdapterModule: string;
+    taskToolsModule?: string;
     provider: string;
     model: string;
     workspaceRoot: string;
@@ -38,6 +42,16 @@ export type ModelAdapterFactory = (options: {
 type Runtime = Awaited<ReturnType<DshWorkerBootstrap>>;
 type WorkerAgent = Parameters<Runtime['flush']>[0];
 type OfficialAgent = AgentHandle['agent'];
+export type TaskToolsFactory = (options: {
+    ctx: Context;
+    agent: OfficialAgent;
+    workspaceRoot: string;
+    registerChild: ReturnType<typeof bindWorkerSession>;
+}) => Promise<{
+    publicEvents(events: readonly SessionEvent[]): readonly PublicWorkerEvent[];
+    trustedTaskChecks(events: readonly unknown[]): readonly TrustedTaskCheck[];
+    dispose(): void | Promise<void>;
+}>;
 type WorkerEvents = ReturnType<WorkerAgent['session']['snapshotEvents']>;
 const adapters = new WeakSet<LlmAdapter>();
 
@@ -62,9 +76,9 @@ async function configuration(): Promise<BaseBootstrapConfig> {
         ];
         if (
             row.schema !== 1 ||
-            Object.keys(row).length !== fields.length + 1 ||
             Object.keys(row).some(
-                (key) => key !== 'schema' && !fields.includes(key),
+                (key) =>
+                    !['schema', 'taskToolsModule', ...fields].includes(key),
             ) ||
             fields.some(
                 (key) =>
@@ -83,12 +97,23 @@ async function configuration(): Promise<BaseBootstrapConfig> {
         ] as const)
             if (!posix.isAbsolute(config[key]))
                 throw new Error('Invalid sandbox path');
-        for (const key of ['sdkModule', 'modelAdapterModule'] as const) {
-            if (!isAbsolute(config[key]))
+        for (const key of [
+            'sdkModule',
+            'modelAdapterModule',
+            'taskToolsModule',
+        ] as const) {
+            if (key === 'taskToolsModule' && !Object.hasOwn(row, key)) continue;
+            const path = config[key];
+            if (
+                typeof path !== 'string' ||
+                !isAbsolute(path) ||
+                /[\0\r\n]/.test(path)
+            )
                 throw new Error('Invalid module path');
-            config[key] = await realpath(config[key]);
-            if (!(await stat(config[key])).isFile())
+            const resolved = await realpath(path);
+            if (!(await stat(resolved)).isFile())
                 throw new Error('Invalid module file');
+            config[key] = resolved;
         }
         return Object.freeze(config);
     } catch {
@@ -141,6 +166,21 @@ const bootstrap: DshWorkerBootstrap = async (request) => {
     let modelDispose: (() => Promise<void> | void) | undefined;
     let adapter: LlmAdapter | undefined;
     let unregister: (() => void) | undefined;
+    let registerChild: ReturnType<typeof bindWorkerSession> | undefined;
+    let taskTools: Awaited<ReturnType<TaskToolsFactory>> | undefined;
+    let taskToolsFactory: TaskToolsFactory | undefined;
+    if (
+        request.mode === 'execute' &&
+        request.publicEventsUrl &&
+        config.taskToolsModule
+    ) {
+        const { default: factory } = (await import(
+            pathToFileURL(config.taskToolsModule).href
+        )) as { default?: unknown };
+        if (typeof factory !== 'function')
+            throw new Error('Task tools factory required');
+        taskToolsFactory = factory as TaskToolsFactory;
+    }
     let initialized = false;
     let disposal: Promise<void> | undefined;
 
@@ -157,6 +197,7 @@ const bootstrap: DshWorkerBootstrap = async (request) => {
             const owned = [...handles];
             handles.clear();
             for (const handle of owned) await attempt(() => handle.dispose());
+            await attempt(() => taskTools?.dispose());
             await attempt(() => {
                 const stop = unregister;
                 unregister = undefined;
@@ -175,9 +216,16 @@ const bootstrap: DshWorkerBootstrap = async (request) => {
         return disposal;
     }
 
-    function wrap(handle: AgentHandle) {
+    async function wrap(handle: AgentHandle) {
         handles.add(handle);
         const real = handle.agent;
+        if (taskToolsFactory && registerChild)
+            taskTools = await taskToolsFactory({
+                ctx,
+                agent: real,
+                workspaceRoot: config.workspaceRoot,
+                registerChild,
+            });
         const agent: WorkerAgent = {
             session: {
                 snapshotEvents: () =>
@@ -258,6 +306,13 @@ const bootstrap: DshWorkerBootstrap = async (request) => {
                         'Worker runtime is no longer initializable',
                     );
                 initialized = true;
+                if (taskToolsFactory)
+                    registerChild = bindWorkerSession(
+                        ctx.sessionPersistence,
+                        request.grant.session as Parameters<
+                            typeof bindWorkerSession
+                        >[1],
+                    );
                 await ctx.plugin(AgentRegistry);
                 await ctx.plugin(SessionStore);
                 await ctx.plugin(SessionProjectionRegistry);
@@ -280,6 +335,18 @@ const bootstrap: DshWorkerBootstrap = async (request) => {
                     return wrap(await ctx.agents.resume(options));
                 },
             },
+            ...(taskToolsFactory && {
+                publicEvents(events: readonly WorkerEvents[number][]) {
+                    if (!taskTools) throw new Error('Task tools not installed');
+                    return taskTools.publicEvents(
+                        events as unknown as readonly SessionEvent[],
+                    );
+                },
+                trustedTaskChecks(events: readonly unknown[]) {
+                    if (!taskTools) throw new Error('Task tools not installed');
+                    return taskTools.trustedTaskChecks(events);
+                },
+            }),
             persistence: () => ctx.sessionPersistence,
             async flush(agent) {
                 const real = official.get(agent);

@@ -83,46 +83,9 @@ sh ipc-smoke.sh
 
 以下路径和命令为目标白名单。私有运行文件以服务器 `$HOME/.bento-worker-b-a5-task` 为根，Playwright 与 pnpm 命令从候选源码根执行。T0 通过与正式步骤 PASS 分别记录。获准执行前由作者处理文末开工缺口。
 
-### T1c：正常轮次的文件、Bash、子 Agent 与公开结果
-
-前置：T1c 本地 focused 15/15 通过并冻结 manifest。B 私有真实 profile 已以源锚点 b707e82a135c21be4d959e2b813c358b3cc6c2ed、manifest SHA-256 7a5e873a23be6866e718f98fe43fe2165444f689f2a5a4d48ecea70d313896a9 通过 T1r 挂载、负例及实际 assembly 回滚复验，再切回同版真实 profile。B 正式独占 Compose 已 healthy，Web netns→Orchestrator 通，容器/浏览器两侧同 issuer。原合成 Run 的 execute/recover 已完成受控恢复，权威 g3 READY，无活动 Run/capability。相同 warm 槽的两轮私有 recover 帧验收已确认旧 token 被拒、旧 socket 已断、两路均清理。真实 control 卷生命周期与 purge 双缺失及模型 TLS 中继通过。持久卷挂在 /sandbox/project/workspace，当前沙盒读文件 full confinement 已复验。Playwright 从本轮浏览器侧登录候选 Realm，登录后从正常 Task 页面提交。
-
-T1c 第一次真实验收后已保留原 Run。定向合成探针重现 rc.4 defineTool 在父 Session 初始化后拒绝 marker 的 minLength/maxLength（JsonSchemaError）。修正为 DSL 支持的 type=string、required=true，并保留工具执行时的长度/字符验证。固定后的同版合成探针已通过父会话/工具注册并在模型调用前主动停止。修正候选以 9a77e14f9a9f7edd2d5038d049824ea832dcba6b 为源锚点，私有 manifest SHA-256 bb28e5244f538d5216e68001a3bc959c6b6ae96bebe62ed28e2e840057c834b7。真验须先按已通过 T1r 的安全切换边界从 assembly 复验并装载这一版本，核四份实际挂载源；首次失败证据和原卷保持留存。
-
-白名单 10 文件：`apps/worker/base-bootstrap.ts`、`apps/worker/base-bootstrap.test.ts`、`apps/worker/remote-session.ts`、只读 `apps/worker/task-bootstrap.ts`、`apps/worker/protocol.ts`、私有 `container/deepseek-model.mjs`、`container/a5-tools.mjs`、`apps/workspace/web/playwright.a5.config.ts`、`apps/workspace/web/acceptance/a5-tools.spec.ts` 和本 RUNBOOK。模型配置预检已通过，实际请求只发当前 checkout 对应的官方 Messages 服务。上游凭据从 Git 忽略的本地配置分别写入部署受控文件，不进入 stdout 或镜像层。factory 按 `ModelAdapterFactory` 每轮新建 adapter 和 disposer。模型 tool_use 的 id/name/input 映射为 DSH tool-call，tool 角色的结果按原 toolCallId 和 isError 回传 tool_result；工具执行发生在 Worker 绑定服务，模型输出不能生成可信检查。
-
-使用 `ToolRuntime.register`，在 OpenShell provider 与 AgentLoop 就绪后、顶层 followup 之前依序注册下列三项。各 tool handler 需要 forward 已有 `exec.signal`，超时或未获执行回执时返回失败。前缀回归使用文件、Bash 和子 Agent 三项，四工具正式验收使用 T1d 后的同一轮。每项使用本 Run 合成标记，禁止从其它 Run 输入取结果。空候选的 Worker 保持无普通网络，模型流量由受信宿主提供独立 Unix 转发，只允许已核对的 HTTPS 目的地，TLS 由模型客户端端到端校验；候选已启动该专用转发，T1c 只装配真实模型。
-
-| 注册名称 | 绑定和最小断言 |
-| --- | --- |
-| `a5_file` | 使用同授权 `ctx.fs` 写入、读回本 Run 工作区文件 `a5-file.txt`。独立 snapshot 核对精确字节。 |
-| `a5_bash` | 通过本绑定 `ctx.sandbox.confine` 及 `ctx.subprocess.spawn` 在沙盒执行 Bash，无 PTY；创建 `a5-bash.txt` 并核对真实退出码、SDK 终态和实际文件。 |
-| `a5_child` | 调用 `AgentRegistry.create` 指定 parentAgent 与 child origin，真实模型子轮通过原 sandbox/volume 绑定回读 `a5-bash.txt`。创建选项固定 `parentAgent`、新的 `sessionId`、`meta.origin = "subagent"`、`meta.parentSession` 指向当前父会话、`delegationDepth = 1`。相同业务沙盒及子结果；不得为子会话额外创建业务沙盒。 |
-
-子 Session scope factory 每个请求创建一次。装配在 `remoteSessionPersistence` 插件选项内，可信函数先登记生成的子 ID 再调 `AgentRegistry.create`。AgentLoop 在 `setup` 前通过 runtime persistence 占用写所有权，因此 setup 只组合子工具范围。顶层 ID 走原 RemoteSession，当前登记的子 ID 走本轮内存，未知来源拒绝。所有带 id/header.id 的父 RPC 发送前必须严格等于顶层 ID，recover 不登记子 ID。
-
-| 公开调用 | 内存子 Session 行为 |
-| --- | --- |
-| `create(header,options)` | 仅接收登记子 ID，无种子继承、冻结 header、唯一 write handle；create 成功后立即对 stat/list 可见。重复或已取消按公开契约失败。 |
-| `open(id,access,options)` | 未知报 not found；read 不争写权，write 仅无现有写 owner 时取得。 |
-| `stat(id)` / `list()` | 只返回本轮已创建的子记录，缺失 stat 返回 undefined，父 list 维持既有语义。可见前缀改变时更换 opaque revision。 |
-| `read(offset,length,options)` | 连续 seq，返回自有数组与冻结事件，eventState 按公开 ABI；处理边界和 cancellation。 |
-| `append(events,options)` | 校验活跃 write handle、owner、连续 seq，复制输入，新读观察到已接受前缀。read handle 拒写。 |
-| `handle.flush(options)` / `service.flush()` | handle 只允许 write，read handle 返回 SessionReadOnlyError；service 调父 flush 并独立处理当前所有子写 handle，汇总错误。 |
-| `close()` / `Symbol.asyncDispose` | 幂等，write 完成最终 flush 再释放，关闭后所有操作拒绝。 |
-
-scope factory 捕获 parent、当前 binding 和受限子只读文件工具。登记子 ID 后调用 create，再调用 followup、whenIdle、flush，读取匹配工具结果。finally 中 dispose Agent、关闭该子 scope 的 handles、等待未完成工作并清除登记。create/setup 失败与取消进入同一清理顺序；取消先中止再等待退出。父工具从真实子结果构造父 tool/result，父 RemoteSession 持久。独立读取 history.sqlite 比对父工具 ID/result，确认无子 ID 行；受控出站 RPC 只记操作名、ID 关系和次数，证明子 ID 和未知 ID 零 HTTP。子 Agent 有独立实际 Session ID、同 Run/沙盒/卷，无额外沙盒。
-
-公共事件由同一已持久化事件窗口映射。assistant 可公开文本用 `{offset,kind:"agent_reply",text}`。工具注册名/通过的实际结果使用固定文案 `step` 或 `command`，offset 为对应事件在本批次中的索引。可信检查仅用 `{version:1,offset,outcome}` 关联实际调用结果，由原 task-bootstrap 投影成 `check`。严禁输出秘密、原始 argv/环境和私有路径；工具结果与实际调用 ID 对账留在受控证据。独立核对 Run、Session、Workspace 和工具输出。
-
-```sh
-pnpm --filter @bento/orchestrator test:worker-runtime
-pnpm --filter @bento/web exec playwright test --config playwright.a5.config.ts acceptance/a5-tools.spec.ts --grep "A5 prefix"
-```
-
-PASS：前缀 Task 一次 Run 完成，三项实际调用和结果均可回读，本部署关闭 PTY。Readiness 仍待同轮四项。STOP：模型拒绝协议、工具未注册/未完成、公开结果缺项或绑定不符。保留现场且不重交同任务。提交边界为生产投影落点、直接回归、验收文件和本步清理。子 Agent 内存 handle 的 ABI 与父/子 RPC 负测见开工缺口。
-
 ### T1d：Bento 专用 PTC 控制 transport 与同轮四工具验收
+
+前置：B 同版公开 Task 真模型前缀通过，Playwright 1/1（24.6 秒）。同一 Run 成功、receipt=1，持久历史三项实际工具均成功及 completed，35 条 SDK 操作均 SUCCEEDED，原卷文件/Bash 标记独立对账。模型私有 manifest bb28e5244f538d5216e68001a3bc959c6b6ae96bebe62ed28e2e840057c834b7 已从实际挂载回读。原失败 Run 和卷留存。
 
 候选依赖确实可取得。受控 registry 的官方 `@deepseek-ai/dsh-ptc-runtime-node@0.2.1-rc.4` tarball 已下载，SHA-256 `4af325d07edde96e78eada6771e8939b5c3d0a387bd000bd78e8073b71c76606`。`lib/process.js` 是可固定的一次性 helper，SHA-256 `e25ce53b26bb3e96e62cb7433f74612395f3865b4627a695d3d4fd42c4706790`。rc.4 `NodePtcRuntime` 接受 `executionMode:"per-call"`、`launch:{kind:"node-script",executable,bootstrapPath}`，显式指定镜像内预装绝对路径可解决远端路径映射。源码表明 helper 仍从 duplex FD 7 读取控制协议，而宿主 runtime 发送 `stdio.control:"pipe"`。锁定的 `dsh-sandbox-openshell@0.1.0-rc.1` 在 spawn 前拒绝 control，且固定官方 SDK 方法只提供 stdin/stdout/stderr/exit。已查 `dsh-plugin-openshell` 固定 `81f3ab3415e0621a5e40ce5689d7a0ec33a793dd` 的 Dockerfile 和 helper，其镜像只打包 confine/fs，不含控制桥。helper 字节可复用，隔离控制 transport 仍缺。
 
@@ -192,7 +155,7 @@ PASS：同一版本三份实栈 spec 的预期用例全部运行、观察及断�
 
 ## 开工前剩余作者核对
 
-- T0 私有资产与 T1a 正式候选装配已通过。T1c 仍须实证子 Agent 内存 persistence ABI、真实模型三工具与父级投影。
+- T0、T1a/T1r 和 T1c 三工具前缀已通过。A5 仍须完成 T1d 同轮四工具和负测。
 - T1d 有公开 Cordis/SubprocessRuntime 和既有 SDK 的 Bento 内独立路径。官方 helper 摘要和沙盒内部 FD 双向原语已确认。专用桥、完整宿主 bindings、隔离范围终止和镜像 confinement 未实证，需按该白名单复审后实施。
 - T2 的 SSH 禁用路由和 T3 的故障窗观测命令等待业务候选落地。已固定独立账本、历史、Gateway/Docker 与卷读口及预期绑定。相关拟新增 specs 尚未执行。
 - 当前无可越过四工具同轮的交付条件。STOP 时记录最后通过 STEP、触发条件、对应代码、最小复现命令、脱敏输出和恢复条件。当前没有正式实施 PASS。

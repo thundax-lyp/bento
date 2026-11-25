@@ -642,3 +642,79 @@ test(
         );
     },
 );
+
+test(
+    'registered child persistence never sends a parent-granted RPC',
+    opts,
+    async () => {
+        const { Context } = await import('@deepseek-ai/cordis');
+        const { SessionStore } = await import('@deepseek-ai/dsh-session');
+        const { bindWorkerSession } = await import('./remote-session.ts');
+        const { createServer } = await import('node:http');
+        const requests: unknown[] = [];
+        const server = createServer(async (request, response) => {
+            const chunks: Buffer[] = [];
+            for await (const chunk of request) chunks.push(chunk);
+            requests.push(JSON.parse(Buffer.concat(chunks).toString()));
+            response.end('{"ok":true}');
+        });
+        const url = await listen(server);
+        const ctx = new Context();
+        type Id = Parameters<typeof bindWorkerSession>[1];
+        const root = randomUUID() as Id;
+        const child = randomUUID() as Id;
+        const unrelated = randomUUID() as Id;
+        try {
+            await ctx.plugin(SessionStore);
+            await ctx.plugin(remoteSessionPersistence, { url, token: 'test' });
+            const persistence = ctx.sessionPersistence;
+            const register = bindWorkerSession(persistence, root);
+            const release = register(child);
+            const prepared = ctx.sessions.prepare(child, {
+                meta: {
+                    cwd: '/sandbox/project/workspace',
+                    parentSession: root,
+                    origin: 'subagent',
+                    delegationDepth: 1,
+                },
+            });
+            try {
+                assert.equal(await persistence.stat(child), undefined);
+                assert.equal(await persistence.stat(unrelated), undefined);
+                await assert.rejects(
+                    persistence.open(unrelated, 'read'),
+                    /ownership/i,
+                );
+                const writer = await persistence.create(prepared.header);
+                assert.equal((await persistence.stat(child))?.header.id, child);
+                const reader = await persistence.open(child, 'read');
+                await assert.rejects(reader.flush(), {
+                    name: 'SessionReadOnlyError',
+                });
+                await assert.rejects(
+                    persistence.open(child, 'write'),
+                    /owned/i,
+                );
+                await writer.append(prepared.snapshotEvents());
+                assert.deepEqual(
+                    (await reader.read()).events,
+                    prepared.snapshotEvents(),
+                );
+                await persistence.flush();
+                assert.deepEqual(requests, []);
+                await reader.close();
+                await writer.close();
+                await assert.rejects(reader.read(), /closed/i);
+                assert.equal((await persistence.stat(child))?.header.id, child);
+            } finally {
+                await release();
+            }
+            assert.equal(await persistence.stat(child), undefined);
+            await persistence.stat(root);
+            assert.deepEqual(requests, [{ id: root, method: 'stat' }]);
+        } finally {
+            await ctx.fiber.dispose();
+            await close(server);
+        }
+    },
+);
