@@ -81,73 +81,43 @@ test -z "$(docker network ls -q --filter label=com.docker.compose.project=bento-
 
 服务器私有根为 `~/bento-worker-a-openshell-0616/web-a10`（A10_ROOT），只接受不存在或空目录。Compose 项目、Temporal namespace、task queue、Keycloak realm、MinIO bucket 均名为 `bento-worker-a-web-a10`。每轮生成 UUID lease，私有配置 0600，运行根 0700。新 Web 仅发布宿主回环 28884，Chromium 加入 Web netns，以 `http://127.0.0.1:8080` 访问 Web 和同源 OIDC。MinIO 在 Compose 网内使用 `https://minio:9000`、独立 CA、SAN=minio，不发布宿主端口。仅可信端从 A 既有 Gateway 状态与证书读回 identity，使用固定 SDK，Gateway 不重启。沙盒和卷按原业务 binding 生成并独立清理，现有 A 探针沙盒/卷不得复用。登录、对象存储和服务 bearer 均新生成。
 
-### T1a：生成隔离装配配置
+A 专属私有配置已生成。服务器私有根内可回读 `lease.json`、`compose.env`、`compose.overlay.yml`、`web.env`、`realm.json`、`identities.json`、`storage.pki.tar` 和 `provision-web.mjs`。当前准备的 Compose 仅发布回环 28884，状态未启动。T2b 启动后从 A10_ROOT 运行 `node provision-web.mjs seed` 配置专属 MinIO 和发送四份本组织邀请，再按 T2b 验证邀请、独立 owner 和真实签名上传。
 
-前置状态：现场 T0 PASS；当前 checkout 已提交 A 专属验收入口、候选路径断言与三条 focused 测试，并能发现唯一 WEB-A10 Chromium 用例。允许产物 `provision-web.mjs`、`lease.json`、`compose.env`、`compose.overlay.yml`、`web.env`、`realm.json`、`identities.json`、`storage.pki.tar` 和 RUNBOOK（9），另核对 A 基线 `deploy/compose.yaml`（1）。禁止导入旧身份、旧卷及外部凭据。
+A10_ROOT 已保全 `launcher.mjs`、`slot-proxy.mjs`、`sandbox-control.mjs`、`host.json`、`execution.env`、`sandbox-policy.yaml` 和 `launcher.test.mjs`。在 A 宿主运行 `node --test launcher.test.mjs` 4/4 通过，覆盖真实 warm 首条 ready 与 completed、租约/槽/进程启动身份、跨项目卷与真实临时 UDS 路由约束。正式环境仍须在同版候选的 T2b 检验真实 admission、沙盒卷读写和运行策略。私有宿主入口是 `node launcher.mjs host <A10_ROOT> <workerImageId> <orchestratorId>` 和 `node sandbox-control.mjs host <A10_ROOT>`。两个 `slot-proxy.mjs bridge` 半端只加入本轮 Orchestrator netns，各用本槽独立 traffic socket 与可信 registration socket。host.json 仍固定两个 warm 槽、18789 上游及私有 observation 模块。
 
-1. 在 A10_ROOT 创建 `provision-web.mjs`，唯一动作 config 和 seed。config 生成各配置，用 `--project-directory` 将 Compose 的相对路径解析限定在本轮私有根，静态渲染只读使用 A 基线的 `deploy/compose.yaml` 模板。本轮 Web 镜像从冻结源码构建，Orchestrator 和 Worker 同 tree。覆盖 Compose 端口，仅发布 Web；其它服务全部留在独占私网。新增 MinIO 只使用已核对 Linux/amd64 缓存 ID `sha256:69b2ec208575b69597784255eec6fa6a2985ee9e1a47f4411a51f7f5fdd193a9`，准入时回读其实际版本再绑定批准。空状态启动前生成独立 bucket 凭据、CA 及叶证书。Web 和 Chromium 信任本轮 CA。
-2. seed 在 T2b 调用。先验证 MinIO 健康，创建私有 bucket、最小对象及 multipart 权限、CORS 限 Web origin，匿名及跨 bucket 拒绝。按部署手册启用 Keycloak Organizations、邮箱验证、S256 PKCE、Standard Flow、auth_time mapper、Mailpit SMTP、OIDC callback/logout URLs。经管理 API 建立四名独立邀请用户（正常准入探针与 A、B、C 三名正式测试用户），回读组织身份、邮箱验证及不同 owner，登录材料仅写 `identities.json`。Chromium 使用隔离 context，互不继承 cookie。
+### T1b1：补齐 A 专属 DSH 沙盒 runtime
 
-```bash
-cd "$HOME/bento-worker-a-openshell-0616/web-a10"
-node --check provision-web.mjs
-node provision-web.mjs config
-docker compose --project-directory "$PWD" -p bento-worker-a-web-a10 --env-file compose.env -f "$HOME/bento-role-test-cd13f3d/bento-worker-a/deploy/compose.yaml" -f compose.overlay.yml --profile dev config --no-env-resolution --quiet
-```
+前置状态为 T1b 已通过并提交 `8de90fa9ac20c87c0edeaca536048786b9be343a`。A10 Compose 保持未启动。仅该步经同版复审后才能执行。T1b1a～T1b1c 全部通过才进入 T1c。保持现有 A Gateway、常驻栈、健康候选和已有探针不变。
 
-PASS：配置渲染成功、唯一宿主发布为回环 28884、专属状态与 TLS 资格可核对。STOP：端口冲突、旧资源引用、缺少获准 MinIO 镜像或跨项目权限。保留失败配置和报告，暂不启动；只提交 RUNBOOK 步骤移除，私有材料不暂存。
+本机 A runtime 构建已通过四文件 SHA 校验及锁定 npm ci，`~/.bento-worker-a-web-a10-runtime` 保全 0400 的 `runtime-image.tar` 和 `runtime-image.json`。本机 Docker 报告 `linux/amd64`，tar SHA 复核一致。服务器导入及其实际镜像身份由下一步独立回读。
 
-### T1b：接入两个真实 Worker 槽和独立卷控制
+已在 A 私有 `inputs/workdir` 保全新标签 `bento-worker-a-web-a10/sandbox-runtime:8c769482-workdir` 的 0400 镜像归档与 manifest，双侧 SHA 通过。新 tar SHA-256 `1c9378cee350dcae70e7e0daffbd8123664b19da802e1e4f564a3e60f8d78097`，本机 index `sha256:218518e8f913e7c2340a1003fd5075cf85b63f92299f137314db9a80d597f850`，Linux/amd64 config ID `sha256:1292c9637ac04d618009ee08d4ee9d20c6a54be56a546c508f6c7dc57c0cbbaa`。镜像只把 OCI WorkingDir 改成 `/sandbox`，原 11 层完整保留、附加层为空。业务卷目标不变，仍为 `/sandbox/work`。升级前探针使用同租约的 `a10r2-<lease 前 8 hex>` 与 `bento-worker-a-a10r2-<lease 前 8 hex>`，已停写，保留 `runtime-image-workdir-report.json`。原 `a10rt-<lease 前 8 hex>` 沙盒、`bento-worker-a-a10rt-<lease 前 8 hex>` 卷、原镜像和失败报告保持现场。
 
-前置状态：T1a PASS。允许产物 `launcher.mjs`、`slot-proxy.mjs`、`sandbox-control.mjs`、`host.json`、`execution.env`、`sandbox-policy.yaml`、`launcher.test.mjs` 和 RUNBOOK（8），另核对 `apps/orchestrator/src/execution-service/command-host.ts`、`apps/worker/run-worker.ts`（2）。禁止修改通用 Worker、调度和权威账本。
+HWE 后原 A Gateway、空候选和常驻栈已复验。宿主 Linux `7.0.0-44-generic`、Landlock ABI 8。A10_ROOT 的 `runtime-image-post-hwe-report.json` 已记录原 tar 与全层身份、`a10r3-<lease 前 8 hex>` 与 `bento-worker-a-a10r3-<lease 前 8 hex>` 的实际镜像和策略。真实 SDK 的锁定 helper 返回 full，包裹 argv 执行通过，FS 返回原标记，独立卷检查无 runtime 文件，专属探针与卷清理通过。rt/r2 旧失败现场与报告保全。
 
-1. 复用既有 A 探针的 create/start/inspect/wait 模式。宿主 `launcher.mjs` 启动两份正式 `run-worker.ts --warm`，Docker `--network none`，独立 slot socket，不挂载 Docker socket、Gateway 或 review 私钥。接受 commandHost warm WorkerRequest 换行协议，透明返回 Worker stdout。在转交 WorkerRequest 前记录 `{leaseId,slot,containerId,startedAt,runId,sessionId,generation,bindingDigest,mode}`，grant 和 prompt 不落盘。只允许按既有 admission 的容器 ID、StartedAt、lease 和 slot 定向 kill，wait 和 Docker inspect 共同证明退出。
-2. `slot-proxy.mjs` 的可信半端加入 Orchestrator netns，并通过本槽 Unix socket 向 Worker 容器 loopback 透传。宿主 launcher 通过只读候选 image 启动 `--network container:<本轮 Orchestrator ID>` 的代理半端，连接本轮 socket 挂载。两侧均由 launcher 预登记相同 slot 和当前 admission，worker 侧只得到本槽 Unix 路径。仅放行当前 WorkerRequest 的 persistence、operation、SDK 三条环回地址；端口来自现有 grant/request，按 slot 和原 admission 校验。Worker 侧半端仅监听自身回环，结束 admission 后撤销端口列表与连接。禁止直连 Gateway、review 或跨槽。
-3. `sandbox-control.mjs` 实现 commandHost action。只接受本 lease 登记 binding；原 project 为 UUID、sandbox 为 b- 加 16 位 hex、volume 为 bento-workspace- 加原项目 UUID。卷带 lease 和项目归属及 OpenShell attachable 标签，核对 sandbox 的 ID、namespace、workspace 和唯一 RW 挂载。provisionTask 使用固定环境版本创建真实沙盒并导入文本，snapshot 通过断网只读卷 helper，stop/start 用 A CLI，stopped 要求 Gateway 状态和 Docker 运行挂载一致，purge 只删本绑定并回读不存在。host.json 固定 `prewarmWorker:true,workerSlots:2` 及下一步 observation 模块，命令通过私有 UDS 连接宿主，Orchestrator 容器本身无 Docker socket。
-4. 固定控制协议：`state/<leaseId>/control.sock` 以一条换行 UTF-8 JSON 包读取 `{leaseId,action,binding,files?,environmentVersion?}`，action 枚举 `provision|provisionTask|snapshot|stop|start|stopped|running|purge`。成功在 socket 回 `{ok:true,value}`，stop/start 的 value 为 null；拒绝回 `{ok:false,code}`。control 客户端解包按 commandHost 的返回输出，stop/start 不写 stdout，拒绝或无响应均非零退出。专用 `launcher.sock` 启动命令首行发 `{leaseId,action:'warm'}`；宿主分配两个空槽之一，等待 `run-worker.ts --warm` 自带的首行 `ready\n`，校验并原样转发一次。launcher 禁止合成或重复发送 ready；之后透明传现有 WorkerRequest/Worker stdout；每个连接固定一槽，收到 EOF/SIGKILL 只清理该槽符合记录的实例。任一拒绝不得伪造 worker receipt。Orchestrator 的 worker/control 命令分别运行 `node /app/private/launcher.mjs worker-client` 与 `node /app/private/sandbox-control.mjs client`，由 host.json 明确 args 和受控 lease 环境变量。
-5. launcher 单测验证错 lease/slot/run/StartedAt、额外端口、跨项目卷拒绝和正常目的地放行，使用独立临时 socket。focused 握手正控运行真实 `run-worker.ts --warm`，用独占测试 bootstrap 完成首条合法 WorkerRequest。断言客户端先收到且只收到一次真实 ready，发送首条请求后下一行就是该请求的合法业务 receipt（正控固定 `completed`），若读到第二条 ready 即失败。真实暖槽设备可用性已有 T0 证据，业务 admission 在 T2b 验。
+A10_ROOT 的 `sandbox-control.mjs`、`host.json` 与 `execution.env` 已绑定 post-HWE 报告的实际 A 镜像配置 ID、已验证策略和执行版本。T1b 四项 focused 与版本回读通过，原三文件在 0400 的 `runtime-rollback.tar` 保全，本轮业务尚未启动。
 
-```bash
-cd "$HOME/bento-worker-a-openshell-0616/web-a10"
-node --check launcher.mjs
-node --check slot-proxy.mjs
-node --check sandbox-control.mjs
-node --test launcher.test.mjs
-```
+### T1b2：新卷 subpath 与可恢复原子交换
 
-PASS：验证全部通过，错身份命令未到达后端。STOP：Worker 能访问未授权地址或无法独立对账卷。失败只停止本轮测试 socket，保全证据。提交仅 RUNBOOK。
+从 `b4ff9fb7377aafec19ab33a2062996580f24e9f1` 安全点继续。post-HWE full/FS 报告及配置版本保持有效。T1b2 三步通过才进入 T1c。仅本轮尚未创建的业务卷采用新布局，正式 A10 Compose 仍未启动。原 a10rt、a10r2、其卷和报告、既有 Gateway 及所有 fixture 保留。只修改本轮私有接线，不变更产品 Go、账本、接口或公共配置。
 
-### T1c：接入受信观察、复核与落盘屏障
+A 私有 `inputs/exchange-linux-amd64` 和 `inputs/exchange.sha256` 已保全。Go 1.25.3 静态 Linux/amd64，CGO=0，双侧摘要与服务器 0500 验证通过。其唯一动作是 `exchange` 或 `fsync-only`，均相对同一卷父目录及已核验的兄弟目录，成功须收到 `A10_PARENT_FSYNCED`。
 
-前置状态：T1b PASS。允许产物 `bootstrap.ts`、`review.mjs`、`trusted-entry.mjs`、`task-observation.mjs`、`sdk-relay.mjs`、`trusted-entry.test.mjs`、`runtime.json` 与 RUNBOOK（8），另查 `apps/worker/task-bootstrap.ts` 和 `apps/orchestrator/src/openshell/sdk-ingress.ts`（2）。禁止添加公开复核 API 或向业务账本注入状态。
+A10_ROOT 的 `subpath-probe-report.json` 已保全真实 OpenShell v0.1.6 mount subpath、同 sandbox/volume 的 inode 和前后字节。停写、交换一次、崩溃窗口回读与 fsync-only 一次、重新启动读到新 inode、专属探针/卷清理全部通过。rt/r2 原失败现场保留。
 
-1. `bootstrap.ts` 接正常 Task bootstrap，使用确定性 DSH 模型和真实 ToolRuntime，固定角色输入 `WEB-A10 <A-write|A-cancel|B|C> <UUID>`。A-write/B/C 以一次正常 SDK Exec 在实际工作区文件追加 marker 并 fsync。marker 只作独立 argv。recover 走正常历史恢复，零目标 Exec。A-cancel 原 Run 在持久会话开始后等待停止并零写，受信观察释放前返回 null；同一业务请求的安全重试从持久 retry attempt 与原 admission 分类并正常结束。07-02 的追加请求与 07-03 的独立请求另以 spec 的固定角色和 marker 区分。
-2. `trusted-entry.mjs` 实现现有 hook 动作枚举。在 A/B runtime.initialize 返回、发出任何 SDK 或 history RPC 之前等待独立槽 gate。按 caseId 回读两个原 Run 的持久 admit、不同槽和 Docker 启动身份，C 回读 queued、无 admit/receipt，并核对没有第三 Worker。持久证据成立后放 A。A 原 Worker 独立退出后只放 B。gate 的外层期限为 60 秒，超时立即撤销冻结、释放等待并判失败。
-3. `sdk-relay.mjs` 的上游固定 `https://127.0.0.1:28881`，校验 A Gateway CA 和客户端证书。commandHost 的 gateway 固定为 Orchestrator netns 内 `https://127.0.0.1:18789`，由可信 sidecar 监听并透明转到本轮 `sdk-relay.sock`；宿主 relay 在该 UDS 终止入站 TLS 并验证 client certificate，独立新叶证书由 A CA 签发并包含 127.0.0.1 SAN，私钥仅挂可信 relay。禁止让 Worker 接触此端口或私钥。可信宿主再以 A mTLS 转发，只针对本 case 的原 A 标记 Exec。先将原请求转发到真实 Gateway，再扣住对应 terminal event 和 trailers。使用锁定 schema 与原 binding，要求外部 RO 卷 marker 恰 1、原代 SDK UNKNOWN 恰 1、business receipt 为零且原 SDK 流仍打开后，按 launcher 的原 admission 容器身份强杀 A。目标 SDK 自首请求帧起超时 8 秒（生产 SDK 上限 10 秒）。其他流透传，失败关闭目标流。旧 grant 负测只在可信进程内对原 SDK ingress 以目标写类请求验证撤权后请求被拒绝，核对无上游调用及副作用次数不增长，grant 不出该进程。日志不得代替独立卷和两侧账本。
-4. `review.mjs` 只通过现有进程内 installer 暴露私有 UDS 方法。成功用原 UNKNOWN 的 `sdkOperationId` 和独立快照 SHA-256；failed 使用同绑定 READY；unconfirmed 还须 restore idle、零运行 RW 挂载、Gateway stopped。只回读同原键审计。`task-observation.mjs` 组合独立 launcher wait、持久业务与授权账本和 Gateway/Docker 证据以提供退出、可信停止、retryObservation/queryRestore/restoreTask/observeSdkRetrySafety。restore 按原 attempt 独占绑定和持久 manifest。取得 stopped、零 RW 挂载后，先将完整文本写入同卷的新 staging 目录并 fsync，核对 `expectedSha256`。发布使用同文件系统的原子目录交换，重复 attempt 只核对既有发布及 ready 标记。重新启动后独立读回绑定、实效 policy 和快照摘要，成功后才报告 ready。身份冲突或读回不一致立即 STOP，保留 staging 和原证据。三个物理停写负控逐个保持 restore busy、实际 RW 或沙盒未停，门禁及审计均不变。
-5. `review.sock` 为 0660、本轮可信进程独占。单行 JSON 包 `{leaseId,action,payload}`，仅 `reviewRun`、`closeTaskRun`、`readTaskClosure`；payload 分别为上文 SDK proof、`{runId,decision,expectedGeneration}`、`{runId}`。校验原 Run 与 lease 后将现有回调结果包为 `{ok:true,value}`，无返回值用 null；预期拒绝用 `{ok:false,code}`，禁止携原始日志。hook 通过单独可信 `trusted.sock` 发送同形外包及既有枚举、BarrierInputs；`trusted-entry.mjs` 才能派生 review proof。两 socket 无宿主 TCP 发布。
-6. `task-observation.mjs` 的 `observeSdkRetrySafety(binding,runId,generation)` 只返回 null，或精确 `{sessionId,runId,generation,bindingDigest,exitedAt,observedAt,unknownOperations,workspaceOnly}`。字段来源如下：
-   - runId/generation 来自可信 launcher 原 execute admission，并与持久 Run.admittedGeneration 匹配；sessionId 来自原 binding，与持久 Run.sessionId 相等；bindingDigest 用 `executionBindingDigest(binding)` 与 admission/Run 持久摘要交叉核对。
-   - exitedAt 与 `observeWorkerExit` 返回并由 `taskExit` 持久化的时间字节相同，源是与原 container ID、StartedAt 匹配的 Docker wait/inspect FinishedAt，经同一 ISO 归一化；仅进程退出后采集 observedAt，满足 exitedAt ≤ observedAt ≤ 消费时刻。
-   - unknownOperations 为从 authority 操作账本按原 session 与 `g` 经独立只读核对的 UNKNOWN 条数，必须为 0，并由生产 `stopAndProve` 复核；workspaceOnly 由目标 SDK 受限操作清单、实际 sandbox policy 和唯一同 binding 卷，以及无额外能力/外部目的地的 launcher 观察共同判定。未知一律 null。
-   - `historyQuiescence(session)` 由生产 `stopAndProve` 在接收观测后直接核对 `handleOpen=false,pendingBatches=0`；可信宿主不可替生产进程返回该状态。最后生产复查 READY `g+1` 与原代 UNKNOWN，才持久化 proof。
-7. `observeWorkerExit(binding,runId,generation)` 返回上述同源的前五个身份和退出字段或 null；`observeTaskVolumeStopped` 回相同四个 binding/run/代次字段及 `{restoreIdle:true,volumeWriters:0,sandboxStopped:true,observedAt}` 或 null。 `retryObservation(binding,runId,generation)` 返回 `{unknownOperations:number,workspaceOnly:boolean}`，两值复用上述只读来源，证据不全拒绝。 `queryRestore(binding,attemptId)` 返回 null 或 `{attemptId,phase:'prepared'|'published'|'ready',sha256}`；`restoreTask(binding,attemptId,files,expectedSha256)` 接受当前 attempt 的规范文本数组 `{path:string,text:string}[]`，返回 `{attemptId,sha256}`，仅在 ready 后成功。阶段和摘要从原子持久 manifest 回读。以上观察和恢复使用独立 `observe.sock` 同 0660、同包结构，action 仅允许这五类加 `observeSdkRetrySafety`，各 payload 恰为该签名字段。禁止浏览器直接接入。
-8. 单测错租约、未登记、重复放行、跨槽、临界超时、停写不足和合法双槽后只放 B。review 输出限定 UUID/摘要/计数/布尔，私有入口无浏览器侧凭据可读。
+本轮私有 `sandbox-control.mjs` 对全新卷初始化 `current/`，快照只读 current，实际 mount 使用并核对 `subpath:current`，原文件已在 0400 回退 tar 保全。私有布局回读和 launcher 4/4 通过，原镜像、策略及环境版本不变。
 
-```bash
-cd "$HOME/bento-worker-a-openshell-0616/web-a10"
-node --check trusted-entry.mjs
-node --check review.mjs
-node --check sdk-relay.mjs
-node --check task-observation.mjs
-node --test trusted-entry.test.mjs
-```
+私有 launcher 的原授权单次负控已通过 focused 5/5，其中合成同路径同方法正控 0、撤权后同 token 负控 16、计数与卷证据不变、无登记/错身份/超时拒绝，原文件 0400 回退包已保全。真实 T2b/T2c 正负控仍待同候选审批。
 
-PASS：focused 检查无跳过，拒绝分支均未产生可信结论。STOP：事实来源相互覆盖或证据采集超出运行契约。保留报告，关闭测试 socket，仅提交 RUNBOOK。
+A10_ROOT 已保全同版 `bootstrap.ts`、`runtime.json`、`sdk-relay.mjs`、`trusted-entry.mjs`、`review.mjs`、`task-observation.mjs` 及 `trusted-entry.test.mjs`。A 服务器 focused 6/6，完成双槽 gate/超时、错租约、分帧完整性、物理停止门槛和恢复 inode 判断。私有调用、原 grant 拒绝、真实 DSH 与 restore 尚须同候选验收。T2a 的 prepare 编排应启动 `node trusted-entry.mjs host <A10_ROOT> <orchestratorId>` 及相邻已有的 launch/control；可信侧证书仅供 SDK relay，review socket 位于 `state/<leaseId>/review-sockets` 并仅对 Orchestrator 读写，其他 observer/launcher socket 保持私有。本轮 Worker 镜像需带已验 Linux SDK 至 `/app/.bento-sdk`，Worker 只接本槽 UDS 和候选 runtime 配置。restore 通过已核验的同卷 exchange 工具，已交换的重投先重 fsync，核原 binding 和新 inode 后才落 ready。
+
+A 私有 launcher 已完成一次性预备正控 focused 6/6，原 0400 回退包保留。候选 prepare 必须只在匹配本轮 C smoke marker 的正常已核 admission、WorkerRequest 转发前，用当前 grant 经原负控使用的相同 SDK ingress 执行固定 `ExecSandbox /usr/bin/true`；独立 relay 审计须由 0 到 1，gRPC status 须为 0。正控独立于旧 grant 记录，无取回接口，grant Buffer 在 finally 清零。0600 `valid-grant-proof.json` 绑定 lease、run、session、generation、bindingDigest、sandbox 与计数，T2b 对照浏览器的预备 Run。
+
+A 私有 relay 叶证书已签发，CA、127.0.0.1 目标、服务端/客户端用途、key 配对和 0600 权限检查通过。仅可信 relay 读取私钥；上游限定网关 28881，下游限定本租约 Orchestrator netns 的 18789。真实 mTLS 和正控证据待 T2b 同候选审批后取得。
 
 ### T2a：完成最终候选与私有编排
 
-前置状态：T1c PASS。本步公开源码在本地 `/Volumes/storage/workspace/bento-a` 修改并验证，私有 ops.mjs 在 A SSH 宿主的 A10_ROOT 编写与语法验证，运行时读服务器冻结归档。允许改 `apps/workspace/web/acceptance/web-a10.spec.ts`、`apps/workspace/web/acceptance/web-a10-hook.ts`、`apps/orchestrator/acceptance/web-a10/run.mjs`、`ops.mjs` 和 RUNBOOK（5），另查 `deploy/orchestrator/observe-web-a11.mjs` 和 `apps/orchestrator/src/execution-service/task-run-view.ts`（2）。本步完成矩阵及 WEB-07 受影响用例。运行器的项目与 lease 路径换成 A 专属，保留路径、owner/mode、白名单及同版本检查。私有 `ops.mjs` 仅接受 build/prepare/verify/cleanup，runner 校验其摘要后调用。运行路径必须是只读候选归档。build 从已冻结归档构建并输出实际镜像与配置绑定报告；prepare 核对合法批准、启动专属 Compose、配置 Temporal、seed OIDC 与 MinIO、做正常 admission；verify 从实际浏览器执行矩阵；cleanup 按 lease 精确枚举并保全，只删本轮归属。Chromium 镜像和二进制按冻结 Playwright lock 及安装清单核对。归档和审批后才能进入真实部署。
+前置状态：A10_ROOT 私有 review/entry/relay/bootstrap 与 observation 已保全，focused 6/6 通过，真实候选仍未启动。本步公开源码在本地 `/Volumes/storage/workspace/bento-a` 修改并验证，私有 ops.mjs 在 A SSH 宿主的 A10_ROOT 编写与语法验证，运行时读服务器冻结归档。允许改 `apps/workspace/web/acceptance/web-a10.spec.ts`、`apps/workspace/web/acceptance/web-a10-hook.ts`、`apps/orchestrator/acceptance/web-a10/run.mjs`、`ops.mjs` 和 RUNBOOK（5），另查 `deploy/orchestrator/observe-web-a11.mjs` 和 `apps/orchestrator/src/execution-service/task-run-view.ts`（2）。本步完成矩阵及 WEB-07 受影响用例。私有正控 focused 与证书静态校验已通过，ops 在获审 prepare 中为 smoke 生成一个 UUID，仅向 launcher 传其摘要，并将 UUID 传给 smoke spec，正式矩阵不得复用。ops 将正控记录的 runId 与预备浏览器回执核对。冻结 runner 绑定 relay 两个 0600 文件的 SHA-256，最终 configurationSha256 同时绑定 relay 证书指纹与原 CA 证书摘要，prepare 重验证书链、目标、期限、权限及摘要。prepare 启动 A 私有 launcher 必须加入同租约 Orchestrator 容器 netns、复核候选镜像与只读 Linux Docker CLI 及 scoped socket 挂载，Docker socket 仅可信 launcher 可见。Orchestrator 绑定 netns 后 warm 槽可按既有 replenish 接入，两槽 ready 后才允许常规 admission。运行器的项目与 lease 路径换成 A 专属，保留路径、owner/mode、白名单及同版本检查。私有 `ops.mjs` 仅接受 build/prepare/verify/cleanup，runner 校验其摘要后调用。运行路径必须是只读候选归档。build 从已冻结归档构建并输出实际镜像与配置绑定报告；prepare 核对合法批准、启动专属 Compose、配置 Temporal、seed OIDC 与 MinIO、做正常 admission；verify 从实际浏览器执行矩阵；cleanup 按 lease 精确枚举并保全，只删本轮归属。Chromium 镜像和二进制按冻结 Playwright lock 及安装清单核对。归档和审批后才能进入真实部署。
 
 ```bash
 cd /Volumes/storage/workspace/bento-a
@@ -216,7 +186,7 @@ PASS：服务器 bundle SHA-256 与本地一致，readback commit/tree 精确相
 
 ### T2b：冻结、批准与真实常规 admission
 
-前置状态：T2b1 PASS。在 A 宿主的 `~/bento-worker-a-openshell-0616/web-a10/source` 操作。允许实际写入 `manifest.json`、`source.tar`、`lease.json`、`runtime-report.json` 和 RUNBOOK（5），另核对 `approval.json`、`ops.mjs`、`compose.overlay.yml`、`host.json`、`run.mjs`（5）。`approval.json` 由 MASTER 审核后经 A 私有根交接，文件 mode 0600、由 A 授权身份拥有，WORKER 只读校验。禁止从非冻结树构建或执行。prepare、verify、cleanup 都通过同候选 runner 执行，每次从 manifest 读回 SHA-256 并对原 tar 和实际展开文件逐一校验。
+前置状态：T2b1 PASS。最终 `configurationSha256` 绑定已验证的 exchange binary SHA 和 `subpath-probe-report.json`。审批 `imageIds.sandboxRuntime` 必须等于 post-HWE 报告的 A 配置 ID，prepare 前重核 Docker ID、策略摘要和执行版本。以 `execution.env` 的已验证 `BENTO_EXECUTION_ENVIRONMENT_VERSION` 覆盖 `compose.env` 的静态预检版本，审批证据来自最终 Compose 渲染。在 A 宿主的 `~/bento-worker-a-openshell-0616/web-a10/source` 操作。允许实际写入 `manifest.json`、`source.tar`、`lease.json`、`runtime-report.json` 和 RUNBOOK（5），另核对 `approval.json`、`ops.mjs`、`compose.overlay.yml`、`host.json`、`run.mjs`（5）。`approval.json` 由 MASTER 审核后经 A 私有根交接，文件 mode 0600、由 A 授权身份拥有，WORKER 只读校验。禁止从非冻结树构建或执行。prepare、verify、cleanup 都通过同候选 runner 执行，每次从 manifest 读回 SHA-256 并对原 tar 和实际展开文件逐一校验。
 
 ```bash
 cd "$HOME/bento-worker-a-openshell-0616/web-a10/source"
@@ -237,7 +207,7 @@ export BENTO_WEB_A10_CONFIG="$HOME/bento-worker-a-openshell-0616/web-a10/lease.j
 node apps/orchestrator/acceptance/web-a10/run.mjs --prepare
 ```
 
-PASS：正常浏览器用专用预备账号从 Web 提交无屏障 C 场景，实际 Go/Temporal 派发、可信原 admission、真实 DSH/OpenShell 标记、成功 receipt 与原 Run 下载均可对照。独立三测试身份、MinIO 正常签名上传和独立读回、匿名拒绝都通过。预备工作区清理后才开始故障案例。STOP：只取得 warm ready、正常 admission 或读回失败、候选身份漂移。保全同 lease 证据，只提交 RUNBOOK。
+PASS：先以本轮专用预备 Run 用正常有效授权经相同生产 ingress 与固定 `ExecSandbox /usr/bin/true` 成功并核独立上游计数，正控授权不进入旧 grant 单记录。正常浏览器用专用预备账号从 Web 提交无屏障 C 场景，实际 Go/Temporal 派发、可信原 admission、真实 DSH/OpenShell 标记、成功 receipt 与原 Run 下载均可对照。 同版 admission 实际运行的沙盒镜像 ID 必须等于 T1b1 报告的 A 配置 ID，实际生效策略必须匹配其中的策略摘要及生效记录。独立三测试身份、MinIO 正常签名上传和独立读回、匿名拒绝都通过。预备工作区清理后才开始故障案例。STOP：只取得 warm ready、正常 admission 或读回失败、候选身份漂移。保全同 lease 证据，只提交 RUNBOOK。
 
 ### T2c：同候选验收与清理
 
@@ -273,9 +243,6 @@ T2c 复用 `verifySafeRetry` 验证 07-04 的有证据正控和无证据拒绝�
 | 步骤 | 修改或产物 | 另行核对 | 合计 |
 | --- | --- | --- | ---: |
 | T0 | RUNBOOK（1） | `ENVIRONMENTS.md`、`deploy/compose.yaml`、`deploy/README.md`、`apps/orchestrator/src/execution-service/service.ts`、`apps/orchestrator/src/execution-service/command-host.ts`、`apps/orchestrator/src/execution-service/types.ts`、`apps/orchestrator/acceptance/web-a10/run.mjs`、`apps/workspace/web/acceptance/web-a10.spec.ts`（8） | 9 |
-| T1a | 私有 Compose、OIDC、MinIO 产物与 RUNBOOK（9） | 部署入口（1） | 10 |
-| T1b | launcher、slot、卷控制产物与 RUNBOOK（8） | commandHost、Worker 入口（2） | 10 |
-| T1c | DSH 与可信复核产物和 RUNBOOK（8） | Task bootstrap、SDK ingress（2） | 10 |
 | T2a | 候选、编排和 RUNBOOK（5） | WEB-A11 观察器和 Run 投影（2） | 7 |
 | T2b1 | 两份 bundle、源码展开目录与 RUNBOOK（4） | ENVIRONMENTS、lease（2） | 6 |
 | T2b | 冻结产物、lease 更新及 RUNBOOK（5） | 只读 approval 等本步白名单（5） | 10 |
