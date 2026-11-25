@@ -45,12 +45,12 @@ async function post(page: Page, route: string, button: string) {
     return accepted.json();
 }
 
-test('A5 prefix calls the file, Bash and child tools in one model turn', async ({
-    page,
-}) => {
+async function exerciseTools(page: Page, ptc: boolean) {
     await login(page);
     const marker = 'a5-' + randomUUID();
-    await page.getByLabel('任务名称').fill('A5 真实工具前缀');
+    await page
+        .getByLabel('任务名称')
+        .fill(ptc ? 'A5 真实四工具' : 'A5 真实工具前缀');
     const { task } = await post(page, '/api/tasks', '创建空白任务');
     const taskPath = '/tasks/' + encodeURIComponent(task.id);
     await expect(page).toHaveURL('http://127.0.0.1:24881' + taskPath);
@@ -58,10 +58,17 @@ test('A5 prefix calls the file, Bash and child tools in one model turn', async (
     await expect(input).toBeEnabled({ timeout: 90_000 });
     await input.fill(
         [
-            '请严格按顺序执行三个工具，并等待上一个工具的真实结果。',
+            '请严格按顺序执行' +
+                (ptc ? '四' : '三') +
+                '个工具，并等待上一个工具的真实结果。',
             '先调用 a5_file，marker 为 ' + marker + '。',
             '接着调用 a5_bash，使用完全相同的 marker。',
-            '最后调用 a5_child，让子 Agent 读取同一个 Bash marker。',
+            '接着调用 a5_child，让子 Agent 读取同一个 Bash marker。',
+            ...(ptc
+                ? [
+                      '最后调用 a5_ptc。program 填写以下 TypeScript 函数体：const marker = await a5.read({}); await a5.verify({marker}); return marker;',
+                  ]
+                : []),
             '完成后仅回复 A5 完成。',
         ].join('\n'),
     );
@@ -99,12 +106,24 @@ test('A5 prefix calls the file, Bash and child tools in one model turn', async (
     const events = items
         .filter((event) => event.runId === run.id)
         .map((event) => event.text);
-    for (const name of ['file', 'bash', 'child'])
+    for (const name of ['file', 'bash', 'child', ...(ptc ? ['ptc'] : [])])
         expect(
             events.filter((text) => text === 'A5 ' + name + ' 工具完成'),
         ).toHaveLength(1);
     console.log(
-        'A5 prefix candidate evidence',
+        ptc
+            ? 'A5 four tools candidate evidence'
+            : 'A5 prefix candidate evidence',
         JSON.stringify({ taskId: task.id, runId: run.id, marker }),
     );
+}
+
+test('A5 prefix calls the file, Bash and child tools in one model turn', async ({
+    page,
+}) => {
+    await exerciseTools(page, false);
+});
+
+test('A5 four tools complete in one real model turn', async ({ page }) => {
+    await exerciseTools(page, true);
 });

@@ -1,4 +1,4 @@
-import { Context } from '@deepseek-ai/cordis';
+import { Context, symbols } from '@deepseek-ai/cordis';
 import { AgentRegistry, type AgentHandle } from '@deepseek-ai/dsh-agent';
 import { AgentLoop } from '@deepseek-ai/dsh-agent-loop';
 import {
@@ -14,7 +14,16 @@ import * as checkpointPolicy from '@deepseek-ai/dsh-session-checkpoint-policy';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { isAbsolute, posix } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import type { Transport } from '@connectrpc/connect';
+import { createClient, type Transport } from '@connectrpc/connect';
+import { NodePtcRuntime } from '@deepseek-ai/dsh-ptc-runtime-node';
+import { SandboxPolicyService } from '@deepseek-ai/dsh-sandbox-policy';
+import {
+    PtcSandbox,
+    PtcSubprocess,
+    ptcHelper,
+    ptcFrameBytes,
+    type PtcSdk,
+} from './ptc-subprocess.ts';
 import type { DshWorkerBootstrap } from './dsh-worker.ts';
 import type { OpenShellProviderConfig } from './provider.ts';
 import { createRunSdkTransport } from './sdk-transport.ts';
@@ -27,6 +36,7 @@ export type BaseBootstrapConfig = {
     sdkModule: string;
     modelAdapterModule: string;
     taskToolsModule?: string;
+    ptc?: true;
     provider: string;
     model: string;
     workspaceRoot: string;
@@ -47,6 +57,12 @@ export type TaskToolsFactory = (options: {
     agent: OfficialAgent;
     workspaceRoot: string;
     registerChild: ReturnType<typeof bindWorkerSession>;
+    runPtc?: (
+        input: Pick<
+            Parameters<NodePtcRuntime['resolve']>[0],
+            'program' | 'bindings' | 'signal'
+        >,
+    ) => ReturnType<NodePtcRuntime['run']>;
 }) => Promise<{
     publicEvents(events: readonly SessionEvent[]): readonly PublicWorkerEvent[];
     trustedTaskChecks(events: readonly unknown[]): readonly TrustedTaskCheck[];
@@ -76,9 +92,13 @@ async function configuration(): Promise<BaseBootstrapConfig> {
         ];
         if (
             row.schema !== 1 ||
+            (Object.hasOwn(row, 'ptc') &&
+                (row.ptc !== true || !row.taskToolsModule)) ||
             Object.keys(row).some(
                 (key) =>
-                    !['schema', 'taskToolsModule', ...fields].includes(key),
+                    !['schema', 'taskToolsModule', 'ptc', ...fields].includes(
+                        key,
+                    ),
             ) ||
             fields.some(
                 (key) =>
@@ -169,6 +189,7 @@ const bootstrap: DshWorkerBootstrap = async (request) => {
     let registerChild: ReturnType<typeof bindWorkerSession> | undefined;
     let taskTools: Awaited<ReturnType<TaskToolsFactory>> | undefined;
     let taskToolsFactory: TaskToolsFactory | undefined;
+    let ptcSdk: PtcSdk | undefined;
     if (
         request.mode === 'execute' &&
         request.publicEventsUrl &&
@@ -216,6 +237,89 @@ const bootstrap: DshWorkerBootstrap = async (request) => {
         return disposal;
     }
 
+    async function installPtc(agent: OfficialAgent) {
+        if (!ptcSdk) throw new Error('PTC requires its scoped SDK');
+        const parent = ctx.subprocess;
+        const sandbox = ctx.sandbox;
+        const scope = ctx.isolate('subprocess').isolate('sandbox');
+        await scope.plugin(PtcSubprocess, {
+            sdk: ptcSdk,
+            sandbox: request.binding.sandbox,
+            root: config.workspaceRoot,
+            node: config.node,
+            confine: parent.resolveExecutable.bind(parent),
+        });
+        await scope.plugin(PtcSandbox, sandbox.confine.bind(sandbox));
+        await scope.plugin(NodePtcRuntime, {
+            executionMode: 'per-call',
+            launch: {
+                kind: 'node-script',
+                executable: config.node,
+                bootstrapPath: ptcHelper,
+            },
+            timeoutMs: 20_000,
+            maxTimeoutMs: 20_000,
+            maxOutputBytes: ptcFrameBytes,
+            maxOldGenerationSizeMb: 64,
+            maxMessageBytes: ptcFrameBytes,
+            maxPendingCalls: 8,
+            graceMs: 2000,
+        });
+        const transport = scope.subprocess;
+        const parentIdentity = Reflect.get(parent, symbols.original);
+        if (
+            !parentIdentity ||
+            Reflect.get(ctx.subprocess, symbols.original) !== parentIdentity ||
+            !(transport instanceof PtcSubprocess) ||
+            Reflect.get(transport, symbols.original) === parentIdentity
+        )
+            throw new Error('PTC subprocess scope mismatch');
+        return async (
+            input: Parameters<
+                NonNullable<Parameters<TaskToolsFactory>[0]['runPtc']>
+            >[0],
+        ) => {
+            const policy = scope.sandboxPolicy.resolve({
+                session: agent.session,
+                mode: 'read-only',
+            });
+            if (
+                policy.mode !== 'read-only' ||
+                policy.workspaceRoot !== config.workspaceRoot
+            )
+                throw new Error('PTC policy mismatch');
+            const node = await transport.resolveExecutable(
+                config.node,
+                undefined,
+                input.signal,
+            );
+            const confine = await ctx.sandbox.confine(
+                [
+                    node,
+                    '--max-old-space-size=64',
+                    ptcHelper,
+                    String(ptcFrameBytes),
+                ],
+                { ...policy, mode: 'read-only' },
+                input.signal,
+            );
+            if (confine.enforcement !== 'full')
+                throw new Error('PTC full confinement required');
+            const release = transport.stage(confine.argv);
+            try {
+                return await scope.ptcRuntime.run(
+                    scope.ptcRuntime.resolve({
+                        ...input,
+                        cwd: config.workspaceRoot,
+                        sandboxPolicy: policy,
+                    }),
+                );
+            } finally {
+                release();
+            }
+        };
+    }
+
     async function wrap(handle: AgentHandle) {
         handles.add(handle);
         const real = handle.agent;
@@ -225,6 +329,7 @@ const bootstrap: DshWorkerBootstrap = async (request) => {
                 agent: real,
                 workspaceRoot: config.workspaceRoot,
                 registerChild,
+                ...(config.ptc && { runPtc: await installPtc(real) }),
             });
         const agent: WorkerAgent = {
             session: {
@@ -254,6 +359,25 @@ const bootstrap: DshWorkerBootstrap = async (request) => {
             if (typeof module.SandboxClient !== 'function')
                 throw new Error('Official SandboxClient constructor required');
             const client = new module.SandboxClient(sdk.transport);
+            if (config.ptc) {
+                const raw = (await import(
+                    new URL('raw.js', pathToFileURL(config.sdkModule)).href
+                )) as { OpenShell?: unknown };
+                const service = raw.OpenShell;
+                if (
+                    !service ||
+                    typeof service !== 'object' ||
+                    !('typeName' in service) ||
+                    service.typeName !== 'openshell.v1.OpenShell'
+                )
+                    throw new Error(
+                        'OpenShell raw service descriptor required',
+                    );
+                ptcSdk = createClient(
+                    service as Parameters<typeof createClient>[0],
+                    sdk.transport,
+                ) as unknown as PtcSdk;
+            }
             if (typeof client.execInteractive !== 'function')
                 throw new Error('Official interactive SDK required');
             provider = {
@@ -321,6 +445,11 @@ const bootstrap: DshWorkerBootstrap = async (request) => {
                 await ctx.plugin(ToolRuntime);
                 await ctx.plugin(AgentLoop);
                 await ctx.plugin(checkpointPolicy);
+                if (ptcSdk)
+                    await ctx.plugin(SandboxPolicyService, {
+                        mode: 'read-only',
+                        workspaceRoot: config.workspaceRoot,
+                    });
                 if (adapter)
                     unregister = ctx.llm.registerAdapter(
                         [config.provider],
