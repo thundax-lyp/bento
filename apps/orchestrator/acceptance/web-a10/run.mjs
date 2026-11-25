@@ -21,7 +21,6 @@ import { pathToFileURL } from 'node:url';
 const root = join(homedir(), 'bento-worker-a-openshell-0616', 'web-a10');
 const leasePath = join(root, 'lease.json');
 const project = 'bento-worker-a-web-a10';
-const runbook = 'docs/30-designs/RUNBOOK-WEB-06-RECONCILIATION.md';
 const candidates = [
     'apps/workspace/web/src/pages/tasks/details/index.tsx',
     'apps/workspace/web/playwright.web-a10.config.ts',
@@ -158,25 +157,23 @@ async function freeze(lease, state) {
         git(args, index).split('\0').filter(Boolean);
 
     try {
-        assertCandidatePaths(
-            [
-                ...gitPaths([
-                    'diff',
-                    '--no-renames',
-                    '--name-only',
-                    '-z',
-                    'HEAD',
-                    '--',
-                ]),
-                ...gitPaths([
-                    'ls-files',
-                    '--others',
-                    '--exclude-standard',
-                    '-z',
-                    '--',
-                ]),
-            ].filter((path) => path !== runbook),
-        );
+        assertCandidatePaths([
+            ...gitPaths([
+                'diff',
+                '--no-renames',
+                '--name-only',
+                '-z',
+                'HEAD',
+                '--',
+            ]),
+            ...gitPaths([
+                'ls-files',
+                '--others',
+                '--exclude-standard',
+                '-z',
+                '--',
+            ]),
+        ]);
         const sourceCommit = git(['rev-parse', 'HEAD']).trim();
         const index = join(staging, 'index');
         git(['read-tree', sourceCommit], index);

@@ -21,9 +21,15 @@
 
 ## 场景补充证据
 
-- **WEB-06 需求汇总**。WEB-06-01～05 已有验收证据。2026-11-24 任务分支补齐待核对、确认和可信结案的部分实现。最小实栈通过登录、上传及探针沙盒策略核对，Orchestrator 未启动，完整三账号中断和可信结案待验。见 [本轮实栈记录](https://github.com/thundax-lyp/bento/blob/6ae58ef5038b30898935a958d07cc73ab55323bb/docs/30-designs/RUNBOOK-WEB-06-RECONCILIATION.md#2026-11-24-最小实栈阶段记录)。
+- **WEB-06 需求汇总**。WEB-06-01～05 已有验收证据。2026-11-24 的最小实栈通过登录、上传和探针沙盒策略核对，当时尚未启动 Orchestrator。2026-11-25 的后续实栈推进到正常任务派发，仍未通过完整验收。见 [WEB-A10 脚手架与实栈边界](#web-a10-脚手架与实栈边界)。
 - **WEB-06-02 查询终态和无变更结果**。2026-11-19 `38e32ae`：独立 Chromium 1/1，经实际 API→执行 HTTP→SQLite 验成功非空/零字节、持久 failed 固定摘要、运行中不可用；双 view 预览/附件字节与 SHA 相同，空可下载，失败/不可用无下载且 409。HTTP focused 2/2 验四检查、404、重开一致；默认 Chromium 22/22、pnpm check 通过（既有2跳过）、pack 105文件无越界。Worker/身份/卷为 fixture，failed 关闭服务后注入；不证明故障处理，未跑模型/OpenShell/OIDC/S3；既有 A13 保留原版本范围。
 - **WEB-06-03 提交响应丢失**。2026-11-19，代码 `7d4eb12`，同专用 Chromium 6/6：正常页面发送，经实际上游 202 后丢回包，活跃及已完成 Run 均由“重试提交”以原正文/原键回 200 同 Run，execute/Run/user_message 均 1；同库重开仍同 ID。Vitest `tests/task-submission.test.ts` 4/4 验证未知键跨模块重载保留、成功/4xx 清除、账号/正文/Task 隔离；Chromium 验证同 tab reload 保留键、5xx 保留入口/4xx 清除。真实 HTTP/SQLite，合成身份/Worker；不承诺跨设备或关闭浏览器草稿恢复。
 - **WEB-06-04 同任务已有活跃 Run**。2026-11-19，`7d4eb12`，`pnpm check` Store `execution-service/task-submission.test.ts` 13/13；SQLite 重开后 queued/running/recovering/needs_review/cancelling 及 retry preparing/workspace_restored/history_restored/blocked 逐态拒新键 task_busy，原记录/计数不变；queued 终态释放、closed 为 task_not_ready。专用 Chromium 6/6：实际 running 拒新键、同键异正文冲突，页面提示等待/取消。状态及 stop/retry 为 fixture，不证明真实恢复/结案。
 - **WEB-06-05 租户队列满**。2026-11-19，`c28f431` 本地Chromium三独立账号、生产HTTP/SQLite、100MB物理分块上传与实际受控host验收通过；A满额429无半写、B/C各202、上传不占槽、额度与队列提示可区分。见[WEB-A09队列与上传隔离证据](#web-a09-队列与上传隔离证据)。
 - **WEB-06-06 执行落盘后回执前中断**。本地 Chromium 已验证待核对时隐藏补丁（`058a272`）。任务分支 `1c2b67d` 接入配置式 SDK Task 可信退出观察，`e07d054` 提供持久待核对列表。三账号真实强杀、旧代拒写、UNKNOWN 不重放及 B/C 交付待验。
+
+## WEB-A10 脚手架与实栈边界
+
+- **定向验证**。候选 runner 路径白名单测试 3/3，覆盖空差异、单一允许路径和越界路径。Playwright 配置发现 1 个 Chromium 用例，验收源码类型检查通过。SDK reconciliation 定向测试 7/7，retry SDK 定向测试 32/32。用例发现与定向测试只证明脚手架和所测契约。
+- **正常实栈冒烟未通过**。A 独占候选验证了四个隔离账户的真实 OIDC 会话、签名对象写入和独立读回，以及有效 SDK 授权正控的 gRPC 成功和独立上游计数从 0 增至 1。后续诊断冒烟使用新 Task/Run。执行 Worker 发出 `ready` 并进入 `base-bootstrap` 后，在初始化和工具注册之前结束输出、退出码为 1，未返回执行回执。恢复 Worker 返回 `recovered`，新 Run 保持 `needs_review`，Chromium 等待成功终态超时，未取得补丁下载。现有日志仅确定失败边界，无法归因到内部异常。有效授权正控不证明工具副作用或下载成功。
+- **待验收**。WEB-A10 三账号落盘后、回执前中断与旧代拒写、UNKNOWN 零重放和独立副作用对账均未运行。按队列交付、原 Run 确认后下载、可信失败原因及安全重试正负例、可信结案后的独立新建、项目删除、账号注销和审计也待验证。WEB-06 与 06-06～09 保持部分实现。
