@@ -231,6 +231,8 @@
         "apps/worker/sdk-transport.test.ts",
         "apps/orchestrator/acceptance/worker-reuse/sdk.ts",
         "apps/orchestrator/acceptance/worker-reuse/sdk.test.ts",
+        "apps/orchestrator/acceptance/web-a10/run.mjs",
+        "apps/orchestrator/acceptance/web-a10/run.test.mjs",
         "apps/worker/base-bootstrap.ts",
         "apps/worker/base-bootstrap.test.ts",
         "apps/worker/ptc-subprocess.ts",

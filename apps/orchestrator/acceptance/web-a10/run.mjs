@@ -16,19 +16,25 @@ import {
 import { homedir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 
-const root = join(homedir(), 'bento-web-a10');
+const root = join(homedir(), 'bento-worker-a-openshell-0616', 'web-a10');
 const leasePath = join(root, 'lease.json');
-const project = 'bento-web-a10';
+const project = 'bento-worker-a-web-a10';
 const candidates = [
     'apps/workspace/web/src/pages/tasks/details/index.tsx',
     'apps/workspace/web/playwright.web-a10.config.ts',
     'apps/workspace/web/acceptance/web-a10.spec.ts',
     'apps/workspace/web/acceptance/web-a10-hook.ts',
     'apps/orchestrator/acceptance/web-a10/run.mjs',
+    'apps/orchestrator/acceptance/web-a10/run.test.mjs',
 ];
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
-const digest = /^[a-f0-9]{64}$/;
+
+export function assertCandidatePaths(changedPaths) {
+    for (const path of changedPaths)
+        assert(candidates.includes(path), 'Unapproved candidate path: ' + path);
+}
 
 async function privatePath(path, isDirectory) {
     const info = await lstat(path);
@@ -60,54 +66,58 @@ async function collectFiles(source, directory = source) {
     return rows;
 }
 
-async function checkedDigests(expected, paths) {
-    assert.deepEqual(Object.keys(expected).sort(), [...paths].sort());
-    for (const name of paths) {
+const privateInputs = [
+    'bootstrap.ts',
+    'compose.env',
+    'compose.overlay.yml',
+    'execution.env',
+    'host.json',
+    'identities.json',
+    'launcher.mjs',
+    'launcher.test.mjs',
+    'ops.mjs',
+    'provision-web.mjs',
+    'realm.json',
+    'relay/tls.crt',
+    'relay/tls.key',
+    'review.mjs',
+    'runtime.json',
+    'runtime-image-post-hwe-report.json',
+    'sandbox-control.mjs',
+    'sandbox-policy.yaml',
+    'sdk-relay.mjs',
+    'slot-proxy.mjs',
+    'storage.pki.tar',
+    'subpath-probe-report.json',
+    'task-observation.mjs',
+    'trusted-entry.mjs',
+    'trusted-entry.test.mjs',
+    'web.env',
+];
+
+async function acceptanceInputs(lease) {
+    assert.equal(lease.webOidc.origin, 'http://127.0.0.1:8080');
+    assert.equal(
+        lease.webOidc.issuer,
+        lease.webOidc.origin + '/identity/realms/' + project,
+    );
+    await privatePath(join(root, 'relay'), true);
+    const hashes = {};
+    for (const name of privateInputs) {
         const path = join(root, name);
         await privatePath(path, false);
-        assert.equal(sha256(await readFile(path)), expected[name], name);
+        hashes[name] = sha256(await readFile(path));
     }
-    return expected;
+    const exchange = join(root, 'inputs', 'exchange-linux-amd64');
+    const exchangeStat = await lstat(exchange);
+    assert(exchangeStat.isFile() && exchangeStat.uid === process.getuid());
+    assert.equal(await realpath(exchange), exchange);
+    assert.equal(exchangeStat.mode & 0o777, 0o500);
+    hashes['inputs/exchange-linux-amd64'] = sha256(await readFile(exchange));
+    return hashes;
 }
 
-async function acceptanceInputs(lease, state) {
-    const supervisor = 'adapter/launcher-supervisor.mjs';
-    const oldGrantProbe = await checkedDigests(lease.oldGrantProbe.fileSha256, [
-        supervisor,
-        'adapter/old-grant-probe.mjs',
-        'adapter/old-grant-probe.test.mjs',
-    ]);
-    const { 'trusted-entry.mjs': priorEntry, ...classificationFiles } =
-        lease.retryClassification.fileSha256;
-    assert.match(priorEntry, digest);
-    const retryClassification = await checkedDigests(classificationFiles, [
-        supervisor,
-        'adapter/retry-classification.mjs',
-    ]);
-    const webOidc = lease.webOidc;
-    assert.equal(webOidc.origin, 'http://127.0.0.1:28080');
-    assert.equal(
-        webOidc.issuer,
-        webOidc.origin + '/identity/realms/' + project,
-    );
-    assert.equal(webOidc.nginxPath, join(state, 'web-nginx.conf'));
-    for (const [path, expected] of [
-        [webOidc.nginxPath, webOidc.nginxSha256],
-        [join(state, 'oidc-loopback-fixture.mjs'), webOidc.fixtureSha256],
-        [join(state, 'oidc-loopback-preflight.json'), webOidc.preflightSha256],
-        [join(root, 'compose.overlay.yml'), webOidc.overlaySha256],
-    ]) {
-        await privatePath(path, false);
-        assert.equal(sha256(await readFile(path)), expected, path);
-    }
-    assert.equal(
-        lease.netns.fileSha256['compose.overlay.yml'],
-        webOidc.overlaySha256,
-    );
-    return { oldGrantProbe, retryClassification, webOidc };
-}
-
-async function readFrozenCandidate(lease, state) {
+export async function readFrozenCandidate(lease, state) {
     const candidate = join(state, 'candidate');
     const manifestPath = join(candidate, 'manifest.json');
     await privatePath(candidate, true);
@@ -121,13 +131,7 @@ async function readFrozenCandidate(lease, state) {
     const archive = join(candidate, 'source.tar');
     await privatePath(archive, false);
     assert.equal(sha256(await readFile(archive)), manifest.archiveSha256);
-    assert.deepEqual(manifest.inputs, await acceptanceInputs(lease, state));
-    assert.deepEqual(manifest.bootstrap, lease.bootstrap);
-    assert.deepEqual(manifest.netns, lease.netns);
-    await checkedDigests(manifest.configSha256, [
-        'review.mjs',
-        'trusted-entry.mjs',
-    ]);
+    assert.deepEqual(manifest.configSha256, await acceptanceInputs(lease));
     const source = join(candidate, 'source');
     await privatePath(source, true);
     assert.deepEqual(await collectFiles(source), manifest.files);
@@ -148,41 +152,50 @@ async function freeze(lease, state) {
                 ? { ...process.env, GIT_INDEX_FILE: index }
                 : process.env,
             encoding: 'utf8',
-        }).trim();
+        });
+    const gitPaths = (args, index) =>
+        git(args, index).split('\0').filter(Boolean);
 
     try {
-        const sourceCommit = git(['rev-parse', 'HEAD']);
+        assertCandidatePaths([
+            ...gitPaths([
+                'diff',
+                '--no-renames',
+                '--name-only',
+                '-z',
+                'HEAD',
+                '--',
+            ]),
+            ...gitPaths([
+                'ls-files',
+                '--others',
+                '--exclude-standard',
+                '-z',
+                '--',
+            ]),
+        ]);
+        const sourceCommit = git(['rev-parse', 'HEAD']).trim();
         const index = join(staging, 'index');
         git(['read-tree', sourceCommit], index);
         git(['add', '--', ...candidates], index);
-        const sourceTree = git(['write-tree'], index);
-        const changed = git([
-            'diff-tree',
-            '--no-commit-id',
-            '--name-only',
-            '-r',
-            sourceCommit,
-            sourceTree,
-        ]).split('\n');
-        assert.deepEqual(
-            changed.sort(),
-            [...candidates].sort(),
-            'Candidate changes must match the approved paths',
+        const sourceTree = git(['write-tree'], index).trim();
+        assertCandidatePaths(
+            gitPaths(
+                [
+                    'diff-tree',
+                    '--no-commit-id',
+                    '--no-renames',
+                    '--name-only',
+                    '-z',
+                    '-r',
+                    sourceCommit,
+                    sourceTree,
+                    '--',
+                ],
+                index,
+            ),
         );
-        const bootstrap = lease.bootstrap;
-        const netns = lease.netns;
-        const inputs = await acceptanceInputs(lease, state);
-        assert.match(bootstrap?.baseSha256, digest);
-        assert.match(bootstrap?.lockSha256, digest);
-        assert.match(netns?.preflightSha256, digest);
-        assert.equal(netns?.bridgeSocket, join(state, 'br', 'bridge.sock'));
-        assert.equal(netns?.upstreamSocket, join(state, 'br', 'upstream.sock'));
-        const filesAtFreeze = {};
-        for (const name of ['review.mjs', 'trusted-entry.mjs']) {
-            const path = join(root, name);
-            await privatePath(path, false);
-            filesAtFreeze[name] = sha256(await readFile(path));
-        }
+        const configSha256 = await acceptanceInputs(lease);
         const previous = await readFile(
             join(target, 'manifest.json'),
             'utf8',
@@ -231,10 +244,7 @@ async function freeze(lease, state) {
             sourceCommit,
             sourceTree,
             archiveSha256,
-            configSha256: filesAtFreeze,
-            bootstrap,
-            netns,
-            inputs,
+            configSha256,
             files,
         };
         const bytes = JSON.stringify(manifest) + '\n';
@@ -279,8 +289,30 @@ async function main() {
     );
     const state = join(root, 'state', lease.leaseId);
     await privatePath(state, true);
-    assert.deepEqual(process.argv.slice(2), ['--freeze']);
-    await freeze(lease, state);
+    const [command, extra] = process.argv.slice(2);
+    assert.equal(extra, undefined);
+    if (command === '--freeze') {
+        await freeze(lease, state);
+        return;
+    }
+    assert(['--prepare', '--verify', '--cleanup'].includes(command));
+    const { manifest, manifestSha256, source } = await readFrozenCandidate(
+        lease,
+        state,
+    );
+    const approvalPath = join(root, 'approval.json');
+    await privatePath(approvalPath, false);
+    const approval = JSON.parse(await readFile(approvalPath, 'utf8'));
+    assert.equal(approval.leaseId, lease.leaseId);
+    assert.equal(approval.sourceCommit, manifest.sourceCommit);
+    assert.equal(approval.sourceTree, manifest.sourceTree);
+    assert.equal(approval.archiveSha256, manifest.archiveSha256);
+    execFileSync(process.execPath, [join(root, 'ops.mjs'), command.slice(2)], {
+        cwd: source,
+        env: { ...process.env, BENTO_WEB_A10_MANIFEST_SHA256: manifestSha256 },
+        stdio: 'inherit',
+    });
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href)
+    await main();
