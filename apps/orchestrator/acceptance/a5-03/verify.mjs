@@ -1,5 +1,7 @@
+import { error, log } from 'node:console';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import process from 'node:process';
 
 const check = (condition, message) => {
     if (!condition) throw new Error(message);
@@ -110,7 +112,7 @@ async function main() {
             proof.grantRevoked === true,
         'Persisted proof does not establish both stops, zero writers and grant revocation for the original attempt',
     );
-    console.log(
+    log(
         JSON.stringify({
             scenario: 'A5-03',
             result: 'passed',
@@ -128,10 +130,12 @@ async function main() {
 
 try {
     await main();
-} catch (error) {
+} catch (failure) {
     // JSON parse errors can include bytes from a private input file.
-    console.error(
-        error instanceof SyntaxError ? 'Invalid JSON evidence' : error.message,
+    error(
+        failure instanceof SyntaxError
+            ? 'Invalid JSON evidence'
+            : failure.message,
     );
     process.exitCode = 1;
 }
