@@ -155,10 +155,15 @@ export async function sdk(request: WorkerRequest) {
     });
 }
 
-export async function start(state: string, host: ExecutionHost) {
+export async function start(
+    state: string,
+    host: ExecutionHost,
+    goControl = process.env.BENTO_TEST_GO_CONTROL,
+) {
     return serveExecution({
         state,
         host,
+        ...(goControl ? { goControl } : {}),
         token: testToken,
         retryMs: 20,
         workerTimeoutMs: 15_000,

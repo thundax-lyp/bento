@@ -1,4 +1,5 @@
 import { TaskEvidenceStore } from './task-evidence-store.ts';
+import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import {
@@ -173,8 +174,12 @@ export class Store {
     private readonly evidence: TaskEvidenceStore;
 
     private readonly tenantQueueLimit: number;
+    private readonly path: string;
+    private readonly goControl: string | undefined;
 
-    constructor(path: string, tenantQueueLimit = 16) {
+    constructor(path: string, tenantQueueLimit = 16, goControl?: string) {
+        this.path = path;
+        this.goControl = goControl;
         this.tenantQueueLimit = tenantQueueLimit;
         this.db = new DatabaseSync(path);
         this.evidence = new TaskEvidenceStore(
@@ -228,6 +233,13 @@ export class Store {
             CREATE TABLE IF NOT EXISTS run_dispatches (
                 runId TEXT PRIMARY KEY REFERENCES runs(id)
             );
+            CREATE TABLE IF NOT EXISTS run_slot_leases (
+                slot INTEGER PRIMARY KEY CHECK(slot IN (0,1)),
+                runId TEXT NOT NULL UNIQUE REFERENCES runs(id) ON DELETE CASCADE
+            );
+            CREATE TABLE IF NOT EXISTS run_admission_drain (
+                active INTEGER PRIMARY KEY CHECK(active=1)
+            );
             CREATE TABLE IF NOT EXISTS run_reviews (
                 runId TEXT PRIMARY KEY REFERENCES runs(id), proof TEXT NOT NULL, reviewedAt TEXT NOT NULL
             );
@@ -261,6 +273,23 @@ export class Store {
             CREATE TABLE IF NOT EXISTS task_run_checkpoints (
                 runId TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE, workspace TEXT NOT NULL,
                 workspaceSha256 TEXT NOT NULL, historySha256 TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS physical_stop_proofs (
+                runId TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+                generation INTEGER NOT NULL,
+                canonicalJson TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                PRIMARY KEY(runId,generation)
+            );
+            CREATE TABLE IF NOT EXISTS physical_stop_consumption (
+                runId TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                consumer TEXT NOT NULL CHECK(consumer IN ('slot','upgrade')),
+                sha256 TEXT NOT NULL,
+                PRIMARY KEY(runId,generation,consumer),
+                FOREIGN KEY(runId,generation)
+                    REFERENCES physical_stop_proofs(runId,generation)
+                    ON DELETE CASCADE
             );
             CREATE TABLE IF NOT EXISTS stop_proofs (
                 runId TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE, canonicalJson TEXT NOT NULL,
@@ -912,7 +941,7 @@ export class Store {
     }
 
     enqueueTaskRun(owner: string, taskId: string, key: string, prompt: string) {
-        return this.write(() => {
+        const enqueue = () => {
             const task = this.taskRow(owner, taskId);
             if (this.retryByKey(taskId, key)) throw idempotencyConflict();
             const prior = this.db
@@ -943,6 +972,7 @@ export class Store {
                 );
             const created = this.enqueueRun(owner, taskId, key, prompt, true);
             const id = created.run.id;
+            if (this.goControl) return { replay: false, run: this.findRun(id) };
             this.db
                 .prepare('UPDATE runs SET taskSequence=? WHERE id=?')
                 .run(this.taskSequence(taskId), id);
@@ -952,7 +982,8 @@ export class Store {
                 check: null,
             });
             return { replay: false, run: this.findRun(id) };
-        });
+        };
+        return this.goControl ? enqueue() : this.write(enqueue);
     }
 
     private retryByKey(taskId: string, key: string) {
@@ -968,7 +999,7 @@ export class Store {
         key: string,
         evidence: RetryEvidence,
     ) {
-        return this.write(() => {
+        const accept = () => {
             const task = this.taskRow(owner, taskId);
             const source = this.findRun(sourceRunId);
             if (source.projectId !== taskId) throw missing();
@@ -1002,6 +1033,26 @@ export class Store {
             const id = randomUUID();
             const newRunId = randomUUID();
             const at = now();
+            if (this.goControl) {
+                if (
+                    this.business('accept-retry', {
+                        run: newRunId,
+                        attempt: id,
+                        project: taskId,
+                        owner,
+                        sourceRun: sourceRunId,
+                        key,
+                        proof: hash,
+                        generation: evidence.oldGeneration,
+                        newGeneration: evidence.newGeneration,
+                        workspaceSHA256: evidence.workspaceSha256,
+                        historySHA256: evidence.historySha256,
+                        queueLimit: this.tenantQueueLimit,
+                    }) !== true
+                )
+                    throw queueFull();
+                return { replay: false, attempt: this.taskRetry(id) };
+            }
             this.db
                 .prepare(
                     `INSERT INTO retry_attempts
@@ -1022,7 +1073,8 @@ export class Store {
                     at,
                 );
             return { replay: false, attempt: this.taskRetry(id) };
-        });
+        };
+        return this.goControl ? accept() : this.write(accept);
     }
 
     taskRetry(id: string) {
@@ -1061,6 +1113,19 @@ export class Store {
     }
 
     finalizeTaskRetry(id: string, phase: 'history_restored' | 'blocked') {
+        if (this.goControl) {
+            const attempt = this.taskRetry(id);
+            if (
+                attempt.phase !== 'queued' &&
+                (attempt.phase !== phase ||
+                    this.business('finalize-retry', {
+                        run: id,
+                        status: phase,
+                    }) !== true)
+            )
+                throw conflict('task_busy', 'Retry phase changed.');
+            return this.findRun(attempt.newRunId);
+        }
         return this.write(() => {
             const attempt = this.taskRetry(id);
             if (attempt.phase === 'queued')
@@ -1250,7 +1315,7 @@ export class Store {
         input: TaskResultInput,
         reviewProof?: string,
     ) {
-        return this.write(() => {
+        const publish = () => {
             const run = this.findRun(runId);
             if (run.taskSequence === null) throw missing();
             const events = this.db
@@ -1309,6 +1374,17 @@ export class Store {
                     'Run is not awaiting recovery review.',
                 );
             const createdAt = now();
+            if (this.goControl) {
+                this.business('publish-result', {
+                    run: runId,
+                    summary,
+                    diff: input.incremental,
+                    body,
+                    proof: reviewProof ?? '',
+                    createdAt,
+                });
+                return { ...JSON.parse(body), createdAt };
+            }
             this.db
                 .prepare('INSERT INTO task_run_results VALUES (?,?,?)')
                 .run(runId, body, createdAt);
@@ -1322,11 +1398,86 @@ export class Store {
                     .prepare('INSERT INTO run_reviews VALUES (?,?,?)')
                     .run(runId, reviewProof, createdAt);
             return { ...JSON.parse(body), createdAt };
-        });
+        };
+        return this.goControl ? publish() : this.write(publish);
     }
 
     recordStopProof(runId: string, canonicalJson: string) {
         return this.evidence.recordStopProof(runId, canonicalJson);
+    }
+
+    readPhysicalStopProof(runId: string, generation: number) {
+        return this.db
+            .prepare(
+                'SELECT canonicalJson,sha256 FROM physical_stop_proofs WHERE runId=? AND generation=?',
+            )
+            .get(runId, generation);
+    }
+
+    recordPhysicalStopProof(
+        runId: string,
+        generation: number,
+        canonicalJson: string,
+    ) {
+        const digest = createHash('sha256').update(canonicalJson).digest('hex');
+        this.db
+            .prepare('INSERT INTO physical_stop_proofs VALUES (?,?,?,?)')
+            .run(runId, generation, canonicalJson, digest);
+    }
+
+    completeAmbiguousRecovery(id: string, generation: number, summary: string) {
+        if (
+            this.business('complete-ambiguous', {
+                run: id,
+                generation,
+                summary,
+            }) !== undefined
+        )
+            return;
+        this.write(() => {
+            const proof = this.readPhysicalStopProof(id, generation);
+            if (
+                !proof ||
+                proof.sha256 !==
+                    createHash('sha256')
+                        .update(String(proof.canonicalJson))
+                        .digest('hex')
+            )
+                throw new Error('Physical stop proof is unavailable');
+            this.db
+                .prepare(
+                    "INSERT OR IGNORE INTO physical_stop_consumption VALUES (?,?,'slot',?)",
+                )
+                .run(id, generation, proof.sha256);
+            this.status(id, 'needs_review', summary);
+        });
+    }
+
+    consumeUpgradeStops() {
+        const result = this.business('drain', {});
+        if (result !== undefined) return result === true;
+        return this.write(() => {
+            const pending = this.db
+                .prepare(
+                    `SELECT 1 FROM runs
+                     WHERE status IN ('running','recovering','cancelling')
+                     UNION ALL
+                     SELECT 1 FROM physical_stop_proofs p
+                     WHERE NOT EXISTS (
+                         SELECT 1 FROM physical_stop_consumption c
+                         WHERE c.runId=p.runId AND c.generation=p.generation
+                           AND c.consumer='slot' AND c.sha256=p.sha256
+                     ) LIMIT 1`,
+                )
+                .get();
+            if (pending) return false;
+            this.db.exec(
+                `INSERT OR IGNORE INTO physical_stop_consumption
+                 SELECT runId,generation,'upgrade',sha256
+                 FROM physical_stop_consumption WHERE consumer='slot'`,
+            );
+            return true;
+        });
     }
 
     readStopProof(runId: string) {
@@ -1867,7 +2018,7 @@ export class Store {
         sessionId?: string,
         validateSession?: (binding: Binding) => void,
     ) {
-        return this.write(() =>
+        const enqueue = () =>
             this.enqueueRun(
                 owner,
                 projectId,
@@ -1876,8 +2027,8 @@ export class Store {
                 false,
                 sessionId,
                 validateSession,
-            ),
-        );
+            );
+        return this.goControl ? enqueue() : this.write(enqueue);
     }
 
     private enqueueRun(
@@ -1934,6 +2085,29 @@ export class Store {
         });
         const id = randomUUID();
         const created = now();
+        if (this.goControl) {
+            if (
+                this.business('enqueue', {
+                    run: id,
+                    session: selectedSession,
+                    project: projectId,
+                    owner,
+                    key,
+                    prompt,
+                    task,
+                    body: task
+                        ? JSON.stringify({
+                              kind: 'user_message',
+                              text: prompt,
+                              check: null,
+                          })
+                        : '',
+                    queueLimit: this.tenantQueueLimit,
+                }) !== true
+            )
+                throw queueFull();
+            return { replay: false, run: runView(this.findRun(id)) };
+        }
         const result = this.db
             .prepare(
                 `
@@ -1991,6 +2165,20 @@ export class Store {
     }
 
     cancelQueuedRun(owner: string, project: string, id: string, task = false) {
+        if (this.goControl) {
+            const current = task
+                ? this.taskRunRow(owner, project, id)
+                : this.ownedRun(owner, project, id);
+            if (
+                current.status !== 'cancelled' &&
+                this.business('cancel-queued', { run: id, project }) !== true
+            )
+                throw conflict(
+                    'run_not_cancellable',
+                    'The Run cannot be cancelled in its current state.',
+                );
+            return { ...runView(this.findRun(id)), prompt: current.prompt };
+        }
         this.db.exec('BEGIN IMMEDIATE');
         try {
             const current = task
@@ -2026,6 +2214,27 @@ export class Store {
         generation: number,
         task = false,
     ) {
+        if (this.goControl) {
+            const current = task
+                ? this.taskRunRow(owner, project, id)
+                : this.ownedRun(owner, project, id);
+            if (
+                (current.cancelGeneration === null ||
+                    !['cancelling', 'cancelled', 'needs_review'].includes(
+                        current.status,
+                    )) &&
+                this.business('request-cancel', {
+                    run: id,
+                    project,
+                    generation,
+                }) !== true
+            )
+                throw conflict(
+                    'run_not_cancellable',
+                    'The Run cannot be cancelled in its current state.',
+                );
+            return { ...runView(this.findRun(id)), prompt: current.prompt };
+        }
         this.db.exec('BEGIN IMMEDIATE');
         try {
             const current = task
@@ -2067,6 +2276,11 @@ export class Store {
     }
 
     markCancellationWorkerClosed(id: string, generation: number): void {
+        if (
+            this.business('cancel-closed', { run: id, generation }) !==
+            undefined
+        )
+            return;
         this.db
             .prepare(
                 "UPDATE runs SET cancelWorkerClosed=1 WHERE id=? AND cancelGeneration=? AND status='cancelling'",
@@ -2083,6 +2297,13 @@ export class Store {
             status === 'cancelled'
                 ? 'Run stopped and cancelled.'
                 : '旧执行已停止，操作结果未确认，等待核对。';
+        const result = this.business('finish-cancel', {
+            run: id,
+            generation,
+            status,
+            summary,
+        });
+        if (result !== undefined) return result === true;
         return (
             this.db
                 .prepare(
@@ -2093,6 +2314,7 @@ export class Store {
     }
 
     failQueuedBaseline(id: string): void {
+        if (this.business('fail-baseline', { run: id }) !== undefined) return;
         this.db
             .prepare(
                 "UPDATE runs SET status='failed', summary=?, updatedAt=? WHERE id=? AND status='queued'",
@@ -2145,6 +2367,7 @@ export class Store {
             LEFT JOIN run_dispatches d ON d.runId=r.id
             WHERE r.status IN ('running','recovering','cancelling')
                OR (r.status='queued' AND d.runId IS NOT NULL)
+               OR EXISTS (SELECT 1 FROM run_slot_leases l WHERE l.runId=r.id)
             ORDER BY r.rowid
         `,
             )
@@ -2163,6 +2386,8 @@ export class Store {
     }
 
     reserveDispatch(id: string, slots: number) {
+        const result = this.business('reserve', { run: id, slots });
+        if (result !== undefined) return result === true;
         return (
             this.db
                 .prepare(
@@ -2238,6 +2463,12 @@ export class Store {
     }
 
     start(id: string, baseline: readonly FileText[], slots: number) {
+        const result = this.business('start', {
+            run: id,
+            baseline: JSON.stringify(baseline),
+            slots,
+        });
+        if (result !== undefined) return result === true;
         return (
             this.db
                 .prepare(
@@ -2252,6 +2483,7 @@ export class Store {
     }
 
     received(id: string) {
+        if (this.business('receipt', { run: id }) !== undefined) return;
         this.db
             .prepare(
                 "UPDATE runs SET receipt=1, updatedAt=? WHERE id=? AND status='running'",
@@ -2260,6 +2492,7 @@ export class Store {
     }
 
     reconciled(id: string) {
+        if (this.business('reconcile', { run: id }) !== undefined) return;
         this.db
             .prepare(
                 "UPDATE runs SET reconciled=1, updatedAt=? WHERE id=? AND status='recovering'",
@@ -2268,6 +2501,8 @@ export class Store {
     }
 
     recovered(id: string, generation: number) {
+        if (this.business('recovered', { run: id, generation }) !== undefined)
+            return;
         this.db
             .prepare('INSERT INTO run_recoveries VALUES (?,?)')
             .run(id, generation);
@@ -2285,11 +2520,57 @@ export class Store {
         summary: string,
         diff: string | null = null,
     ) {
+        if (
+            this.business('status', { run: id, status, summary, diff }) !==
+            undefined
+        )
+            return;
         this.db
             .prepare(
                 'UPDATE runs SET status=?, summary=?, diff=?, updatedAt=? WHERE id=?',
             )
             .run(status, summary, diff, now(), id);
+    }
+
+    private business(
+        action: string,
+        input: object,
+    ): boolean | number | undefined {
+        if (!this.goControl) return undefined;
+        try {
+            const result: unknown = JSON.parse(
+                execFileSync(this.goControl, ['business', this.path, action], {
+                    input: JSON.stringify(input),
+                    encoding: 'utf8',
+                    timeout: 7000,
+                    maxBuffer: 4096,
+                    stdio: ['pipe', 'pipe', 'pipe'],
+                }),
+            );
+            if (typeof result !== 'boolean' && typeof result !== 'number')
+                throw new Error('invalid result');
+            return result;
+        } catch {
+            throw new Error('Go Run authority denied or unavailable');
+        }
+    }
+
+    acquireRunSlot(run: string, slots: number): number | undefined {
+        const slot = this.business('acquire', { run, slots });
+        if (slot === undefined || typeof slot === 'number') return slot;
+        throw new Error('Invalid slot result');
+    }
+
+    releaseRunSlot(run: string) {
+        this.business('release', { run });
+    }
+
+    resumeRunAdmission() {
+        this.business('resume-admission', {});
+    }
+
+    beginRunDrain() {
+        this.business('begin-drain', {});
     }
 
     reviewReceipt(id: string, proof: string) {
@@ -2305,6 +2586,16 @@ export class Store {
     }
 
     confirmReview(id: string, proof: string, diff: string) {
+        if (this.goControl) {
+            if (!this.reviewReceipt(id, proof))
+                this.business('confirm-review', {
+                    run: id,
+                    proof,
+                    diff,
+                    createdAt: now(),
+                });
+            return;
+        }
         this.db.exec('BEGIN IMMEDIATE');
         try {
             if (!this.reviewReceipt(id, proof)) {
