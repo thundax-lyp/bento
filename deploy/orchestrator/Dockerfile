@@ -3,7 +3,8 @@ WORKDIR /build
 COPY apps/orchestrator/go.mod apps/orchestrator/go.sum ./
 RUN --mount=type=cache,id=bento-go-mod-1.25,target=/go/pkg/mod \
     go mod download
-COPY apps/orchestrator/src/control/main.go apps/orchestrator/src/control/temporal.go apps/orchestrator/src/control/authority.go apps/orchestrator/src/control/business.go ./src/control/
+COPY apps/orchestrator/src/control/main.go apps/orchestrator/src/control/temporal.go apps/orchestrator/src/control/authority.go apps/orchestrator/src/control/business.go apps/orchestrator/src/control/run_ledger.go ./src/control/
+COPY apps/orchestrator/src/ledger/ledger.go apps/orchestrator/src/ledger/tasks.go ./src/ledger/
 RUN --mount=type=cache,id=bento-go-mod-1.25,target=/go/pkg/mod \
     --mount=type=cache,id=bento-go-build-1.25,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -o /out/bento-orchestrator ./src/control

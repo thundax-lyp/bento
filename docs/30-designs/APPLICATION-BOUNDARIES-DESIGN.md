@@ -151,3 +151,7 @@ OpenShell Gateway interceptor 的固定源码白名单可以管理部分一元�
 长期验收沿[real-reuse.test.ts](../../apps/orchestrator/acceptance/worker-reuse/real-reuse.test.ts)正式prewarmedWorker→run-worker --warm→runDshWorkerLoop→runDshWorker→base链路。默认长时模式为1个reference与64测量Session、8tenant同原生PID运行至少315秒；PR CI使用连续模式，保留相同64轮与隔离断言但不主动补足每轮5秒间隔，main CI仍运行长时模式。连续模式仅验证轮次复用，不代替长时间驻留证据。两种模式每轮持久历史/模型请求独立，凭据/监听器/连接/文件namespace分项负测。旧Context事件在下一base创建之前触发，避免当轮合法200ms批次刷盘干扰归属；父端有界IPC与真实server计数同时覆盖SDK/模型及persistence/operation，整轮与轮间继续查迟到旧身份请求。观测包装不替代生产清理。
 
 R独立验证正式takeover撤权时持有输入流关闭与旧凭据重连拒绝，Worker退出补位；沙盒退出未独立确认时仍为UNKNOWN。E在模型disposer注入失败并确认其余资源关闭；L验证空闲pool停止/同库重开/继续新Session且旧events和receipts完整不变。资源、模型、沙盒helper的实际边界与64轮结果见[验收证据](../40-readiness/evidence/A6.md#a6-05-worker-长期池复用)，可信运行时配置与恢复操作见[部署手册](../../deploy/README.md#worker-正式运行时与复用验证)。
+
+## 独立 Go Run 账本试验
+
+私有 `run-ledger` 命令用于验证独立 SQLite 账本的 Task/Run 原子提交、代次拒绝、派发重投及桥接撤权。它只打开带独立应用标识的账本。可用 `pnpm --filter @bento/orchestrator test:go-run-ledger` 复验。当前单宿主部署的 Run 写入和执行授权入口分别由 `business` 与 `authority` 命令提供。
