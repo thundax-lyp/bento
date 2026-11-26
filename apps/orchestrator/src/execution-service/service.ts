@@ -51,6 +51,7 @@ type Options = {
     workerTimeoutMs?: number;
     retryMs?: number;
     tenantQueueLimit?: number;
+    requireTaskRunApproval?: boolean;
     host: ExecutionHost;
     temporal?: TemporalRunOptions;
     goControl?: string;
@@ -58,6 +59,11 @@ type Options = {
 
 export async function serveExecution(options: Options) {
     const { host, token } = options;
+    if (
+        options.requireTaskRunApproval &&
+        (!options.goControl || !options.temporal)
+    )
+        throw new Error('Task Run approval requires Go authority and Temporal');
     const sharedVolume = host.sharedVolume;
     const slots = host.workerSlots ?? 1;
     const supportsPhysicalStop = Boolean(
@@ -142,6 +148,7 @@ export async function serveExecution(options: Options) {
             join(dir, 'business.sqlite'),
             tenantQueueLimit,
             options.goControl,
+            options.requireTaskRunApproval,
         );
         control = new SingleHostExecution(
             {
@@ -968,7 +975,9 @@ export async function serveExecution(options: Options) {
             binding: Binding,
             mode: WorkerRequest['mode'],
             slot: number,
+            activitySignal?: AbortSignal,
         ) {
+            activitySignal?.throwIfAborted();
             const current = execution.inspect(binding.session);
             if (run.taskSequence !== null && mode === 'execute') {
                 if (
@@ -1033,10 +1042,12 @@ export async function serveExecution(options: Options) {
                           }
                       }
                     : undefined;
+            const executionDeadline = AbortSignal.timeout(workerTimeoutMs);
             const signal = AbortSignal.any([
                 stop.signal,
-                AbortSignal.timeout(workerTimeoutMs),
+                executionDeadline,
                 ...(attempt ? [attempt.abort.signal] : []),
+                ...(activitySignal ? [activitySignal] : []),
             ]);
             let onAbort: () => void = () => {};
             const aborted = new Promise<never>((_resolve, reject) => {
@@ -1067,6 +1078,7 @@ export async function serveExecution(options: Options) {
                     onWorkerExit,
                 );
                 const result = await Promise.race([task, aborted]);
+                activitySignal?.throwIfAborted();
                 if (
                     result === 'completed' &&
                     run.taskSequence !== null &&
@@ -1078,13 +1090,25 @@ export async function serveExecution(options: Options) {
                 live.delete(grant.token);
                 taskProjectionEnds.delete(projectionKey(grant));
                 signal.removeEventListener('abort', onAbort);
-                // A replacement must wait for the single slot to close on lease expiry.
-                if (
-                    closeWarmWorker &&
-                    signal.aborted &&
-                    !attempt?.abort.signal.aborted
-                )
-                    await task?.catch(() => {});
+                const leaseLost =
+                    activitySignal?.aborted || executionDeadline.aborted;
+                try {
+                    if (leaseLost)
+                        execution.drainAttempt(
+                            binding.session,
+                            grant.generation,
+                            run.id,
+                        );
+                } finally {
+                    // Observe launcher shutdown before asking the sandbox to stop.
+                    if (
+                        leaseLost ||
+                        (closeWarmWorker &&
+                            signal.aborted &&
+                            !attempt?.abort.signal.aborted)
+                    )
+                        await task?.catch(() => {});
+                }
             }
         }
 
@@ -1184,7 +1208,11 @@ export async function serveExecution(options: Options) {
             }
         }
 
-        async function settle(run: Run, slot: number) {
+        async function settle(
+            run: Run,
+            slot: number,
+            activitySignal?: AbortSignal,
+        ) {
             if (!run.receipt && run.status !== 'recovering')
                 db.status(
                     run.id,
@@ -1211,7 +1239,12 @@ export async function serveExecution(options: Options) {
                     // Evidence mismatch cannot turn an ambiguous result into a failure.
                 }
             }
-            if (!run.reconciled) {
+            if (activitySignal?.aborted) {
+                completeReview(
+                    run,
+                    'Temporal execution lease lost. Waiting for review.',
+                );
+            } else if (!run.reconciled) {
                 // The attempt is durable before admission. A recovery worker is never given the original prompt.
                 db.reconciled(run.id);
                 let result: WorkerResult | undefined;
@@ -1221,6 +1254,7 @@ export async function serveExecution(options: Options) {
                         runBinding(run),
                         'recover',
                         slot,
+                        activitySignal,
                     );
                 } catch {
                     // The prior operation and any interrupted reconciliation stay subject to trusted review.
@@ -1395,10 +1429,14 @@ export async function serveExecution(options: Options) {
                 throw new Error('Cancellation result changed');
         }
 
-        async function driveRun(run: Run, slot: number) {
+        async function driveRun(
+            run: Run,
+            slot: number,
+            activitySignal?: AbortSignal,
+        ) {
             if (run.status === 'cancelling') return driveCancellation(run);
             if (run.status === 'running' || run.status === 'recovering') {
-                await settle(run, slot);
+                await settle(run, slot, activitySignal);
                 return;
             }
             if (run.status !== 'queued') return;
@@ -1433,14 +1471,20 @@ export async function serveExecution(options: Options) {
                 return;
             }
             if (stop.signal.aborted) return;
+            activitySignal?.throwIfAborted();
             if (!db.start(queued.id, before, slots)) {
                 if (db.findRun(queued.id).status === 'cancelled') return;
                 throw new Error('Execution host has pending recovery work');
             }
             try {
                 if (
-                    (await worker(queued, binding, 'execute', slot)) ===
-                    'completed'
+                    (await worker(
+                        queued,
+                        binding,
+                        'execute',
+                        slot,
+                        activitySignal,
+                    )) === 'completed'
                 )
                     db.received(queued.id);
             } catch {
@@ -1451,7 +1495,7 @@ export async function serveExecution(options: Options) {
             if (current.status === 'cancelling')
                 return driveCancellation(current);
             executing.delete(queued.id);
-            await settle(current, slot);
+            await settle(current, slot, activitySignal);
         }
 
         const assigned = new Map<number, string>();
@@ -1461,7 +1505,7 @@ export async function serveExecution(options: Options) {
             scheduler = await temporalRuns(
                 options.temporal,
                 slots,
-                async (runId) => {
+                async (runId, activitySignal) => {
                     stop.signal.throwIfAborted();
                     const run = db.findRun(runId);
                     if (draining && run.status === 'queued')
@@ -1498,7 +1542,7 @@ export async function serveExecution(options: Options) {
                             !db.dispatchReserved(runId)
                         )
                             throw new Error('Run is waiting for dispatch');
-                        await driveRun(run, slot);
+                        await driveRun(run, slot, activitySignal);
                         stop.signal.throwIfAborted();
                     } finally {
                         assigned.delete(slot);

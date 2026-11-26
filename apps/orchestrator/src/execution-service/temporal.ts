@@ -18,7 +18,7 @@ type Message = {
 export async function temporalRuns(
     options: TemporalRunOptions,
     slots: 1 | 2,
-    advance: (runId: string) => Promise<void>,
+    advance: (runId: string, signal: AbortSignal) => Promise<void>,
 ) {
     const child = spawn(
         process.env.BENTO_GO_CONTROL ?? 'bento-orchestrator',
@@ -30,6 +30,7 @@ export async function temporalRuns(
         { resolve(value: unknown): void; reject(error: Error): void }
     >();
     const advancing = new Set<Promise<void>>();
+    const activities = new Map<string, AbortController>();
     let sequence = 0;
     let ready = false;
     let failure: Error | undefined;
@@ -46,6 +47,7 @@ export async function temporalRuns(
         }
         for (const request of pending.values()) request.reject(failure);
         pending.clear();
+        for (const activity of activities.values()) activity.abort();
     }
     child.once('error', fail);
     child.once('close', fail);
@@ -89,6 +91,10 @@ export async function temporalRuns(
             child.kill('SIGKILL');
             return;
         }
+        if (message.method === 'stopAdvance') {
+            activities.get(message.id)?.abort();
+            return;
+        }
         if (message.method === 'advance') {
             if (!ready || closed || failure) {
                 send({
@@ -101,7 +107,9 @@ export async function temporalRuns(
                 send({ id: message.id, error: 'Invalid Run' });
                 return;
             }
-            const task = advance(message.value)
+            const activity = new AbortController();
+            activities.set(message.id, activity);
+            const task = advance(message.value, activity.signal)
                 .then(
                     () => send({ id: message.id, value: null }),
                     () =>
@@ -110,7 +118,10 @@ export async function temporalRuns(
                             error: 'Run advancement failed',
                         }),
                 )
-                .finally(() => advancing.delete(task));
+                .finally(() => {
+                    activities.delete(message.id);
+                    advancing.delete(task);
+                });
             advancing.add(task);
             return;
         }

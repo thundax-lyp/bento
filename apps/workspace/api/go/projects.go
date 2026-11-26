@@ -156,7 +156,7 @@ func (r *runView) valid(project, run string) bool {
 		r.Prompt = nil
 	}
 	switch r.Status {
-	case "queued", "running", "recovering", "needs_review", "succeeded", "failed":
+	case "pending_approval", "queued", "running", "recovering", "needs_review", "succeeded", "failed":
 		return projectResourceID(r.ID) && (run == "" || run == r.ID) && r.Project == project &&
 			projectResourceID(r.Session) && validTimestamp(r.CreatedAt) && validTimestamp(r.UpdatedAt)
 	}

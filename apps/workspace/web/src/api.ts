@@ -13,6 +13,7 @@ export type Run = {
     sessionId: string;
     createdAt: string;
     status:
+        | 'pending_approval'
         | 'queued'
         | 'running'
         | 'recovering'
@@ -93,12 +94,14 @@ export const runUrl = (project: string, run: string) =>
 export const downloadUrl = (project: string, run: string) =>
     runApi(project, run) + '/diff?download=1';
 export const isActive = (status: Run['status'] | undefined) =>
+    status === 'pending_approval' ||
     status === 'queued' ||
     status === 'running' ||
     status === 'recovering' ||
     status === 'cancelling' ||
     status === 'needs_review';
 export const runLabels: Record<Run['status'], string> = {
+    pending_approval: '待审批',
     queued: '排队中',
     running: '运行中',
     recovering: '恢复中',

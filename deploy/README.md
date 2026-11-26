@@ -152,6 +152,20 @@ docker compose -f deploy/compose.yaml --profile worker-image build bento-worker
 
 Compose 通过 `BENTO_GO_AUTHORITY` 指定镜像内的 Go 权威入口。自定义启动器使用 Go 权威链时同样配置该变量，指向与执行宿主配套构建的 `bento-orchestrator`。进程共用该部署的数据目录。执行代次与授权继续使用原权威 SQLite 文件，派发、Run 状态推进、槽位租约与升级排空在原业务 SQLite 文件中提交。
 
+### Task Run 审批
+
+在 Compose 环境设置 `BENTO_TASK_RUN_APPROVAL=required` 后，新提交的 Workspace Task Run 在业务账本中进入 `pending_approval`。默认值为 `off`。启用需要 Go 权威入口和 Temporal。待审批 Run 占用租户队列额度，保持 Task 的单活跃 Run 约束，并允许所有者取消。账号关闭会取消该账号仍待审批的 Run。审批前不预留宿主槽位、不创建 Temporal Workflow，也不签发 Worker 授权。按原契约接受的安全重试延续原 Run 的执行许可。
+
+受信运维人员通过 Orchestrator 容器调用 Go 命令。Run、Task 和租户必须与账本一致。将命令末尾改为 `reject-run` 可拒绝审批。
+
+```sh
+printf '%s\n' '{"run":"<run-id>","project":"<task-id>","owner":"<owner-id>"}' |
+    docker compose exec -T orchestrator \
+        /usr/local/bin/bento-orchestrator business /data/business.sqlite approve-run
+```
+
+`true` 表示决策与状态变更一并写入 `run_approval_decisions` 和 Run 账本。批准使原 Run 进入常规调度，拒绝将原 Run 置为已取消并释放队列额度。`false` 表示指定范围内已无可决策的待审批 Run。用户 HTTP 只提供状态读取和取消。审批权限由部署端限制在可执行 Orchestrator 运维命令的人员。
+
 使用 `start.ts` 的部署可设置 `BENTO_REVIEW_MODULE`，指向仅由可信部署端控制的模块。模块默认导出同步安装函数 `(reviewRun, closeTaskRun, readTaskClosure, closeTaskRetry, readTaskRetryClosure, reconcileTaskRetry) => cleanup`。原只接收 `reviewRun` 的模块仍可使用首参。安装函数接入部署端的复核工具，并在停服时通过 `cleanup` 停止接收新请求、等待在途复核结束。复核提交须包含 `runId`、`failedGeneration`、`readyGeneration`、`stableOperationId` 和 `expectedSnapshotSha256`。模块与执行服务同进程运行，部署端应限制模块文件及复核入口的访问权限。
 
 - `reviewRun({runId,failedGeneration,readyGeneration,stableOperationId,expectedSnapshotSha256}):Promise<void>` 在原执行结果与可信快照相符时发布该 Run。

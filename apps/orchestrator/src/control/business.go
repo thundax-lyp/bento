@@ -30,6 +30,7 @@ type businessRequest struct {
 	Prompt          string
 	Task            bool
 	Diagnostic      bool
+	RequireApproval bool
 	QueueLimit      int
 	Attempt         string
 	SourceRun       string
@@ -78,7 +79,7 @@ const releaseSlotSQL = `DELETE FROM run_slot_leases WHERE EXISTS(
 					AND c.generation=p.generation AND c.consumer='slot' AND c.sha256=p.sha256))`
 
 func businessCommand(ctx context.Context, db *sql.Conn, action string, r businessRequest) (any, error) {
-	if r.Run == "" && action != "drain" && action != "begin-drain" && action != "resume-admission" {
+	if r.Run == "" && action != "drain" && action != "begin-drain" && action != "resume-admission" && action != "drain-owner" {
 		return nil, errAuthority
 	}
 	if (action == "reserve" || action == "start" || action == "acquire") && (r.Slots < 1 || r.Slots > 2) {
@@ -91,6 +92,24 @@ func businessCommand(ctx context.Context, db *sql.Conn, action string, r busines
 		return reserved == "reserved", err
 	}
 	switch action {
+	case "drain-owner":
+		if r.Owner == "" {
+			return false, errAuthority
+		}
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return false, err
+		}
+		defer tx.Rollback()
+		if _, err = tx.ExecContext(ctx, "INSERT OR IGNORE INTO draining_owners VALUES (?)", r.Owner); err != nil {
+			return false, err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE runs SET status='cancelled',
+			summary='Account closed before approval.',updatedAt=?
+			WHERE status='pending_approval' AND projectId IN (SELECT id FROM projects WHERE owner=?)`, now, r.Owner); err != nil {
+			return false, err
+		}
+		return true, tx.Commit()
 	case "begin-drain":
 		return exec("INSERT OR IGNORE INTO run_admission_drain VALUES (1)")
 	case "resume-admission":
@@ -160,9 +179,11 @@ func businessCommand(ctx context.Context, db *sql.Conn, action string, r busines
 		return exec("UPDATE runs SET reconciled=1,updatedAt=? WHERE id=? AND status='recovering'", now, r.Run)
 	case "recovered":
 		return exec("INSERT INTO run_recoveries VALUES (?,?)", r.Run, r.Generation)
+	case "approve-run", "reject-run":
+		return decideRunApproval(ctx, db, action, r, now)
 	case "cancel-queued":
 		return exec(`UPDATE runs SET status='cancelled',summary='Cancelled before start.',updatedAt=?
-			WHERE id=? AND projectId=? AND status='queued'`, now, r.Run, r.Project)
+			WHERE id=? AND projectId=? AND status IN ('queued','pending_approval')`, now, r.Run, r.Project)
 	case "request-cancel":
 		return exec(`UPDATE runs SET status='cancelling',cancelGeneration=?,cancelWorkerClosed=?,
 			summary='Cancellation requested.',updatedAt=?
@@ -188,6 +209,35 @@ func businessCommand(ctx context.Context, db *sql.Conn, action string, r busines
 	default:
 		return nil, errAuthority
 	}
+}
+
+func decideRunApproval(ctx context.Context, db *sql.Conn, action string, r businessRequest, now string) (bool, error) {
+	if r.Project == "" || r.Owner == "" {
+		return false, errAuthority
+	}
+	status, summary := "queued", ""
+	if action == "reject-run" {
+		status, summary = "cancelled", "Run approval was denied."
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	result, err := tx.ExecContext(ctx, `UPDATE runs SET status=?,summary=NULLIF(?,''),updatedAt=?
+		WHERE id=? AND projectId=? AND status='pending_approval'
+		AND EXISTS (SELECT 1 FROM projects WHERE id=runs.projectId AND owner=?)
+		AND NOT EXISTS (SELECT 1 FROM draining_owners WHERE owner=?)`,
+		status, summary, now, r.Run, r.Project, r.Owner, r.Owner)
+	changed, err := reservation(result, err)
+	if err != nil || changed != "reserved" {
+		return false, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO run_approval_decisions(runId,action,decidedAt)
+		VALUES (?,?,?)`, r.Run, action, now); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 func publishBusinessResult(ctx context.Context, db *sql.Conn, action string, r businessRequest) (bool, error) {
@@ -273,7 +323,7 @@ func consumeBusinessStop(ctx context.Context, db *sql.Conn, action string, r bus
 }
 
 const queueCapacity = `((SELECT COUNT(*) FROM runs r JOIN projects p ON p.id=r.projectId
- WHERE p.owner=? AND r.status='queued') +
+ WHERE p.owner=? AND r.status IN ('queued','pending_approval')) +
  (SELECT COUNT(*) FROM retry_attempts a JOIN tasks t ON t.id=a.taskId
  WHERE t.owner=? AND a.phase IN ('preparing','workspace_restored','history_restored','blocked'))) < ?`
 
@@ -295,15 +345,15 @@ func enqueueBusinessRun(ctx context.Context, db *sql.Conn, action string, r busi
 		}
 		result, err = tx.ExecContext(ctx, `INSERT INTO runs
    (id,projectId,sessionId,key,prompt,status,createdAt,updatedAt,taskSequence)
-   SELECT ?,p.id,?, ?,?,'queued',?,?,CASE WHEN ? THEN
+   SELECT ?,p.id,?, ?,?,CASE WHEN ? THEN 'pending_approval' ELSE 'queued' END,?,?,CASE WHEN ? THEN
     (SELECT COALESCE(MAX(taskSequence),0)+1 FROM runs WHERE projectId=p.id) ELSE NULL END
    FROM projects p WHERE p.id=? AND p.owner=? AND p.status='ready'
    AND NOT EXISTS(SELECT 1 FROM runs WHERE projectId=p.id AND key=?)
-   AND NOT EXISTS(SELECT 1 FROM runs WHERE projectId=p.id AND status IN ('queued','running','recovering','cancelling','needs_review'))
+   AND NOT EXISTS(SELECT 1 FROM runs WHERE projectId=p.id AND status IN ('pending_approval','queued','running','recovering','cancelling','needs_review'))
    AND NOT EXISTS(SELECT 1 FROM draining_owners WHERE owner=p.owner)
    AND (NOT ? OR EXISTS(SELECT 1 FROM tasks WHERE id=p.id AND owner=p.owner AND closedReason IS NULL))
    AND (NOT ? OR NOT EXISTS(SELECT 1 FROM retry_attempts WHERE taskId=p.id AND (key=? OR phase IN ('preparing','workspace_restored','history_restored','blocked'))))
-   AND `+queueCapacity, r.Run, r.Session, r.Key, r.Prompt, now, now, r.Task, r.Project, r.Owner, r.Key, r.Task, r.Task, r.Key, r.Owner, r.Owner, r.QueueLimit)
+   AND `+queueCapacity, r.Run, r.Session, r.Key, r.Prompt, r.Task && r.RequireApproval, now, now, r.Task, r.Project, r.Owner, r.Key, r.Task, r.Task, r.Key, r.Owner, r.Owner, r.QueueLimit)
 		if r.Task {
 			taskID, runID, eventID, body = r.Project, r.Run, r.Run+":user", r.Body
 		}

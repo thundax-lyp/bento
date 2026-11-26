@@ -2,6 +2,7 @@ import { maxSnapshotBytes, maxSnapshotFiles } from '@/shared/text-snapshot.ts';
 
 const projectStatuses = ['importing', 'ready', 'failed'] as const;
 const runStatuses = [
+    'pending_approval',
     'queued',
     'running',
     'recovering',
