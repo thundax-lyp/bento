@@ -244,15 +244,7 @@ func temporalCommand(c client.Client, namespace, queue string, m message) (any, 
 	id := "bento-run-" + runID
 	switch m.Method {
 	case "enqueue":
-		_, err := c.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
-			ID: id, TaskQueue: queue,
-			WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
-		}, "bentoRun", runID)
-		var duplicate *serviceerror.WorkflowExecutionAlreadyStarted
-		if errors.As(err, &duplicate) {
-			return nil, nil
-		}
-		return nil, err
+		return nil, publishRunWorkflow(ctx, c, queue, id, runID)
 	case "purge":
 		description, err := c.DescribeWorkflowExecution(ctx, id, "")
 		var missing *serviceerror.NotFound
@@ -272,4 +264,20 @@ func temporalCommand(c client.Client, namespace, queue string, m message) (any, 
 	default:
 		return nil, errors.New("unknown control request")
 	}
+}
+
+type workflowPublisher interface {
+	ExecuteWorkflow(context.Context, client.StartWorkflowOptions, interface{}, ...interface{}) (client.WorkflowRun, error)
+}
+
+func publishRunWorkflow(ctx context.Context, publisher workflowPublisher, queue, workflowID, runID string) error {
+	_, err := publisher.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
+		ID: workflowID, TaskQueue: queue,
+		WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
+	}, "bentoRun", runID)
+	var duplicate *serviceerror.WorkflowExecutionAlreadyStarted
+	if errors.As(err, &duplicate) {
+		return nil
+	}
+	return err
 }

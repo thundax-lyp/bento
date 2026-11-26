@@ -1,11 +1,18 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "run-ledger" {
+		if err := runLedger(context.Background(), os.Args[2], os.Stdin, os.Stdout); err != nil {
+			log.Fatal("Go Run ledger controller failed")
+		}
+		return
+	}
 	if len(os.Args) > 2 || (len(os.Args) == 2 && os.Args[1] != "temporal") {
 		log.Fatal("invalid Bento orchestrator command")
 	}
