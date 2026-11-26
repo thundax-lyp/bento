@@ -34,6 +34,7 @@
         "apps/admin/auth/login.html",
         "apps/admin/web/index.html",
         "docs/20-interfaces/APP-ORCHESTRATOR-INTERFACE.md",
+        "docs/40-readiness/evidence/APP-01.md",
         "apps/orchestrator/src/execution-service/admin-diagnostics.ts",
         "apps/orchestrator/tests/execution-service/app-boundaries.test.ts",
         "deploy/orchestrator/Dockerfile",
