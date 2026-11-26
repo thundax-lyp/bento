@@ -66,7 +66,7 @@ try {
                 hasCapability: false,
             },
         );
-    } else if (mode !== 'race-final') {
+    } else if (mode !== 'race-check') {
         try {
             const result = await control.takeover(binding.session, 1);
             assert.equal(result.state, 'READY');
@@ -81,7 +81,7 @@ try {
             console.log('concurrent CAS rejected');
         }
     } else {
-        const result = await control.takeover(binding.session, 1);
+        const result = control.inspect(binding.session);
         assert.equal(result.generation, 2);
         assert.equal(result.state, 'READY');
         assert.equal(readFileSync('start-request', 'utf8'), '1');

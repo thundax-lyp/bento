@@ -36,7 +36,8 @@ for scenario in inflight rapid race; do
         wait "$first"
         wait "$second"
         cat "$scenario/one" "$scenario/two"
-        trial race-final "$observed"
+        grep -Fx 'READY generation 2' "$scenario/one" "$scenario/two"
+        trial race-check
     else
         trial restart "$(docker inspect --format '{{.State.Running}}' "$id")"
     fi
