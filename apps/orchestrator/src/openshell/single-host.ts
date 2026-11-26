@@ -27,8 +27,12 @@ type GrantFilter = (grant: WorkerGrant) => boolean;
 /** Adapter owned by the trusted OpenShell/Docker host. Observations must be independent of command acknowledgements. */
 export interface SingleHostSandbox {
     stop(session: Readonly<Session>): Promise<void>;
+    /** Idempotent across restarts. Resolve only the immutable instance of this generation. */
+    stopGeneration?(session: Readonly<Session>): Promise<void>;
     stopped(session: Readonly<Session>): Promise<boolean>;
     start(session: Readonly<Session>): Promise<void>;
+    /** Deliver the reserved successor once, including across lost replies and restarts. */
+    startGeneration?(session: Readonly<Session>): Promise<void>;
     running(session: Readonly<Session>): Promise<Omit<Running, 'generation'>>;
 }
 
@@ -334,6 +338,7 @@ export class SingleHostExecution {
         if (current.generation !== generation || !current.run)
             throw new Error('stale takeover');
         const run = current.run;
+        let stopDispatched = false;
         if (current.state === 'RUNNING') {
             this.authority.beginDrain(session, generation);
             current = this.inspect(session);
@@ -354,7 +359,12 @@ export class SingleHostExecution {
                 writesRevoked: true,
             });
             current = this.inspect(session);
-            if (dispatch) await this.sandbox.stop(current);
+            if (dispatch) {
+                if (this.sandbox.stopGeneration)
+                    await this.sandbox.stopGeneration(current);
+                else await this.sandbox.stop(current);
+                stopDispatched = true;
+            }
         }
         if (current.state === 'UNKNOWN') {
             if (!this.management.claimRecovery(session, generation))
@@ -363,10 +373,15 @@ export class SingleHostExecution {
                     generation,
                     'single-host',
                 );
+            let stopped = await this.sandbox.stopped(current);
+            if (!stopped && !stopDispatched && this.sandbox.stopGeneration) {
+                await this.sandbox.stopGeneration(current);
+                stopped = await this.sandbox.stopped(current);
+            }
             this.management.confirmStop(session, {
                 sandbox: current.sandbox,
                 generation,
-                stopped: await this.sandbox.stopped(current),
+                stopped,
                 channelsClosed: this.gate.channelsClosed(session, generation),
                 credentialsRevoked: !current.hasCapability,
                 writesRevoked: this.fence.isRevoked(session, generation),
@@ -380,10 +395,12 @@ export class SingleHostExecution {
             if (!this.management.prepareStart(session, generation, 'start'))
                 throw new Error('start reservation denied');
             current = this.inspect(session);
-            await this.sandbox.start(current);
+            if (!this.sandbox.startGeneration)
+                await this.sandbox.start(current);
         }
         if (current.state !== 'START_UNKNOWN')
             throw new Error('unexpected takeover state');
+        await this.sandbox.startGeneration?.(current);
         this.management.confirmStart(session, generation, {
             ...(await this.sandbox.running(current)),
             generation: generation + 1,

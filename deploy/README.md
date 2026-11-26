@@ -111,6 +111,10 @@ PASS 要求基线 Web 健康，首页和匿名会话返回 200、401。候选 We
 2. 为 Workspace 准备独立持久 Volume。受测 Docker driver 启用 `allow_driver_config`，卷使用 `sandbox-attachable=true` 和 `sandbox-attachable-workspace=default` 标签。部署后核对沙盒挂载、工作目录与策略。
 3. 通过测试 Session 验证文件和命令访问同一卷。重建沙盒时保留原卷，确认旧执行已退出、新沙盒的策略和挂载正确后再发布新代 READY。严格隔离模式应拒绝仅提供 partial enforcement 的环境。
 
+需要在控制器重启后继续停止旧代时，模块宿主实现 `stopGeneration(binding)`。命令宿主在私有 JSON 中设置 `generationScopedStop: true`，并处理 `{action:"stopGeneration",binding}`。宿主按 `binding.session` 和 `binding.generation` 持久解析原实例的不可变标识，使用该标识执行可重试的停止，并由 `stopped(binding)` 独立观察同一实例。旧实例已停或已删除时，停止请求可以返回成功。旧代请求迟到时，宿主仍只处理原实例。没有此能力的宿主沿用一次性停止派发和独立对账。
+
+需要在控制器重启后恢复启动派发时，模块宿主实现 `startGeneration(binding)`。命令宿主设置 `generationScopedStart: true` 并处理 `{action:"startGeneration",binding}`。请求中的 `binding.generation` 是原代，启动权对应同一 Session 的下一代。宿主须跨进程持久去重，请求重投只对账同一个下一代实例。已退出或已删除的实例仍保留启动消费记录，旧请求不得重新启动或创建替代实例。控制器随后通过 `running(binding)` 独立确认实际实例、策略和卷，才发布 READY。
+
 运行边界和既有实验结果见[需求完成状况](../docs/40-readiness/CURRENT-READINESS.md)。
 
 ### 配置执行服务

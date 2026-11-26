@@ -36,6 +36,8 @@ type Settings = {
     prewarmWorker?: boolean;
     workerSlots?: 1 | 2;
     sharedVolumes?: boolean;
+    generationScopedStop?: boolean;
+    generationScopedStart?: boolean;
     controlTimeoutMs?: number;
     taskObservationModule?: string;
 };
@@ -179,6 +181,16 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
         typeof settings.sharedVolumes !== 'boolean'
     )
         throw new Error('Invalid shared volume setting');
+    if (
+        settings.generationScopedStop !== undefined &&
+        typeof settings.generationScopedStop !== 'boolean'
+    )
+        throw new Error('Invalid generation-scoped stop setting');
+    if (
+        settings.generationScopedStart !== undefined &&
+        typeof settings.generationScopedStart !== 'boolean'
+    )
+        throw new Error('Invalid generation-scoped start setting');
     const slots = settings.workerSlots ?? 1;
     if (
         (slots !== 1 && slots !== 2) ||
@@ -309,9 +321,19 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
         async stop(binding) {
             await call('stop', binding);
         },
+        ...(settings.generationScopedStop === true && {
+            async stopGeneration(binding) {
+                await call('stopGeneration', binding);
+            },
+        }),
         async start(binding) {
             await call('start', binding);
         },
+        ...(settings.generationScopedStart === true && {
+            async startGeneration(binding) {
+                await call('startGeneration', binding);
+            },
+        }),
         stopped: async (binding) => (await call('stopped', binding)) === true,
         running: async (binding) => observation(await call('running', binding)),
         ...(settings.prewarmWorker
