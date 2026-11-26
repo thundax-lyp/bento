@@ -70,6 +70,12 @@ func runBusiness(path, action string) error {
 	return json.NewEncoder(os.Stdout).Encode(out)
 }
 
+const releaseSlotSQL = `DELETE FROM run_slot_leases WHERE EXISTS(
+			SELECT 1 FROM runs WHERE id=run_slot_leases.runId AND status NOT IN ('running','recovering','cancelling'))
+			AND NOT EXISTS (SELECT 1 FROM physical_stop_proofs p WHERE p.runId=run_slot_leases.runId
+				AND NOT EXISTS (SELECT 1 FROM physical_stop_consumption c WHERE c.runId=p.runId
+					AND c.generation=p.generation AND c.consumer='slot' AND c.sha256=p.sha256))`
+
 func businessCommand(ctx context.Context, db *sql.Conn, action string, r businessRequest) (any, error) {
 	if r.Run == "" && action != "drain" && action != "begin-drain" && action != "resume-admission" {
 		return nil, errAuthority
@@ -87,7 +93,21 @@ func businessCommand(ctx context.Context, db *sql.Conn, action string, r busines
 	case "begin-drain":
 		return exec("INSERT OR IGNORE INTO run_admission_drain VALUES (1)")
 	case "resume-admission":
-		return exec("DELETE FROM run_admission_drain")
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		defer tx.Rollback()
+		// The caller holds the execution controller lock. Queued Runs keep their reservations.
+		if _, err = tx.ExecContext(ctx, releaseSlotSQL+` AND EXISTS (
+			SELECT 1 FROM runs WHERE id=run_slot_leases.runId AND status<>'queued'
+		)`); err != nil {
+			return nil, err
+		}
+		if _, err = tx.ExecContext(ctx, "DELETE FROM run_admission_drain"); err != nil {
+			return nil, err
+		}
+		return true, tx.Commit()
 	case "reserve":
 		return exec(`WITH occupied AS (
 			SELECT p.owner,r.status FROM runs r JOIN projects p ON p.id=r.projectId
@@ -125,11 +145,7 @@ func businessCommand(ctx context.Context, db *sql.Conn, action string, r busines
 		}
 		return slot, err
 	case "release":
-		return exec(`DELETE FROM run_slot_leases WHERE runId=? AND EXISTS(
-			SELECT 1 FROM runs WHERE id=run_slot_leases.runId AND status NOT IN ('running','recovering','cancelling'))
-			AND NOT EXISTS (SELECT 1 FROM physical_stop_proofs p WHERE p.runId=run_slot_leases.runId
-				AND NOT EXISTS (SELECT 1 FROM physical_stop_consumption c WHERE c.runId=p.runId
-					AND c.generation=p.generation AND c.consumer='slot' AND c.sha256=p.sha256))`, r.Run)
+		return exec(releaseSlotSQL+" AND runId=?", r.Run)
 	case "status":
 		switch r.Status {
 		case "queued", "running", "recovering", "cancelling", "succeeded", "failed", "cancelled", "needs_review":

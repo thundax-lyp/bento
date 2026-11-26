@@ -123,6 +123,7 @@
         "apps/orchestrator/src/control/authority.go",
         "apps/orchestrator/src/control/authority_shared_test.go",
         "apps/orchestrator/src/control/business.go",
+        "apps/orchestrator/src/control/business_test.go",
         "apps/orchestrator/src/control/main.go",
         "apps/orchestrator/src/control/temporal.go",
         "apps/orchestrator/src/control/temporal_test.go",
