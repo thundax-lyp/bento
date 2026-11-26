@@ -21,6 +21,7 @@ import {
     snapshotSha256,
 } from '@/apps/orchestrator/src/execution-service/service.ts';
 import {
+    executionBindingDigest,
     type ExecutionHost,
     type TaskVolumeStopObservation,
     type WorkerRequest,
@@ -1069,6 +1070,11 @@ test(
         const upstreamStages: (() => void)[] = [];
         let active: WorkerRequest;
         let stage: 'terminal' | 'held';
+        const exits = new Map<string, string>();
+        const stoppedSessions = new Set<string>();
+        let drainDuringRun = false;
+        let drainFinished = false;
+        let draining: Promise<void> | undefined;
         const rows = (session: string, generation: number) => {
             const db = new DatabaseSync(join(state, 'authority.sqlite'), {
                 readOnly: true,
@@ -1116,8 +1122,47 @@ test(
                 upstreamStages.shift()?.();
             });
         });
-        const service = await start(state, {
+        const observedHost: ExecutionHost = {
             ...base,
+            async stopped(session) {
+                const stopped = await base.stopped(session);
+                if (stopped) stoppedSessions.add(session.session);
+                else stoppedSessions.delete(session.session);
+                return stopped;
+            },
+            async start(session) {
+                stoppedSessions.delete(session.session);
+                return base.start(session);
+            },
+            async observeWorkerExit(binding, runId, generation) {
+                const exitedAt = exits.get(runId + ':' + generation);
+                return exitedAt
+                    ? {
+                          runId,
+                          sessionId: binding.session,
+                          generation,
+                          bindingDigest: executionBindingDigest(binding),
+                          exitedAt,
+                      }
+                    : null;
+            },
+            async observeTaskVolumeStopped(binding, runId, generation) {
+                if (
+                    !exits.has(runId + ':' + generation) ||
+                    !stoppedSessions.has(binding.session)
+                )
+                    return null;
+                return {
+                    runId,
+                    sessionId: binding.session,
+                    generation,
+                    bindingDigest: executionBindingDigest(binding),
+                    restoreIdle: true,
+                    sandboxStopped: true,
+                    volumeWriters: 0,
+                    observedAt: new Date().toISOString(),
+                };
+            },
             sdk: {
                 upstream: new URL('https://127.0.0.1:' + address.port),
                 credentials: { cert, ca: cert, key },
@@ -1193,14 +1238,55 @@ test(
                         ).at(-1)?.state,
                         'UNKNOWN',
                     );
+                    if (drainDuringRun) {
+                        draining = service.drain().then(() => {
+                            drainFinished = true;
+                        });
+                        if (process.env.BENTO_TEST_GO_CONTROL) {
+                            const db = new DatabaseSync(
+                                join(state, 'business.sqlite'),
+                                { readOnly: true },
+                            );
+                            try {
+                                assert.equal(
+                                    db
+                                        .prepare(
+                                            'SELECT runId FROM run_slot_leases WHERE slot=0',
+                                        )
+                                        .get()?.runId,
+                                    request.grant.run,
+                                );
+                                assert(
+                                    db
+                                        .prepare(
+                                            'SELECT 1 FROM run_admission_drain',
+                                        )
+                                        .get(),
+                                );
+                            } finally {
+                                db.close();
+                            }
+                        }
+                        await delay(20);
+                        assert.equal(drainFinished, false);
+                    }
                     held.close(constants.NGHTTP2_CANCEL);
                     await bounded(close, 5000, 'lost SDK terminal');
                     return 'review';
                 } finally {
                     transport.destroy();
+                    exits.set(
+                        request.grant.run + ':' + request.grant.generation,
+                        new Date().toISOString(),
+                    );
                 }
             },
-        });
+        };
+        const service = await start(
+            state,
+            observedHost,
+            process.env.BENTO_TEST_GO_CONTROL,
+        );
         t.after(() => service.close());
         const api = taskRetryTestClient(() => service.url);
         async function executeOne() {
@@ -1248,6 +1334,7 @@ test(
             return { run, runId, original, sdkOperationId };
         }
         const unrelated = await executeOne();
+        drainDuringRun = true;
         const original = await executeOne();
         const proof = {
             runId: original.runId,
@@ -1314,5 +1401,36 @@ test(
             )?.state,
             'UNKNOWN',
         );
+        assert(draining);
+        await draining;
+        assert.equal(drainFinished, true);
+        const evidence = new DatabaseSync(join(state, 'business.sqlite'), {
+            readOnly: true,
+        });
+        try {
+            const consumed = evidence
+                .prepare(
+                    `SELECT c.consumer, c.sha256, p.sha256 AS proofDigest
+                     FROM physical_stop_consumption c
+                     JOIN physical_stop_proofs p USING(runId,generation)
+                     WHERE c.runId=? AND c.generation=?
+                     ORDER BY c.consumer`,
+                )
+                .all(original.runId, proof.failedGeneration);
+            assert.deepEqual(
+                consumed.map(({ consumer }) => consumer),
+                ['slot', 'upgrade'],
+            );
+            for (const row of consumed)
+                assert.equal(row.sha256, row.proofDigest);
+            assert.equal(
+                evidence
+                    .prepare('SELECT count(*) AS count FROM run_slot_leases')
+                    .get()?.count,
+                0,
+            );
+        } finally {
+            evidence.close();
+        }
     },
 );

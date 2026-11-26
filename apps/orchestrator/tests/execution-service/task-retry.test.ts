@@ -28,7 +28,8 @@ import {
 test('settled retry receipts release the attempt reservation and preserve closure evidence', async (t) => {
     const folder = await mkdtemp(join(tmpdir(), 'bento-task-retry-'));
     const path = join(folder, 'business.sqlite');
-    let store = new Store(path, 1);
+    const goControl = process.env.BENTO_TEST_GO_CONTROL;
+    let store = new Store(path, 1, goControl);
     t.after(async () => {
         store.close();
         await rm(folder, { recursive: true, force: true });
@@ -91,7 +92,7 @@ test('settled retry receipts release the attempt reservation and preserve closur
         true,
     );
     store.close();
-    store = new Store(path, 1);
+    store = new Store(path, 1, goControl);
     assert.equal(
         store.taskRetry(attempt.id).lastConfirmedPhase,
         'workspace_restored',

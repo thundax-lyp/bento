@@ -142,11 +142,15 @@ docker compose -f deploy/compose.yaml --profile worker-image build bento-worker
 
 启用 Temporal 和预热后，在同一份宿主配置中设置 `"workerSlots": 2` 可开启两个槽位。每个 Run 占用一个槽位直到执行或恢复结束，两槽都占用时其他 Run 留在队列。项目与 Session、Workspace 一一绑定，同一项目仍只接受一个未结束的 Run。调低槽位数或回退到旧版本前，先排空执行宿主。
 
+升级执行宿主时，先禁用当前 Orchestrator 容器的自动重启，再向该容器发送 SIGTERM。用 `docker wait` 等待该实例正常退出，收到退出码 0 后切换镜像并启动。超时或非零退出时中止切换，检查旧 Run 和证明消费状态。直接调用 Compose 重建会受容器强制停止时限影响。排空开始后，新 Run 留在队列，已接管的 Run 继续收口。真实 SDK 宿主的未知操作保留原状态，槽位释放和升级分别在账本中记录同一个双侧停止证明摘要。
+
 受信启动器负责隔离 Worker 及其子进程，并将终止信号传给整个容器或进程组。异常退出、租约超时或需要人工核对的回执会淘汰该 Worker。执行服务在旧进程关闭后补位。关闭服务时等待预热进程退出，随后释放控制器锁。停用预热时，排空后移除私有配置中的 `prewarmWorker` 和 `workerSlots`，移除 Worker 命令的 `--warm`，再重启执行服务。
 
 遇到 worker 失联时，执行服务撤销旧代授权并在原卷上恢复 Session。恢复 worker 只对账会话历史，原 prompt 不重发。Run 进入 `needs_review` 时，可信部署端先独立核对预期修改，再通过[进程内 `reviewRun`](../apps/orchestrator/src/execution-service/service.ts) 提供代次、稳定操作 ID 和预期整卷哈希。执行服务核对恢复回执、绑定、UNKNOWN 操作及卷快照，原子保存确认记录和 diff。核对失败时，Run 继续等待可信核对，diff 暂不可用。
 
 仓库内的 TypeScript 启动命令使用 `node --import /app/register-paths.mjs` 解析 `@/` 路径。Compose 和 Worker 镜像已配置此参数。自定义启动器直接调用 Node 时也需加载该文件。
+
+Compose 通过 `BENTO_GO_AUTHORITY` 指定镜像内的 Go 权威入口。自定义启动器使用 Go 权威链时同样配置该变量，指向与执行宿主配套构建的 `bento-orchestrator`。进程共用该部署的数据目录。执行代次与授权继续使用原权威 SQLite 文件，派发、Run 状态推进、槽位租约与升级排空在原业务 SQLite 文件中提交。
 
 使用 `start.ts` 的部署可设置 `BENTO_REVIEW_MODULE`，指向仅由可信部署端控制的模块。模块默认导出同步安装函数 `(reviewRun, closeTaskRun, readTaskClosure, closeTaskRetry, readTaskRetryClosure, reconcileTaskRetry) => cleanup`。原只接收 `reviewRun` 的模块仍可使用首参。安装函数接入部署端的复核工具，并在停服时通过 `cleanup` 停止接收新请求、等待在途复核结束。复核提交须包含 `runId`、`failedGeneration`、`readyGeneration`、`stableOperationId` 和 `expectedSnapshotSha256`。模块与执行服务同进程运行，部署端应限制模块文件及复核入口的访问权限。
 

@@ -105,6 +105,9 @@ async function main() {
         port,
         bindHost: BENTO_BIND_HOST,
         host,
+        ...(process.env.BENTO_GO_AUTHORITY
+            ? { goControl: process.env.BENTO_GO_AUTHORITY }
+            : {}),
         ...(BENTO_TENANT_QUEUE_LIMIT === undefined
             ? {}
             : { tenantQueueLimit: Number(BENTO_TENANT_QUEUE_LIMIT) }),
@@ -143,13 +146,11 @@ async function main() {
     const close = () => {
         if (stopping) return;
         stopping = true;
-        const deadline = setTimeout(() => process.exit(1), 10_000);
-        void Promise.resolve()
+        void service
+            .drain()
             .then(() => stopReview?.())
             .finally(() => service.close())
-            .then(() => clearTimeout(deadline))
             .catch(() => {
-                clearTimeout(deadline);
                 process.stderr.write(
                     'Bento execution service shutdown failed.\n',
                 );

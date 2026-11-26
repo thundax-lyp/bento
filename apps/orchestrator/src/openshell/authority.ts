@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 
 import type { Binding } from '@/apps/worker/protocol.ts';
@@ -29,8 +30,12 @@ const digest = (value: string) =>
 /** Trusted control-plane store. Only an authenticated controller may supply observations. */
 export class Authority {
     private readonly db: DatabaseSync;
+    private readonly path: string;
+    private readonly goControl: string | undefined;
 
-    constructor(path: string) {
+    constructor(path: string, goControl?: string) {
+        this.path = path;
+        this.goControl = goControl;
         this.db = new DatabaseSync(path);
         this.db.exec(`
             PRAGMA journal_mode=WAL;
@@ -62,6 +67,25 @@ export class Authority {
 
     close() {
         this.db.close();
+    }
+
+    command(action: string, input: object): string | undefined {
+        if (!this.goControl) return undefined;
+        try {
+            const result: unknown = JSON.parse(
+                execFileSync(this.goControl, ['authority', this.path, action], {
+                    input: JSON.stringify(input),
+                    encoding: 'utf8',
+                    timeout: 7000,
+                    maxBuffer: 4096,
+                    stdio: ['pipe', 'pipe', 'pipe'],
+                }),
+            );
+            if (typeof result !== 'string') throw new Error('invalid result');
+            return result;
+        } catch {
+            throw new Error('Go execution authority denied or unavailable');
+        }
     }
 
     checkPurge(binding: Binding) {
@@ -115,6 +139,14 @@ export class Authority {
             evidence.generation !== 1
         )
             throw new Error('initial policy unconfirmed');
+        if (
+            this.command('bind', {
+                ...binding,
+                generation: evidence.generation,
+                installed: evidence.installed,
+            }) !== undefined
+        )
+            return;
         this.db
             .prepare(
                 "INSERT INTO execution_sessions(session,tenant,project,sandbox,volume,generation,state) VALUES (?,?,?,?,?,1,'READY')",
@@ -153,6 +185,13 @@ export class Authority {
             !Number.isSafeInteger(expires)
         )
             throw new Error('invalid lease');
+        const tokenFromGo = this.command('admit', {
+            session,
+            generation,
+            run,
+            leaseMs,
+        });
+        if (tokenFromGo !== undefined) return tokenFromGo;
         const token = randomBytes(32).toString('hex');
         this.requireChange(
             this.db
@@ -182,6 +221,8 @@ export class Authority {
     }
 
     beginDrain(session: string, generation: number) {
+        if (this.command('revoke', { session, generation }) !== undefined)
+            return;
         this.requireChange(
             this.db
                 .prepare(
@@ -201,6 +242,13 @@ export class Authority {
         operation: string,
         dispatcher: string,
     ) {
+        const go = this.command('reserve-stop', {
+            session,
+            generation,
+            operation,
+            controller: dispatcher,
+        });
+        if (go !== undefined) return go === 'reserved';
         const result = this.db
             .prepare(
                 `
@@ -215,6 +263,12 @@ export class Authority {
     }
 
     claimRecovery(session: string, generation: number, controller: string) {
+        const go = this.command('claim-recovery', {
+            session,
+            generation,
+            controller,
+        });
+        if (go !== undefined) return go === 'reserved';
         const result = this.db
             .prepare(
                 `
@@ -237,6 +291,13 @@ export class Authority {
         operation: string,
         controller: string,
     ) {
+        const go = this.command('reserve-start', {
+            session,
+            generation: previous,
+            operation,
+            controller,
+        });
+        if (go !== undefined) return go === 'reserved';
         let reserved = false;
         this.managementTransaction(() => {
             const result = this.db
@@ -273,6 +334,14 @@ export class Authority {
         controller: string,
         evidence: StopEvidence,
     ) {
+        if (
+            this.command('stop-observation', {
+                session,
+                controller,
+                ...evidence,
+            }) !== undefined
+        )
+            return;
         this.managementTransaction(() => {
             const initialDispatcher = this.db
                 .prepare(
@@ -319,6 +388,20 @@ export class Authority {
         controller: string,
         evidence: PolicyEvidence & { volume: string; running: boolean },
     ) {
+        if (evidence.generation !== previous + 1)
+            throw new Error('next execution unconfirmed');
+        if (
+            this.command('publish-ready', {
+                session,
+                controller,
+                sandbox: evidence.sandbox,
+                volume: evidence.volume,
+                generation: previous,
+                installed: evidence.installed,
+                running: evidence.running,
+            }) !== undefined
+        )
+            return;
         this.managementTransaction(() => {
             this.requireRecoveryOwner(session, previous, controller);
             const intent = this.db
@@ -417,6 +500,11 @@ export class Authority {
     }
 
     observeStop(session: string, evidence: StopEvidence) {
+        if (
+            this.command('stop-observation', { session, ...evidence }) !==
+            undefined
+        )
+            return;
         const stopped =
             evidence.stopped &&
             evidence.channelsClosed &&
@@ -442,6 +530,15 @@ export class Authority {
     publishReady(session: string, previous: number, evidence: PolicyEvidence) {
         if (!evidence.installed || evidence.generation !== previous + 1)
             throw new Error('next policy unconfirmed');
+        if (
+            this.command('publish-ready', {
+                session,
+                generation: previous,
+                sandbox: evidence.sandbox,
+                installed: evidence.installed,
+            }) !== undefined
+        )
+            return;
         this.requireChange(
             this.db
                 .prepare(
@@ -457,6 +554,18 @@ export class Authority {
     /** An UNKNOWN operation remains queryable and cannot be submitted again. */
     reserveOperation(token: string, id: string, input: string) {
         const fingerprint = digest(input);
+        if (this.goControl) {
+            const grant = this.authorize(token);
+            return (
+                this.command('reserve-operation', {
+                    session: grant.session,
+                    generation: grant.generation,
+                    tokenDigest: digest(token),
+                    operationId: id,
+                    inputDigest: fingerprint,
+                }) === 'reserved'
+            );
+        }
         const result = this.db
             .prepare(
                 `
@@ -476,6 +585,15 @@ export class Authority {
         id: string,
         outcome: 'SUCCEEDED' | 'FAILED',
     ) {
+        if (
+            this.command('observe-operation', {
+                session,
+                generation,
+                operationId: id,
+                outcome,
+            }) !== undefined
+        )
+            return;
         this.requireChange(
             this.db
                 .prepare(

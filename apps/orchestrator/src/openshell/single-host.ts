@@ -34,11 +34,11 @@ export class SingleHostExecution {
     private readonly recovering = new Set<string>();
 
     constructor(
-        paths: { authority: string; history: string },
+        paths: { authority: string; history: string; goControl?: string },
         sandbox: SingleHostSandbox,
     ) {
         this.sandbox = sandbox;
-        this.authority = new Authority(paths.authority);
+        this.authority = new Authority(paths.authority, paths.goControl);
         this.history = new SessionHistory(paths.history);
         this.fence = new PersistenceFence(paths.history);
         this.gate = new WorkerGate(this.authority);
@@ -53,6 +53,22 @@ export class SingleHostExecution {
 
     inspect(session: string) {
         return this.authority.inspect(session);
+    }
+
+    persistPhysicalStopProof(
+        session: string,
+        run: string,
+        generation: number,
+        proof: string,
+    ) {
+        return (
+            this.authority.command('physical-proof', {
+                session,
+                run,
+                generation,
+                proof,
+            }) !== undefined
+        );
     }
 
     async purge(binding: Binding, remove: (binding: Binding) => Promise<void>) {
@@ -159,18 +175,26 @@ export class SingleHostExecution {
         return { token, session, generation, run };
     }
 
-    async takeover(session: string, generation: number) {
+    async takeover(
+        session: string,
+        generation: number,
+        beforeRestart?: () => Promise<void>,
+    ) {
         if (this.recovering.has(session))
             throw new Error('takeover in progress');
         this.recovering.add(session);
         try {
-            return await this.reconcile(session, generation);
+            return await this.reconcile(session, generation, beforeRestart);
         } finally {
             this.recovering.delete(session);
         }
     }
 
-    private async reconcile(session: string, generation: number) {
+    private async reconcile(
+        session: string,
+        generation: number,
+        beforeRestart?: () => Promise<void>,
+    ) {
         let current = this.inspect(session);
         if (current.generation === generation + 1 && current.state === 'READY')
             return current;
@@ -221,6 +245,7 @@ export class SingleHostExecution {
                 throw new Error('old execution unconfirmed');
         }
         if (current.state === 'STOPPED') {
+            await beforeRestart?.();
             if (!this.management.prepareStart(session, generation, 'start'))
                 throw new Error('start reservation denied');
             current = this.inspect(session);
