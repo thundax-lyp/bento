@@ -1,3 +1,4 @@
+import type { AdminDiagnostics } from './admin-diagnostics.ts';
 import { operationId, publicTaskEventBatch } from '@/apps/worker/protocol.ts';
 import { mkdir, realpath } from 'node:fs/promises';
 import type { Server as HttpServer } from 'node:http';
@@ -43,6 +44,7 @@ export { snapshotSha256 } from './snapshot.ts';
 type Options = {
     state: string;
     token: string;
+    adminDiagnostics?: AdminDiagnostics;
     port?: number;
     bindHost?: '127.0.0.1' | '0.0.0.0';
     workerPort?: { persistence?: number; operation?: number; sdk?: number };
@@ -1694,6 +1696,17 @@ export async function serveExecution(options: Options) {
             return task;
         }
 
+        function validateSharedRun(binding: Binding) {
+            const target = checkedProjectSession(binding);
+            if (!execution.sessionAvailable(target.session))
+                throw conflict('session_not_ready', 'Session is not ready.');
+            if (execution.hasVolumeWriter(target.volume))
+                throw conflict(
+                    'volume_busy',
+                    'The volume already has a writer.',
+                );
+        }
+
         const url = await listen(
             executionHttp(
                 db,
@@ -1763,25 +1776,11 @@ export async function serveExecution(options: Options) {
                               key,
                               prompt,
                               sessionId,
-                              (binding) => {
-                                  const target = checkedProjectSession(binding);
-                                  if (
-                                      !execution.sessionAvailable(
-                                          target.session,
-                                      )
-                                  )
-                                      throw conflict(
-                                          'session_not_ready',
-                                          'Session is not ready.',
-                                      );
-                                  if (execution.hasVolumeWriter(target.volume))
-                                      throw conflict(
-                                          'volume_busy',
-                                          'The volume already has a writer.',
-                                      );
-                              },
+                              validateSharedRun,
                           )
                     : undefined,
+                options.adminDiagnostics,
+                sharedVolume ? validateSharedRun : undefined,
             ),
             options.port,
             options.bindHost,

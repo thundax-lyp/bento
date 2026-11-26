@@ -1,3 +1,4 @@
+import type { AdminDiagnostics } from './admin-diagnostics.ts';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { commandHost } from './command-host.ts';
@@ -23,6 +24,8 @@ async function main() {
         BENTO_STATE_DIR,
         BENTO_EXECUTION_ENVIRONMENT_VERSION,
         BENTO_SERVICE_BEARER,
+        BENTO_ADMIN_SERVICE_BEARER,
+        BENTO_ADMIN_WORKSPACE_GRANTS,
         BENTO_HOST_MODULE,
         BENTO_HOST_CONFIG,
         BENTO_REVIEW_MODULE,
@@ -100,7 +103,24 @@ async function main() {
         : undefined;
     if (BENTO_REVIEW_MODULE && typeof installReview !== 'function')
         throw new Error('Trusted review module must export an installer');
+    if (
+        Boolean(BENTO_ADMIN_SERVICE_BEARER) !==
+        Boolean(BENTO_ADMIN_WORKSPACE_GRANTS)
+    )
+        throw new Error(
+            'Admin service bearer and Workspace grants must be configured together',
+        );
     const service = await serveExecution({
+        ...(BENTO_ADMIN_SERVICE_BEARER && BENTO_ADMIN_WORKSPACE_GRANTS
+            ? {
+                  adminDiagnostics: {
+                      token: BENTO_ADMIN_SERVICE_BEARER,
+                      grants: JSON.parse(
+                          BENTO_ADMIN_WORKSPACE_GRANTS,
+                      ) as AdminDiagnostics['grants'],
+                  },
+              }
+            : {}),
         state,
         token: BENTO_SERVICE_BEARER,
         port,

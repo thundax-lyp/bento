@@ -230,6 +230,9 @@ export class Store {
             CREATE UNIQUE INDEX IF NOT EXISTS one_pending_run_per_project
                 ON runs(projectId) WHERE status IN ${pending};
             DROP INDEX IF EXISTS one_active_host_run;
+            CREATE TABLE IF NOT EXISTS admin_diagnostic_runs (
+                runId TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE
+            );
             CREATE TABLE IF NOT EXISTS run_dispatches (
                 runId TEXT PRIMARY KEY REFERENCES runs(id)
             );
@@ -2031,6 +2034,48 @@ export class Store {
         return this.goControl ? enqueue() : this.write(enqueue);
     }
 
+    addDiagnosticRun(
+        owner: string,
+        project: string,
+        key: string,
+        prompt: string,
+        validateSession?: (binding: Binding) => void,
+    ) {
+        const enqueue = () => {
+            const result = this.enqueueRun(
+                owner,
+                project,
+                key,
+                prompt,
+                false,
+                undefined,
+                validateSession,
+                true,
+            );
+            if (result.replay)
+                this.diagnosticRun(owner, project, result.run.id);
+            else if (!this.goControl)
+                this.db
+                    .prepare(
+                        'INSERT INTO admin_diagnostic_runs (runId) VALUES (?)',
+                    )
+                    .run(result.run.id);
+            return result;
+        };
+        return this.goControl ? enqueue() : this.write(enqueue);
+    }
+
+    diagnosticRun(owner: string, project: string, id: string) {
+        const run = this.ownedRun(owner, project, id);
+        if (
+            !this.db
+                .prepare('SELECT 1 FROM admin_diagnostic_runs WHERE runId=?')
+                .get(id)
+        )
+            throw missing();
+        return runView(run);
+    }
+
     private enqueueRun(
         owner: string,
         projectId: string,
@@ -2039,6 +2084,7 @@ export class Store {
         task = false,
         sessionId?: string,
         validateSession?: (binding: Binding) => void,
+        diagnostic = false,
     ) {
         if (!task) this.requireRunProject(owner, projectId);
         this.requireOpenOwner(owner);
@@ -2095,6 +2141,7 @@ export class Store {
                     key,
                     prompt,
                     task,
+                    diagnostic,
                     body: task
                         ? JSON.stringify({
                               kind: 'user_message',
