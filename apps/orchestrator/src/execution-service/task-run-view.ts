@@ -91,6 +91,7 @@ export function taskRunViews({
                     (run.status === 'cancelled' &&
                         run.admittedGeneration === null)),
             canCancel:
+                run.status === 'pending_approval' ||
                 run.status === 'queued' ||
                 (run.status === 'running' &&
                     !run.receipt &&

@@ -49,6 +49,7 @@ type Options = {
     workerTimeoutMs?: number;
     retryMs?: number;
     tenantQueueLimit?: number;
+    requireTaskRunApproval?: boolean;
     host: ExecutionHost;
     temporal?: TemporalRunOptions;
     goControl?: string;
@@ -56,6 +57,11 @@ type Options = {
 
 export async function serveExecution(options: Options) {
     const { host, token } = options;
+    if (
+        options.requireTaskRunApproval &&
+        (!options.goControl || !options.temporal)
+    )
+        throw new Error('Task Run approval requires Go authority and Temporal');
     const sharedVolume = host.sharedVolume;
     const slots = host.workerSlots ?? 1;
     const supportsPhysicalStop = Boolean(
@@ -140,6 +146,7 @@ export async function serveExecution(options: Options) {
             join(dir, 'business.sqlite'),
             tenantQueueLimit,
             options.goControl,
+            options.requireTaskRunApproval,
         );
         control = new SingleHostExecution(
             {

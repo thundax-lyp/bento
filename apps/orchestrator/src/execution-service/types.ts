@@ -177,6 +177,7 @@ export interface ExecutionHost extends SingleHostSandbox {
 
 export type ProjectStatus = 'importing' | 'ready' | 'failed';
 export type RunStatus =
+    | 'pending_approval'
     | 'queued'
     | 'running'
     | 'recovering'
