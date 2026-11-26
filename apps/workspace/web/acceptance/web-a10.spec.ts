@@ -153,13 +153,15 @@ async function freeze(run: Run, marker: string) {
 }
 
 async function interruptFrozenAttempt(run: Run) {
+    let operationId: unknown;
     await expect
         .poll(
             async () => {
                 try {
-                    return (
+                    operationId = (
                         await callA10Hook('lookupSdkUnknown', { runId: run.id })
                     ).operationId;
+                    return operationId;
                 } catch {
                     return null;
                 }
@@ -170,6 +172,7 @@ async function interruptFrozenAttempt(run: Run) {
     expect(
         await callA10Hook('killFrozenWorker', { runId: run.id }),
     ).toMatchObject({ killed: true });
+    return operationId;
 }
 
 async function observeInterruptedExit(run: Run, workerIdentity: unknown) {
@@ -198,11 +201,10 @@ async function observeInterruptedExit(run: Run, workerIdentity: unknown) {
         });
 }
 
-async function readInterrupted(run: Run) {
-    await waitReview(run, true);
-    expect(
-        await callA10Hook('readRunEvidence', { runId: run.id }),
-    ).toMatchObject({
+async function readInterrupted(run: Run, afterObservedExit = true) {
+    await waitReview(run, afterObservedExit);
+    const evidence = await callA10Hook('readRunEvidence', { runId: run.id });
+    expect(evidence).toMatchObject({
         independentlyExited: true,
         markerCount: 1,
         oldGenerationWriteDenied: true,
@@ -215,6 +217,7 @@ async function readInterrupted(run: Run) {
                     .received,
         )
         .toBe(true);
+    return evidence;
 }
 
 async function expectPatch(run: Run, marker: string) {
@@ -233,7 +236,7 @@ async function expectPatch(run: Run, marker: string) {
     }
 }
 
-async function interruptedCase([a, b, c]: TenantPages) {
+async function interruptedCase([a, b, c]: TenantPages, faultOnly = false) {
     const [taskA, taskB, taskC] = await Promise.all([
         sourceTask(a),
         sourceTask(b),
@@ -273,12 +276,14 @@ async function interruptedCase([a, b, c]: TenantPages) {
     expect(
         await callA10Hook('releaseQueueBarrier', { caseId, role: 'A' }),
     ).toMatchObject({ released: true });
-    await interruptFrozenAttempt(runA);
+    const unknownOperationId = await interruptFrozenAttempt(runA);
     expect(
         await callA10Hook('releaseQueueBarrier', { caseId, role: 'B' }),
     ).toMatchObject({ released: true });
-    await observeInterruptedExit(runA, both.aIdentitySha256);
-    await readInterrupted(runA);
+    if (!faultOnly) {
+        await observeInterruptedExit(runA, both.aIdentitySha256);
+        await readInterrupted(runA);
+    }
     await waitStatus(runB, 'succeeded');
     expect(
         await callA10Hook('readRunEvidence', { runId: runB.id }),
@@ -292,7 +297,16 @@ async function interruptedCase([a, b, c]: TenantPages) {
             .workerIdentitySha256,
     ).toMatch(/^[a-f0-9]{64}$/);
 
-    return { run: runA, marker, task: taskA };
+    const faultEvidence = faultOnly
+        ? await readInterrupted(runA, false)
+        : undefined;
+    return {
+        run: runA,
+        marker,
+        task: taskA,
+        unknownOperationId,
+        faultEvidence,
+    };
 }
 
 async function verifySafeRetry(page: Page) {
@@ -543,7 +557,23 @@ test('WEB-A10 preserves other tenants and reconciles the original Run', async ({
         );
         if (!a || !b || !c)
             throw new Error('WEB-A10 requires three browser contexts');
-        const confirmed = await interruptedCase([a, b, c]);
+        const faultOnly = process.env.BENTO_A5_03_FAULT_ONLY === '1';
+        const confirmed = await interruptedCase([a, b, c], faultOnly);
+        if (faultOnly) {
+            await saveIdentities({
+                fault: {
+                    runId: confirmed.run.id,
+                    taskId: confirmed.task.id,
+                    unknownOperationId: confirmed.unknownOperationId,
+                    oldGenerationWriteDenied:
+                        confirmed.faultEvidence?.oldGenerationWriteDenied,
+                    markerSha256: createHash('sha256')
+                        .update(confirmed.marker)
+                        .digest('hex'),
+                },
+            });
+            return;
+        }
         expect(
             await callA10Hook('confirmSuccess', { runId: confirmed.run.id }),
         ).toMatchObject({ confirmed: true });
