@@ -121,6 +121,7 @@
         "apps/orchestrator/tsconfig.json",
         "apps/orchestrator/go.sum",
         "apps/orchestrator/src/control/authority.go",
+        "apps/orchestrator/src/control/authority_shared_test.go",
         "apps/orchestrator/src/control/business.go",
         "apps/orchestrator/src/control/main.go",
         "apps/orchestrator/src/control/temporal.go",
