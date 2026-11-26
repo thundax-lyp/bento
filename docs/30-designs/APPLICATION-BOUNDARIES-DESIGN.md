@@ -46,6 +46,10 @@ Go 持有 Run、资源绑定、执行尝试和槽位租约。个人端 API 从�
 
 命令宿主能力开关与回退行为见[部署手册](../../deploy/README.md#openshell-执行宿主)。实栈范围见 [A3 接管验收](../40-readiness/CURRENT-READINESS.md)。
 
+### Task Run 审批
+
+启用审批时，Go 在创建 Task Run 时写入 `pending_approval`。该状态保留 Task 的单活跃 Run 约束并占用租户队列额度。派发器只领取已入队的 Run，因此待审批期间没有 Workflow、槽位或 Worker 授权。受信运维决策和审计在同一事务落账。批准将原 Run 转为 `queued`，拒绝将原 Run 转为 `cancelled`。所有者取消和账号关闭也可终止待审批 Run。操作入口见[部署手册](../../deploy/README.md#task-run-审批)。
+
 ### 单宿主实栈验收
 
 实栈验收从个人端提交 Run，并核对登录主体到独占卷的完整绑定。实际工具向独占卷追加带稳定操作 ID 的记录，受信观察确认写入后，在工具回执持久化前中断 Worker。随后使用同一 Run 核对宿主与 OpenShell 停止、旧连接与重连拒写、`UNKNOWN` 查询及重投。由独立只读路径在中断后和重投后核对同一操作 ID 的记录数均为 1，同时核对期间没有新的工具执行。取得这一组证据后，再以同一停止证明验证槽位未提前释放、后续派发和升级排空。
