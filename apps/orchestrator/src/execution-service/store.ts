@@ -651,6 +651,14 @@ export class Store {
         return projectView(project);
     }
 
+    sharedProjectBinding(owner: string, id: string) {
+        this.requireOpenOwner(owner);
+        const project = this.ownedProject(owner, id);
+        if (project.status !== 'ready' || this.isProjectDeleting(id))
+            throw conflict('project_not_ready', 'Project is not ready.');
+        return projectBinding(project);
+    }
+
     projects(owner: string) {
         return (
             this.db

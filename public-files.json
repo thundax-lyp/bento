@@ -214,6 +214,7 @@
         "apps/orchestrator/tests/openshell/provider-lifecycle/crash-child.ts",
         "apps/orchestrator/tests/openshell/provider-lifecycle/crash-fixture.ts",
         "apps/orchestrator/tests/openshell/provider-crash.test.ts",
+        "apps/orchestrator/tests/openshell/shared-volume.test.ts",
         "apps/orchestrator/acceptance/temporal-retry/tool.ts",
         "apps/orchestrator/acceptance/temporal-retry/process.ts",
         "apps/orchestrator/acceptance/temporal-retry/real-retry.test.ts",

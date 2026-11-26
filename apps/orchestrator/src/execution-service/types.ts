@@ -1,3 +1,4 @@
+import type { SharedVolumeHost } from '../openshell/single-host.ts';
 import { createHash } from 'node:crypto';
 import type {
     Binding,
@@ -102,6 +103,7 @@ export type RetryCleanupObservation = {
 /** Trusted deployment integration. Only the worker grant goes to the worker. */
 export interface ExecutionHost extends SingleHostSandbox {
     sdk?: SdkIngressOptions;
+    sharedVolume?: SharedVolumeHost;
     environmentVersion: string;
     provisionTask(
         binding: Binding,

@@ -54,6 +54,7 @@ type Options = {
 
 export async function serveExecution(options: Options) {
     const { host, token } = options;
+    const sharedVolume = host.sharedVolume;
     const slots = host.workerSlots ?? 1;
     if (slots !== 1 && (slots !== 2 || !host.warmWorker || !options.temporal))
         throw new Error(
@@ -1375,6 +1376,10 @@ export async function serveExecution(options: Options) {
         let retryCursor = 0;
 
         async function work() {
+            if (sharedVolume) {
+                await execution.resumeReclaims(sharedVolume);
+                if (stop.signal.aborted) return;
+            }
             // These Runs were fenced before capture failed. Retry the snapshot without another worker or Workflow.
             const capture = db.pendingCapture();
             if (capture) {
@@ -1610,9 +1615,60 @@ export async function serveExecution(options: Options) {
             options.bindHost,
         );
         wake();
+        const sharedGrants = new Map<string, string>();
         return {
             url,
             close,
+            sharedSessions: sharedVolume && {
+                projectBinding: (owner: string, project: string) =>
+                    db.sharedProjectBinding(owner, project),
+                attach: (source: Binding, target: Binding) =>
+                    execution.attach(
+                        db.sharedProjectBinding(source.tenant, source.project),
+                        target,
+                        sharedVolume,
+                    ),
+                rebuild: (binding: Binding) =>
+                    execution.rebuild(binding, sharedVolume),
+                async revoke(binding: Binding) {
+                    const result = await execution.revoke(binding);
+                    sharedGrants.delete(binding.session);
+                    return result;
+                },
+                async release(binding: Binding) {
+                    const result = await execution.release(
+                        binding,
+                        sharedVolume,
+                    );
+                    sharedGrants.delete(binding.session);
+                    return result;
+                },
+                inspect: (session: string) => execution.inspect(session),
+                admit(session: string, generation: number, run: string) {
+                    const grant = execution.admit(
+                        session,
+                        generation,
+                        run,
+                        workerTimeoutMs,
+                    );
+                    sharedGrants.set(session, grant.token);
+                    return grant;
+                },
+                finish(session: string, generation: number) {
+                    const current = execution.inspect(session);
+                    if (current.generation === generation)
+                        sharedGrants.delete(session);
+                    return execution.takeover(session, generation);
+                },
+                ingress() {
+                    if (!host.sdk) throw new Error('SDK ingress unavailable');
+                    return execution.sdkIngress(
+                        host.sdk,
+                        (grant) =>
+                            sharedGrants.get(grant.session) === grant.token,
+                    );
+                },
+            },
             reviewRun,
             closeTaskRun,
             closeTaskRetry,

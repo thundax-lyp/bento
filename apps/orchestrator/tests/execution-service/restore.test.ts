@@ -395,6 +395,7 @@ test('restores stopped execution state and continues fenced session history', as
                         run: null,
                         capability: null,
                         expires: null,
+                        retiring: 0,
                     },
                 ],
             );

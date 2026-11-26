@@ -163,6 +163,20 @@ SDK 宿主要提供安全重试，须具备 `sdk.decodeExecEvent`、独立的 `o
 
 项目删除和账号注销清理需要可信宿主实现幂等的工作区删除。命令宿主处理 `{action:"purge",binding}`，只删除该绑定独占的沙盒与卷，独立确认两者不存在后返回 `{sandbox,volume,absent:true}`。自定义宿主实现 `ExecutionHost.purge(binding)`。删除失败应报错，Bento 会保留清理请求以便重试。Docker 驱动的宿主可用 [dockerOpenShellPurge](../apps/orchestrator/src/execution-service/docker-openshell-purge.ts)，并提供与部署时一致的卷标签。
 
+### 共享卷宿主
+
+命令宿主可设置 `sharedVolumes: true`。自定义宿主通过 `ExecutionHost.sharedVolume` 提供同等能力。所有动作必须按绑定校验 tenant、project、sandbox 与 Docker 卷归属。宿主观察失败须报错，以便控制器重试同一绑定及卷。
+
+| 动作      | 命令回执和核对内容                                                                                                                   |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `attach`  | 只挂载已经存在的卷，保留文件。独立核对 sandbox 就绪、策略已安装和卷挂载匹配，再返回 `{sandbox,volume,running:true,installed:true}`。 |
+| `detach`  | 删除该 Session 的 sandbox。核对目标已不存在且无残留挂载，再返回 `{sandbox,volume,detached:true}`。                                   |
+| `reclaim` | 确认卷归属、无剩余容器挂载及写入者，再删卷并独立回读，返回 `{volume,absent:true}`。                                                  |
+
+三个动作使用 `{action,binding}` 作为输入，重试使用原绑定。用于撤权的 stop/stopped 也须能确认目标 sandbox 从未创建或已经删除的情况。主项目导入仍走可信 provision；共享卷上的第二个 Session 走 attach。
+
+程序化部署从 `serveExecution` 的返回值读取 `sharedSessions`。使用 `start.ts` 的部署可以从已有可信 `BENTO_REVIEW_MODULE` 安装函数第八参取得它。该控制面提供项目绑定查询、同卷绑定、重建、撤权、引用释放和独占写入授权。启用命令宿主且提供真实 SDK 时，`ingress()` 可开启独立 SDK 接入，端口由可信模块管理，访问仅接受该控制面签发的绑定授权。内部项目 Run HTTP 接受可选 `sessionId`，Workspace Web 沿用项目默认 Session。
+
 ### Task 事件投影
 
 Task 的 execute 请求含可选 `publicEventsUrl`，与当次 grant 一起交付 Worker。私有 DSH bootstrap 返回的 runtime 必须实现 `publicEvents(events): readonly PublicWorkerEvent[]`。收到 Task 请求但缺少此回调时，Worker 在提交 prompt 前返回待核对。旧项目请求继续使用原路径。

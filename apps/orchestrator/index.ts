@@ -1,4 +1,4 @@
-export { Authority } from './src/openshell/authority.ts';
+export { Authority, VolumeWriteConflict } from './src/openshell/authority.ts';
 export { ExecutionController } from './src/openshell/controller.ts';
 export type { ExecutionControl } from './src/openshell/controller.ts';
 export { WorkerGate } from './src/openshell/worker-gate.ts';
@@ -13,7 +13,11 @@ export { installOpenShellProvider } from '../worker/provider.ts';
 export type { OpenShellProviderConfig } from '../worker/provider.ts';
 
 export { SingleHostExecution } from './src/openshell/single-host.ts';
-export type { SingleHostSandbox } from './src/openshell/single-host.ts';
+export type {
+    SharedVolumeHost,
+    SingleHostSandbox,
+} from './src/openshell/single-host.ts';
+export { serveExecution } from './src/execution-service/service.ts';
 export { dockerOpenShellPurge } from './src/execution-service/docker-openshell-purge.ts';
 export type { SdkIngressOptions } from './src/openshell/sdk-ingress.ts';
 export {
