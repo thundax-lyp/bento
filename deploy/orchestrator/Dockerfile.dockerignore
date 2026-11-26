@@ -15,6 +15,10 @@
 !apps/orchestrator/src/control/authority.go
 !apps/orchestrator/src/control/business.go
 !apps/orchestrator/src/control/temporal.go
+!apps/orchestrator/src/control/run_ledger.go
+!apps/orchestrator/src/ledger/
+!apps/orchestrator/src/ledger/ledger.go
+!apps/orchestrator/src/ledger/tasks.go
 !apps/orchestrator/src/execution-service/
 !apps/orchestrator/src/execution-service/*.ts
 !apps/orchestrator/src/openshell/
