@@ -37,10 +37,10 @@
 | `A4-02` | 数据生命周期 | 重复导入 | 已实现 | 真实卷同键同输入返回 200，异输入返回 409。两次均保留原卷与未提交文件。[证据](evidence/A4.md) |
 | `A4-03` | 数据生命周期 | 共享卷并发写入 | 已实现 | 真实写入进行中，第二个 Session 获得 `volume_busy`，操作记录为零，确认停止后重试成功。[证据](evidence/A4.md) |
 | `A4-04` | 数据生命周期 | 共享卷仍有引用 | 已实现 | 删除一条引用后，普通 Run HTTP 仍能选择另一 Session 读写原卷。最终引用释放、首次删卷失败后，重启自动回收且持久回执可重读。[证据](evidence/A4.md) |
-| **`A5`** | [最终执行链](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a5-最终执行链) | **需求汇总** | **部分实现** | 真实四工具同轮和禁用 PTY、SSH 已在独占候选验收，工具后崩溃仍待实测。[证据](evidence/A5.md) |
+| **`A5`** | [最终执行链](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a5-最终执行链) | **需求汇总** | **已实现** | 四工具同轮和禁用 PTY、SSH 已验收。工具写后中断在合入版 Go 执行权威链实栈复验通过。[证据](evidence/A5.md) |
 | `A5-01` | 最终执行链 | 单轮真实纵向链路 | 已实现 | 已选 TypeScript Orchestrator/OpenShell 候选实测 Run、Session、Workspace 和四项工具（`72b1a26`）。[证据](evidence/A5.md#a5-01-单轮真实执行) |
 | `A5-02` | 最终执行链 | 未启用执行入口 | 已实现 | 同版合法租约请求 PTY、SSH 均被拒绝，独立核对零启动（`1cec35c`）。[证据](evidence/A5.md#a5-02-禁用入口) |
-| `A5-03` | 最终执行链 | 工具完成后崩溃 | 已实现 | Go 执行权威链复验个人端独占卷写后中断、撤权、UNKNOWN 零重放及副作用计数为 1。槽位释放和升级排空消费同一份双侧停止证明。[证据](evidence/A5.md#a5-03-工具完成后崩溃) |
+| `A5-03` | 最终执行链 | 工具完成后崩溃 | 已实现 | 合入版 `039fc4d` 实栈通过写后中断、双侧停止、旧代拒写和 UNKNOWN 零重放，独立卷计数前后均为 1。[证据](evidence/A5.md#主线合入后实栈复验) |
 | **`A6`** | [调度与池化](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a6-调度与池化) | **需求汇总** | **部分实现** | 真实 Temporal 重投和 Worker 池复用已验。审批、心跳与双侧停止、完整容量和升级排空待验。[证据](evidence/A6.md) |
 | `A6-01` | 调度与池化 | Run 派发、审批与受控复用 | 部分实现 | 已回读真实 Temporal 派发，实测取消、安全重试、双槽和后续派发。审批及完整资源回收待验。 [证据](evidence/SINGLE-HOST.md) |
 | `A6-02` | 调度与池化 | Activity 重试 | 已实现 | 真实 Temporal 重投 9/9。宿主或原库重启后复用回执，副作用一次。[证据](evidence/A6.md#a6-02-真实-temporal-重投) |
