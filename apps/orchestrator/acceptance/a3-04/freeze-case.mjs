@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
+import console from 'node:console';
 import { once } from 'node:events';
 import { connect } from 'node:http2';
 import { createRequire } from 'node:module';
@@ -6,7 +8,9 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { pathToFileURL } from 'node:url';
+import process from 'node:process';
+import { clearTimeout, setTimeout } from 'node:timers';
+import { pathToFileURL, URL } from 'node:url';
 import { SingleHostExecution } from './apps/orchestrator/src/openshell/single-host.ts';
 import {
     schemaDecoder,
