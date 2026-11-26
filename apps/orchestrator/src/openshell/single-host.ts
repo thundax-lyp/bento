@@ -13,6 +13,15 @@ import { WorkerGate, type WorkerGrant } from './worker-gate.ts';
 type Binding = Parameters<Authority['bind']>[0];
 type Session = ReturnType<Authority['inspect']>;
 type Running = Parameters<SandboxManagement['confirmStart']>[2];
+export interface SharedVolumeHost {
+    /** Attach an existing volume without staging, seeding or replacing its contents. */
+    attach(binding: Binding): Promise<Omit<Running, 'generation'>>;
+    /** Remove only the sandbox, and independently confirm its attachment is gone. */
+    detach(binding: Binding): Promise<void>;
+    /** Remove the owned volume after independently confirming it has no attachments. */
+    reclaim(binding: Binding): Promise<void>;
+}
+
 type GrantFilter = (grant: WorkerGrant) => boolean;
 
 /** Adapter owned by the trusted OpenShell/Docker host. Observations must be independent of command acknowledgements. */
@@ -32,6 +41,7 @@ export class SingleHostExecution {
     private readonly fence: PersistenceFence;
     private readonly management: SandboxManagement;
     private readonly recovering = new Set<string>();
+    private readonly changingBindings = new Set<string>();
 
     constructor(
         paths: { authority: string; history: string },
@@ -55,13 +65,111 @@ export class SingleHostExecution {
         return this.authority.inspect(session);
     }
 
+    sessionAvailable(session: string) {
+        return this.authority.sessionAvailable(session);
+    }
+
+    hasVolumeWriter(volume: string) {
+        return this.authority.hasVolumeWriter(volume);
+    }
+
     async purge(binding: Binding, remove: (binding: Binding) => Promise<void>) {
+        if (this.authority.isReclaimed(binding)) return;
         const generation = this.authority.checkPurge(binding);
         if (generation !== undefined)
             this.gate.revokeChannels(binding.session, generation);
         await remove(binding);
         this.history.purge(binding.session);
         this.authority.purge(binding.session);
+    }
+
+    async attach(source: Binding, binding: Binding, host: SharedVolumeHost) {
+        return this.changeBinding(binding.session, async () => {
+            const current = this.authority.reserveAttachment(source, binding);
+            if (current.state === 'READY') return current;
+            return this.attachVolume(binding, host);
+        });
+    }
+
+    async rebuild(binding: Binding, host: SharedVolumeHost) {
+        return this.changeBinding(binding.session, async () => {
+            this.authority.reserveRebuild(binding);
+            await host.detach(binding);
+            return this.attachVolume(binding, host);
+        });
+    }
+
+    private async attachVolume(binding: Binding, host: SharedVolumeHost) {
+        const evidence = await host.attach(binding);
+        if (
+            !evidence.running ||
+            !evidence.installed ||
+            evidence.sandbox !== binding.sandbox ||
+            evidence.volume !== binding.volume
+        )
+            throw new Error('Workspace attachment unconfirmed');
+        this.authority.confirmAttachment(binding);
+        return this.inspect(binding.session);
+    }
+
+    async revoke(binding: Binding) {
+        return this.changeBinding(binding.session, () => this.retire(binding));
+    }
+
+    async release(binding: Binding, host: SharedVolumeHost) {
+        return this.changeBinding(binding.session, async () => {
+            const receipt = this.authority.releaseReceipt(binding);
+            if (receipt === 'released' || receipt === 'reclaimed')
+                return receipt;
+            if (receipt === undefined) {
+                await this.retire(binding);
+                await host.detach(binding);
+                this.history.purge(binding.session);
+                if (!this.authority.releaseReference(binding))
+                    return 'released' as const;
+            }
+            await host.reclaim(binding);
+            this.authority.confirmReclaimed(binding);
+            return 'reclaimed' as const;
+        });
+    }
+
+    async resumeReclaims(host: SharedVolumeHost) {
+        for (const binding of this.authority.pendingReclaims()) {
+            if (!this.changingBindings.has(binding.session))
+                await this.release(binding, host).catch(() => {
+                    // Keep the durable receipt pending until the host confirms absence.
+                });
+        }
+    }
+
+    private async changeBinding<T>(session: string, action: () => Promise<T>) {
+        if (this.changingBindings.has(session) || this.recovering.has(session))
+            throw new Error('Session lifecycle change in progress');
+        this.changingBindings.add(session);
+        try {
+            return await action();
+        } finally {
+            this.changingBindings.delete(session);
+        }
+    }
+
+    private async retire(binding: Binding) {
+        this.authority.retire(binding);
+        const current = this.inspect(binding.session);
+        if (current.state === 'REVOKED') return current;
+        if (current.run)
+            this.fence.revoke(binding.session, current.generation, current.run);
+        this.gate.revokeChannels(binding.session, current.generation);
+        this.history.releaseReaders(binding.session, current.generation);
+        await this.sandbox.stop(current);
+        if (
+            !(await this.sandbox.stopped(current)) ||
+            !this.gate.channelsClosed(binding.session, current.generation)
+        )
+            throw new Error('Session stop unconfirmed');
+        this.authority.confirmRetired(binding.session, current.generation);
+        return this.inspect(binding.session);
     }
 
     hasUnknownOperations(session: string, generation: number): boolean {
@@ -154,13 +262,20 @@ export class SingleHostExecution {
         )
             throw new Error('invalid lease');
         // The same Run can retry this reservation if the process dies before admission.
-        if (generation > 1) this.fence.grant(session, generation, run);
-        const token = this.authority.admit(session, generation, run, leaseMs);
+        const token = this.authority.admit(
+            session,
+            generation,
+            run,
+            leaseMs,
+            () => {
+                if (generation > 1) this.fence.grant(session, generation, run);
+            },
+        );
         return { token, session, generation, run };
     }
 
     async takeover(session: string, generation: number) {
-        if (this.recovering.has(session))
+        if (this.recovering.has(session) || this.changingBindings.has(session))
             throw new Error('takeover in progress');
         this.recovering.add(session);
         try {

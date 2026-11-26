@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { Binding } from '@/apps/worker/protocol.ts';
 type Session = Binding & {
     generation: number;
+    retiring: number;
     state: string;
     run: string | null;
     capability: string | null;
@@ -23,6 +24,14 @@ type PolicyEvidence = {
     installed: boolean;
 };
 
+export class VolumeWriteConflict extends Error {
+    readonly code = 'volume_busy';
+
+    constructor() {
+        super('Another Session holds the workspace volume write authority.');
+    }
+}
+
 const digest = (value: string) =>
     createHash('sha256').update(value).digest('hex');
 
@@ -40,7 +49,19 @@ export class Authority {
                 session TEXT PRIMARY KEY, tenant TEXT NOT NULL, project TEXT NOT NULL,
                 sandbox TEXT UNIQUE NOT NULL, volume TEXT NOT NULL,
                 generation INTEGER NOT NULL, state TEXT NOT NULL,
-                run TEXT, capability TEXT, expires INTEGER
+                run TEXT, capability TEXT, expires INTEGER,
+                retiring INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE UNIQUE INDEX IF NOT EXISTS volume_writer
+                ON execution_sessions(volume) WHERE run IS NOT NULL;
+            CREATE INDEX IF NOT EXISTS volume_references ON execution_sessions(volume);
+            CREATE TABLE IF NOT EXISTS released_session_references (
+                session TEXT PRIMARY KEY, tenant TEXT NOT NULL, project TEXT NOT NULL,
+                sandbox TEXT NOT NULL, volume TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS volume_reclaims (
+                volume TEXT PRIMARY KEY, tenant TEXT NOT NULL, project TEXT NOT NULL,
+                session TEXT NOT NULL, sandbox TEXT NOT NULL, reclaimed INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS management_stops (
                 session TEXT NOT NULL, generation INTEGER NOT NULL, sandbox TEXT NOT NULL,
@@ -64,10 +85,30 @@ export class Authority {
         this.db.close();
     }
 
+    isReclaimed(binding: Binding) {
+        return (
+            this.releaseReceipt(binding) !== undefined &&
+            !!this.db
+                .prepare(
+                    'SELECT 1 FROM volume_reclaims WHERE volume=? AND reclaimed=1',
+                )
+                .get(binding.volume)
+        );
+    }
+
     checkPurge(binding: Binding) {
         const row = this.db
             .prepare('SELECT * FROM execution_sessions WHERE session = ?')
             .get(binding.session) as Session | undefined;
+        if (
+            !row &&
+            this.db
+                .prepare(
+                    'SELECT 1 FROM released_session_references WHERE session=? OR volume=?',
+                )
+                .get(binding.session, binding.volume)
+        )
+            throw new Error('Workspace requires reference-aware cleanup');
         if (
             row &&
             (row.state !== 'READY' ||
@@ -86,26 +127,29 @@ export class Authority {
                 .get(binding.session, binding.sandbox, binding.volume)
         )
             throw new Error('Workspace is shared');
+        if (row)
+            this.db
+                .prepare(
+                    'UPDATE execution_sessions SET retiring=1 WHERE session=?',
+                )
+                .run(binding.session);
         return row?.generation;
     }
 
     purge(session: string) {
-        this.db.exec('BEGIN IMMEDIATE');
-        try {
-            for (const table of [
-                'operations',
-                'management_starts',
-                'management_stops',
-                'execution_sessions',
-            ])
-                this.db
-                    .prepare('DELETE FROM ' + table + ' WHERE session = ?')
-                    .run(session);
-            this.db.exec('COMMIT');
-        } catch (error) {
-            this.db.exec('ROLLBACK');
-            throw error;
-        }
+        this.managementTransaction(() => this.deleteSession(session));
+    }
+
+    private deleteSession(session: string) {
+        for (const table of [
+            'operations',
+            'management_starts',
+            'management_stops',
+            'execution_sessions',
+        ])
+            this.db
+                .prepare('DELETE FROM ' + table + ' WHERE session = ?')
+                .run(session);
     }
 
     bind(binding: Binding, evidence: PolicyEvidence) {
@@ -115,17 +159,242 @@ export class Authority {
             evidence.generation !== 1
         )
             throw new Error('initial policy unconfirmed');
+        this.managementTransaction(() => {
+            this.checkVolumeOwner(binding);
+            if (
+                this.db
+                    .prepare('SELECT 1 FROM execution_sessions WHERE volume=?')
+                    .get(binding.volume)
+            )
+                throw new Error('Existing volume requires explicit attachment');
+            this.db
+                .prepare(
+                    "INSERT INTO execution_sessions(session,tenant,project,sandbox,volume,generation,state) VALUES (?,?,?,?,?,1,'READY')",
+                )
+                .run(
+                    binding.session,
+                    binding.tenant,
+                    binding.project,
+                    binding.sandbox,
+                    binding.volume,
+                );
+        });
+    }
+
+    private checkVolumeOwner(binding: Binding) {
+        if (
+            this.db
+                .prepare(
+                    'SELECT 1 FROM released_session_references WHERE session=?',
+                )
+                .get(binding.session) ||
+            this.db
+                .prepare('SELECT 1 FROM volume_reclaims WHERE volume=?')
+                .get(binding.volume) ||
+            this.db
+                .prepare(
+                    'SELECT 1 FROM execution_sessions WHERE volume=? AND (tenant<>? OR project<>?)',
+                )
+                .get(binding.volume, binding.tenant, binding.project)
+        )
+            throw new Error('Workspace volume binding denied');
+    }
+
+    reserveAttachment(source: Binding, binding: Binding) {
+        this.managementTransaction(() => {
+            const original = this.row(source.session);
+            if (
+                original.state !== 'READY' ||
+                original.retiring ||
+                Object.entries(source).some(
+                    ([key, value]) => original[key as keyof Binding] !== value,
+                ) ||
+                source.tenant !== binding.tenant ||
+                source.project !== binding.project ||
+                source.volume !== binding.volume ||
+                source.session === binding.session
+            )
+                throw new Error('Workspace source binding denied');
+            this.checkVolumeOwner(binding);
+            const existing = this.db
+                .prepare('SELECT * FROM execution_sessions WHERE session=?')
+                .get(binding.session) as Session | undefined;
+            if (existing) {
+                if (
+                    existing.retiring ||
+                    !['ATTACHING', 'READY'].includes(existing.state) ||
+                    Object.entries(binding).some(
+                        ([key, value]) =>
+                            existing[key as keyof Binding] !== value,
+                    )
+                )
+                    throw new Error('Session attachment conflict');
+                return;
+            }
+            this.db
+                .prepare(
+                    "INSERT INTO execution_sessions(session,tenant,project,sandbox,volume,generation,state) VALUES (?,?,?,?,?,1,'ATTACHING')",
+                )
+                .run(
+                    binding.session,
+                    binding.tenant,
+                    binding.project,
+                    binding.sandbox,
+                    binding.volume,
+                );
+        });
+        return this.inspect(binding.session);
+    }
+
+    reserveRebuild(binding: Binding) {
+        this.managementTransaction(() => {
+            const current = this.row(binding.session);
+            if (
+                current.retiring ||
+                !['READY', 'ATTACHING'].includes(current.state) ||
+                Object.entries(binding).some(
+                    ([key, value]) => current[key as keyof Binding] !== value,
+                )
+            )
+                throw new Error('Session is not available for rebuild');
+            if (current.state === 'READY')
+                this.db
+                    .prepare(
+                        "UPDATE execution_sessions SET state='ATTACHING' WHERE session=?",
+                    )
+                    .run(binding.session);
+        });
+    }
+
+    confirmAttachment(binding: Binding) {
+        this.requireChange(
+            this.db
+                .prepare(
+                    "UPDATE execution_sessions SET state='READY' WHERE session=? AND sandbox=? AND volume=? AND state='ATTACHING' AND retiring=0",
+                )
+                .run(binding.session, binding.sandbox, binding.volume).changes,
+        );
+    }
+
+    retire(binding: Binding) {
+        const row = this.row(binding.session);
+        if (
+            Object.entries(binding).some(
+                ([key, value]) => row[key as keyof Binding] !== value,
+            )
+        )
+            throw new Error('Session binding mismatch');
         this.db
             .prepare(
-                "INSERT INTO execution_sessions(session,tenant,project,sandbox,volume,generation,state) VALUES (?,?,?,?,?,1,'READY')",
+                'UPDATE execution_sessions SET retiring=1,capability=NULL WHERE session=?',
             )
-            .run(
-                binding.session,
-                binding.tenant,
-                binding.project,
-                binding.sandbox,
-                binding.volume,
-            );
+            .run(binding.session);
+    }
+
+    confirmRetired(session: string, generation: number) {
+        this.requireChange(
+            this.db
+                .prepare(
+                    "UPDATE execution_sessions SET state='REVOKED',run=NULL,expires=NULL WHERE session=? AND generation=? AND retiring=1",
+                )
+                .run(session, generation).changes,
+        );
+    }
+
+    releaseReceipt(binding: Binding) {
+        const prior = this.db
+            .prepare(
+                'SELECT tenant,project,session,sandbox,volume FROM released_session_references WHERE session=?',
+            )
+            .get(binding.session);
+        if (!prior) return undefined;
+        if (
+            Object.entries(binding).some(([key, value]) => prior[key] !== value)
+        )
+            throw new Error('Released Session binding mismatch');
+        const reclaim = this.db
+            .prepare(
+                'SELECT reclaimed FROM volume_reclaims WHERE volume=? AND session=?',
+            )
+            .get(binding.volume, binding.session);
+        return reclaim
+            ? reclaim.reclaimed === 1
+                ? 'reclaimed'
+                : 'pending'
+            : 'released';
+    }
+
+    releaseReference(binding: Binding) {
+        let reclaim = false;
+        this.managementTransaction(() => {
+            const current = this.row(binding.session);
+            if (
+                current.state !== 'REVOKED' ||
+                Object.entries(binding).some(
+                    ([key, value]) => current[key as keyof Binding] !== value,
+                )
+            )
+                throw new Error('Session must be revoked before release');
+            const remaining = this.db
+                .prepare(
+                    'SELECT 1 FROM execution_sessions WHERE volume=? AND session<>? LIMIT 1',
+                )
+                .get(binding.volume, binding.session);
+            if (
+                remaining &&
+                this.db
+                    .prepare(
+                        "SELECT 1 FROM operations WHERE session=? AND state='UNKNOWN' LIMIT 1",
+                    )
+                    .get(binding.session)
+            )
+                throw new Error('Workspace operation outcome is unresolved');
+            if (!remaining) {
+                this.db
+                    .prepare(
+                        'INSERT INTO volume_reclaims(volume,tenant,project,session,sandbox) VALUES (?,?,?,?,?)',
+                    )
+                    .run(
+                        binding.volume,
+                        binding.tenant,
+                        binding.project,
+                        binding.session,
+                        binding.sandbox,
+                    );
+                reclaim = true;
+            }
+            this.db
+                .prepare(
+                    'INSERT INTO released_session_references VALUES (?,?,?,?,?)',
+                )
+                .run(
+                    binding.session,
+                    binding.tenant,
+                    binding.project,
+                    binding.sandbox,
+                    binding.volume,
+                );
+            this.deleteSession(binding.session);
+        });
+        return reclaim;
+    }
+
+    pendingReclaims() {
+        return this.db
+            .prepare(
+                'SELECT tenant,project,session,sandbox,volume FROM volume_reclaims WHERE reclaimed=0',
+            )
+            .all() as Binding[];
+    }
+
+    confirmReclaimed(binding: Binding) {
+        this.requireChange(
+            this.db
+                .prepare(
+                    'UPDATE volume_reclaims SET reclaimed=1 WHERE volume=? AND session=?',
+                )
+                .run(binding.volume, binding.session).changes,
+        );
     }
 
     private row(session: string): Session {
@@ -137,15 +406,40 @@ export class Authority {
     }
 
     inspect(session: string) {
-        const { capability, ...view } = this.row(session);
-        return { ...view, hasCapability: capability !== null };
+        const { capability, retiring, ...view } = this.row(session);
+        return {
+            ...view,
+            hasCapability: capability !== null && retiring === 0,
+        };
     }
 
     private requireChange(changes: number | bigint) {
         if (Number(changes) !== 1) throw new Error('admission or CAS denied');
     }
 
-    admit(session: string, generation: number, run: string, leaseMs: number) {
+    sessionAvailable(session: string) {
+        const row = this.row(session);
+        return row.state === 'READY' && row.retiring === 0;
+    }
+
+    hasVolumeWriter(volume: string) {
+        return !!this.db
+            .prepare(
+                `SELECT 1 FROM execution_sessions AS s
+                 WHERE s.volume=? AND (s.run IS NOT NULL OR EXISTS (
+                    SELECT 1 FROM operations WHERE session=s.session AND state='UNKNOWN'
+                 ))`,
+            )
+            .get(volume);
+    }
+
+    admit(
+        session: string,
+        generation: number,
+        run: string,
+        leaseMs: number,
+        prepare?: () => void,
+    ) {
         const expires = Date.now() + leaseMs;
         if (
             !Number.isSafeInteger(leaseMs) ||
@@ -154,16 +448,30 @@ export class Authority {
         )
             throw new Error('invalid lease');
         const token = randomBytes(32).toString('hex');
-        this.requireChange(
-            this.db
-                .prepare(
-                    `
-            UPDATE execution_sessions SET state='RUNNING',run=?,capability=?,expires=?
-            WHERE session=? AND generation=? AND state='READY'
-        `,
-                )
-                .run(run, digest(token), expires, session, generation).changes,
-        );
+        this.managementTransaction(() => {
+            if (
+                this.db
+                    .prepare(
+                        `SELECT 1 FROM execution_sessions AS other
+                 WHERE other.volume=(SELECT volume FROM execution_sessions WHERE session=?)
+                   AND other.session<>? AND (other.run IS NOT NULL OR EXISTS (
+                     SELECT 1 FROM operations WHERE session=other.session AND state='UNKNOWN'
+                   ))`,
+                    )
+                    .get(session, session)
+            )
+                throw new VolumeWriteConflict();
+            this.requireChange(
+                this.db
+                    .prepare(
+                        `UPDATE execution_sessions SET state='RUNNING',run=?,capability=?,expires=?
+                 WHERE session=? AND generation=? AND state='READY' AND retiring=0`,
+                    )
+                    .run(run, digest(token), expires, session, generation)
+                    .changes,
+            );
+            prepare?.();
+        });
         return token;
     }
 

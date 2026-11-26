@@ -35,6 +35,7 @@ type Settings = {
     worker: Launch;
     prewarmWorker?: boolean;
     workerSlots?: 1 | 2;
+    sharedVolumes?: boolean;
     controlTimeoutMs?: number;
     taskObservationModule?: string;
 };
@@ -173,6 +174,11 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
         typeof settings.prewarmWorker !== 'boolean'
     )
         throw new Error('Invalid worker prewarm setting');
+    if (
+        settings.sharedVolumes !== undefined &&
+        typeof settings.sharedVolumes !== 'boolean'
+    )
+        throw new Error('Invalid shared volume setting');
     const slots = settings.workerSlots ?? 1;
     if (
         (slots !== 1 && slots !== 2) ||
@@ -266,6 +272,29 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
         },
         provision: async (binding, files) =>
             observation(await call('provision', binding, files)),
+        ...(settings.sharedVolumes === true && {
+            sharedVolume: {
+                attach: async (binding) =>
+                    observation(await call('attach', binding)),
+                async detach(binding) {
+                    const receipt = object(await call('detach', binding));
+                    if (
+                        receipt.sandbox !== binding.sandbox ||
+                        receipt.volume !== binding.volume ||
+                        receipt.detached !== true
+                    )
+                        throw new Error('Session detachment unconfirmed');
+                },
+                async reclaim(binding) {
+                    const receipt = object(await call('reclaim', binding));
+                    if (
+                        receipt.volume !== binding.volume ||
+                        receipt.absent !== true
+                    )
+                        throw new Error('Volume reclaim unconfirmed');
+                },
+            },
+        }),
         snapshot: async (binding) =>
             textSnapshot(await call('snapshot', binding)),
         async purge(binding) {
