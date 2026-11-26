@@ -12,6 +12,8 @@ import {
     backupWorkspace,
     inventoryVolume,
     restoreWorkspace,
+    stageRecoveryOnBackupHost,
+    startStagedSandbox,
     type A7Config,
     type Command,
     type VolumeEntry,
@@ -513,4 +515,97 @@ test('delete child independently rechecks official ref before invoking SDK delet
     } finally {
         await rm(f.root, { recursive: true, force: true });
     }
+});
+
+test('stages four databases and a verified workspace on a fresh backup host', async (t) => {
+    const f = await fixture();
+    t.after(() => rm(f.root, { recursive: true, force: true }));
+    await backupWorkspace(f.config, binding, f.run);
+    const checkpoint = createHash('sha256')
+        .update(
+            await readFile(join(f.root, 'backup', 'workspace.tar.proof.json')),
+        )
+        .digest('hex');
+    f.volumes.clear();
+    f.calls.length = 0;
+    const databaseTarget = join(f.root, 'target');
+    const backup: Command = (command, args, options) =>
+        command === 'docker' && args[0] === 'ps'
+            ? Promise.resolve('')
+            : f.run(command, args, options);
+    await assert.rejects(
+        stageRecoveryOnBackupHost(
+            f.config,
+            binding,
+            '0'.repeat(64),
+            databaseTarget,
+            backup,
+        ),
+        /checkpoint_digest_mismatch/,
+    );
+    assert.equal(f.calls.length, 0);
+    await stageRecoveryOnBackupHost(
+        f.config,
+        binding,
+        checkpoint,
+        databaseTarget,
+        backup,
+    );
+    for (const member of ['authority', 'business', 'history', 'temporal']) {
+        const filename = member + '.sqlite';
+        assert.deepEqual(
+            await readFile(join(databaseTarget, filename)),
+            await readFile(join(f.root, 'backup', filename)),
+        );
+    }
+    assertSameInventory(entries, f.volumes.get(binding.volume)!.entries);
+    assert(
+        f.calls.every(
+            ({ command, args }) => command === 'docker' && !args.includes('rm'),
+        ),
+    );
+    await assert.rejects(
+        stageRecoveryOnBackupHost(
+            f.config,
+            binding,
+            checkpoint,
+            databaseTarget,
+            backup,
+        ),
+        /resource_target_exists/,
+    );
+    const gate = join(f.root, 'owner-gate.json');
+    const authority = join(f.root, 'owner');
+    const current = join(f.root, 'owner.json');
+    const owner = {
+        host: 'backup',
+        epoch: 2,
+        checkpoint,
+        isolation: 'f'.repeat(64),
+    };
+    await writeFile(
+        authority,
+        '#!/bin/sh\ncat "$(dirname "$0")/owner.json"\n',
+        { mode: 0o700 },
+    );
+    await writeFile(
+        gate,
+        JSON.stringify({
+            deployment: 'case',
+            authorityCommand: authority,
+            ...owner,
+        }),
+    );
+    await writeFile(current, JSON.stringify({ ...owner, host: 'source' }));
+    await assert.rejects(
+        startStagedSandbox(f.config, binding, checkpoint, gate, backup),
+        /does not own/,
+    );
+    assert(!f.calls.some(({ command }) => command === f.config.cli));
+    await writeFile(current, JSON.stringify(owner));
+    await startStagedSandbox(f.config, binding, checkpoint, gate, backup);
+    assert.equal(
+        f.calls.filter(({ command }) => command === f.config.cli).length,
+        1,
+    );
 });
