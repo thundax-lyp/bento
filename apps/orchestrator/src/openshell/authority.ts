@@ -84,6 +84,16 @@ export class Authority {
                 PRIMARY KEY(session, id)
             );
         `);
+        if (
+            !this.db
+                .prepare(
+                    "SELECT 1 FROM pragma_table_info('execution_sessions') WHERE name='retiring'",
+                )
+                .get()
+        )
+            this.db.exec(
+                'ALTER TABLE execution_sessions ADD COLUMN retiring INTEGER NOT NULL DEFAULT 0',
+            );
     }
 
     close() {

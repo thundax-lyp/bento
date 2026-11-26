@@ -11,8 +11,55 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { SingleHostExecution } from '@/apps/orchestrator/src/openshell/single-host.ts';
 import type { Binding } from '@/apps/worker/protocol.ts';
+
+test('reopening a single-host ledger preserves existing Session bindings', async (t) => {
+    const path = await mkdtemp(join(tmpdir(), 'bento-existing-volume-'));
+    t.after(() => rm(path, { recursive: true, force: true }));
+    const authority = join(path, 'authority.sqlite');
+    const previous = new DatabaseSync(authority);
+    previous.exec(`
+        CREATE TABLE execution_sessions(session TEXT PRIMARY KEY, tenant TEXT, project TEXT,
+            sandbox TEXT, volume TEXT, generation INTEGER, state TEXT,
+            run TEXT, capability TEXT, expires INTEGER);
+        INSERT INTO execution_sessions VALUES
+            ('session','owner','project','sandbox','volume',1,'READY',NULL,NULL,NULL);
+    `);
+    previous.close();
+    const host = new SingleHostExecution(
+        {
+            authority,
+            history: join(path, 'history.sqlite'),
+            ...(process.env.BENTO_TEST_GO_CONTROL
+                ? { goControl: process.env.BENTO_TEST_GO_CONTROL }
+                : {}),
+        },
+        {
+            async start() {},
+            async stop() {},
+            async stopped() {
+                return true;
+            },
+            async running(binding) {
+                return {
+                    sandbox: binding.sandbox,
+                    volume: binding.volume,
+                    installed: true,
+                    running: true,
+                };
+            },
+        },
+    );
+    try {
+        assert.equal(host.inspect('session').volume, 'volume');
+        assert.equal(host.sessionAvailable('session'), true);
+        assert.equal(host.admit('session', 1, 'run', 1000).run, 'run');
+    } finally {
+        host.close();
+    }
+});
 
 test('shared volume keeps write authority and references across unconfirmed host operations', async () => {
     const path = await mkdtemp(join(tmpdir(), 'bento-shared-volume-'));
