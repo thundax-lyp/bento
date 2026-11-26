@@ -15,7 +15,7 @@
 
 - Bento 业务 Run ID 是稳定的业务标识。当前 Workflow ID 从该标识派生为 `bento-run-<runId>`。重复启动使用同一 Workflow ID，已存在的 Workflow 视为原派发已接受。启动结果未知时沿用原 ID 对账。Temporal 单次执行的 Run ID 用于流程诊断。
 - Workflow 负责确定性的流程编排。数据库、模型、文件和沙盒 I/O 由 Activity 推进受信执行链。当前 `advanceRun` 定期发送 heartbeat，业务进度与会话检查点由持久存储维护。文件正文、完整对话和执行凭据不得进入 Workflow 参数、结果或 heartbeat。
-- heartbeat 超时或取消送达时，受信控制面仍须独立观察 OpenShell 与宿主上的旧执行。持久化的执行尝试和代次用于接管校验，Temporal 的 Activity 重试计数不能充当执行授权。
+- `advanceRun` 以 Temporal 最近确认的 heartbeat 为本地执行期限。确认超时、Activity 失效或控制连接中断时，执行服务按本次 Activity 关联的 Run 和代次撤权，等待 Worker 退出并核验 OpenShell 沙盒停止后才释放槽位。持久化尝试及代次用于接管校验，Activity 重试计数只用于流程诊断。
 
 ## 状态、授权与恢复
 

@@ -31,10 +31,15 @@ export function invokeProcess(
             if (bytes > maxOutput) child.kill('SIGKILL');
             else output.push(chunk);
         });
-        child.stdin.on('error', failed);
-        child.once('error', failed);
+        let processError = false;
+        const recordError = () => {
+            processError = true;
+        };
+        child.stdin.on('error', recordError);
+        child.once('error', recordError);
         child.once('close', (code) => {
-            if (code !== 0 || bytes > maxOutput) return failed();
+            if (processError || code !== 0 || bytes > maxOutput)
+                return failed();
             try {
                 resolve(
                     new TextDecoder('utf-8', { fatal: true }).decode(

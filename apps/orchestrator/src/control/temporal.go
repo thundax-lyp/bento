@@ -33,11 +33,15 @@ type message struct {
 }
 
 type bridge struct {
-	writer   sync.Mutex
-	mu       sync.Mutex
-	pending  map[string]chan message
-	sequence atomic.Uint64
+	writer    sync.Mutex
+	mu        sync.Mutex
+	pending   map[string]chan message
+	sequence  atomic.Uint64
+	heartbeat func(context.Context, []byte, ...interface{}) error
 }
+
+const heartbeatTimeout = 10 * time.Second
+const heartbeatInterval = 2 * time.Second
 
 func (b *bridge) send(m message) error {
 	b.writer.Lock()
@@ -46,6 +50,26 @@ func (b *bridge) send(m message) error {
 }
 
 func (b *bridge) advance(ctx context.Context, runID string) error {
+	var heartbeatLost <-chan struct{}
+	if b.heartbeat != nil {
+		token := activity.GetInfo(ctx).TaskToken
+		sent := time.Now()
+		probe, cancel := context.WithTimeout(ctx, heartbeatInterval)
+		err := b.heartbeat(probe, token)
+		cancel()
+		if err != nil {
+			return err
+		}
+		monitor, stop := context.WithCancel(ctx)
+		defer stop()
+		lost := make(chan struct{})
+		heartbeatLost = lost
+		go func() {
+			if b.watchHeartbeat(monitor, token, sent.Add(heartbeatTimeout)) {
+				close(lost)
+			}
+		}()
+	}
 	id := fmt.Sprintf("go-%d", b.sequence.Add(1))
 	ch := make(chan message, 1)
 	b.mu.Lock()
@@ -60,20 +84,46 @@ func (b *bridge) advance(ctx context.Context, runID string) error {
 	if err := b.send(message{ID: id, Method: "advance", Value: value}); err != nil {
 		return err
 	}
-	activity.RecordHeartbeat(ctx)
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
+	select {
+	case <-ctx.Done():
+		_ = b.send(message{ID: id, Method: "stopAdvance"})
+		return ctx.Err()
+	case <-heartbeatLost:
+		_ = b.send(message{ID: id, Method: "stopAdvance"})
+		return errors.New("Temporal heartbeat confirmation lost")
+	case result := <-ch:
+		if result.Error != "" {
+			return errors.New("execution host could not advance Run")
+		}
+		return nil
+	}
+}
+
+// Bound local execution even when Temporal cannot deliver the expired Activity's
+// cancellation over the same broken connection that lost its heartbeats.
+func (b *bridge) watchHeartbeat(ctx context.Context, token []byte, deadline time.Time) bool {
 	for {
+		timer := time.NewTimer(min(heartbeatInterval, time.Until(deadline)))
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-			activity.RecordHeartbeat(ctx)
-		case result := <-ch:
-			if result.Error != "" {
-				return errors.New("execution host could not advance Run")
+			timer.Stop()
+			return false
+		case <-timer.C:
+		}
+		sent := time.Now()
+		if !sent.Before(deadline) {
+			return true
+		}
+		probe, cancel := context.WithTimeout(ctx, min(heartbeatInterval, deadline.Sub(sent)))
+		err := b.heartbeat(probe, token)
+		cancel()
+		if err == nil {
+			deadline = sent.Add(heartbeatTimeout)
+		} else {
+			var expired *serviceerror.NotFound
+			if errors.As(err, &expired) || temporal.IsCanceledError(err) {
+				return true
 			}
-			return nil
 		}
 	}
 }
@@ -81,7 +131,7 @@ func (b *bridge) advance(ctx context.Context, runID string) error {
 func bentoRun(ctx workflow.Context, runID string) error {
 	ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
 		StartToCloseTimeout: 3 * time.Hour,
-		HeartbeatTimeout:    10 * time.Second,
+		HeartbeatTimeout:    heartbeatTimeout,
 		RetryPolicy:         &temporal.RetryPolicy{MaximumInterval: 10 * time.Second},
 	})
 	return workflow.ExecuteActivity(ctx, "advanceRun", runID).Get(ctx, nil)
@@ -169,7 +219,7 @@ func runTemporal() error {
 		return errors.New("Temporal connection unavailable")
 	}
 	defer c.Close()
-	b := &bridge{pending: make(map[string]chan message)}
+	b := &bridge{pending: make(map[string]chan message), heartbeat: c.RecordActivityHeartbeat}
 	w := worker.New(c, cfg.TaskQueue, worker.Options{
 		MaxConcurrentActivityExecutionSize: cfg.Slots,
 		OnFatalError: func(error) {
