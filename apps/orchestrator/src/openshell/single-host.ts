@@ -26,9 +26,15 @@ type GrantFilter = (grant: WorkerGrant) => boolean;
 
 /** Adapter owned by the trusted OpenShell/Docker host. Observations must be independent of command acknowledgements. */
 export interface SingleHostSandbox {
+    /** Confirm the original generation cannot write directly before revoking its grant. */
+    freezeGeneration?(session: Readonly<Session>): Promise<void>;
     stop(session: Readonly<Session>): Promise<void>;
+    /** Idempotent across restarts. Resolve only the immutable instance of this generation. */
+    stopGeneration?(session: Readonly<Session>): Promise<void>;
     stopped(session: Readonly<Session>): Promise<boolean>;
     start(session: Readonly<Session>): Promise<void>;
+    /** Deliver the reserved successor once, including across lost replies and restarts. */
+    startGeneration?(session: Readonly<Session>): Promise<void>;
     running(session: Readonly<Session>): Promise<Omit<Running, 'generation'>>;
 }
 
@@ -47,6 +53,10 @@ export class SingleHostExecution {
         paths: { authority: string; history: string; goControl?: string },
         sandbox: SingleHostSandbox,
     ) {
+        if (sandbox.freezeGeneration && !sandbox.stopGeneration)
+            throw new Error(
+                'Generation freeze requires generation-scoped stop',
+            );
         this.sandbox = sandbox;
         this.authority = new Authority(paths.authority, paths.goControl);
         this.history = new SessionHistory(paths.history);
@@ -171,6 +181,18 @@ export class SingleHostExecution {
     }
 
     private async retire(binding: Binding) {
+        if (this.sandbox.freezeGeneration) {
+            const original = this.inspect(binding.session);
+            if (
+                original.tenant !== binding.tenant ||
+                original.project !== binding.project ||
+                original.sandbox !== binding.sandbox ||
+                original.volume !== binding.volume
+            )
+                throw new Error('Session binding mismatch');
+            if (original.state !== 'REVOKED')
+                await this.sandbox.freezeGeneration(original);
+        }
         this.authority.retire(binding);
         const current = this.inspect(binding.session);
         if (current.state === 'REVOKED') return current;
@@ -178,7 +200,9 @@ export class SingleHostExecution {
             this.fence.revoke(binding.session, current.generation, current.run);
         this.gate.revokeChannels(binding.session, current.generation);
         this.history.releaseReaders(binding.session, current.generation);
-        await this.sandbox.stop(current);
+        if (this.sandbox.stopGeneration)
+            await this.sandbox.stopGeneration(current);
+        else await this.sandbox.stop(current);
         if (
             !(await this.sandbox.stopped(current)) ||
             !this.gate.channelsClosed(binding.session, current.generation)
@@ -268,7 +292,11 @@ export class SingleHostExecution {
 
     admit(session: string, generation: number, run: string, leaseMs: number) {
         const current = this.inspect(session);
-        if (current.state !== 'READY' || current.generation !== generation)
+        if (
+            this.changingBindings.has(session) ||
+            current.state !== 'READY' ||
+            current.generation !== generation
+        )
             throw new Error('Run admission denied');
         if (!run || run === 'bento:revoked') throw new Error('invalid Run');
         if (
@@ -305,16 +333,23 @@ export class SingleHostExecution {
         }
     }
 
-    drainAttempt(session: string, generation: number, run: string) {
-        const current = this.inspect(session);
-        if (
-            current.generation !== generation ||
-            current.run !== run ||
-            current.state !== 'RUNNING'
-        )
-            return;
-        this.authority.beginDrain(session, generation);
-        this.revokeAccess(session, generation, run);
+    async drainAttempt(session: string, generation: number, run: string) {
+        await this.changeBinding(session, async () => {
+            const current = this.inspect(session);
+            if (
+                current.generation !== generation ||
+                current.run !== run ||
+                current.state !== 'RUNNING'
+            )
+                return;
+            await this.beginDrain(current);
+            this.revokeAccess(session, generation, run);
+        });
+    }
+
+    private async beginDrain(current: Readonly<Session>) {
+        await this.sandbox.freezeGeneration?.(current);
+        this.authority.beginDrain(current.session, current.generation);
     }
 
     private revokeAccess(session: string, generation: number, run: string) {
@@ -334,8 +369,9 @@ export class SingleHostExecution {
         if (current.generation !== generation || !current.run)
             throw new Error('stale takeover');
         const run = current.run;
+        let stopDispatched = false;
         if (current.state === 'RUNNING') {
-            this.authority.beginDrain(session, generation);
+            await this.beginDrain(current);
             current = this.inspect(session);
         }
         if (current.state === 'DRAINING') {
@@ -354,7 +390,12 @@ export class SingleHostExecution {
                 writesRevoked: true,
             });
             current = this.inspect(session);
-            if (dispatch) await this.sandbox.stop(current);
+            if (dispatch) {
+                if (this.sandbox.stopGeneration)
+                    await this.sandbox.stopGeneration(current);
+                else await this.sandbox.stop(current);
+                stopDispatched = true;
+            }
         }
         if (current.state === 'UNKNOWN') {
             if (!this.management.claimRecovery(session, generation))
@@ -363,10 +404,15 @@ export class SingleHostExecution {
                     generation,
                     'single-host',
                 );
+            let stopped = await this.sandbox.stopped(current);
+            if (!stopped && !stopDispatched && this.sandbox.stopGeneration) {
+                await this.sandbox.stopGeneration(current);
+                stopped = await this.sandbox.stopped(current);
+            }
             this.management.confirmStop(session, {
                 sandbox: current.sandbox,
                 generation,
-                stopped: await this.sandbox.stopped(current),
+                stopped,
                 channelsClosed: this.gate.channelsClosed(session, generation),
                 credentialsRevoked: !current.hasCapability,
                 writesRevoked: this.fence.isRevoked(session, generation),
@@ -380,10 +426,12 @@ export class SingleHostExecution {
             if (!this.management.prepareStart(session, generation, 'start'))
                 throw new Error('start reservation denied');
             current = this.inspect(session);
-            await this.sandbox.start(current);
+            if (!this.sandbox.startGeneration)
+                await this.sandbox.start(current);
         }
         if (current.state !== 'START_UNKNOWN')
             throw new Error('unexpected takeover state');
+        await this.sandbox.startGeneration?.(current);
         this.management.confirmStart(session, generation, {
             ...(await this.sandbox.running(current)),
             generation: generation + 1,
