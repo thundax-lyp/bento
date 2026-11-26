@@ -125,9 +125,9 @@
 - 提交内容去首尾空白后为 1–8000 个字符。重试键作用域为账号下的执行项目。同键不同内容返回 `409`，同键同内容可在提交响应超时后安全重试。
 - 排队取消返回 `cancelled`，已预留但尚未启动也可取消。受支持宿主的运行取消返回 `cancelling`，后续详情回读 `cancelled` 或 `needs_review`。重复请求返回原 Run 当前取消状态，不需要新幂等键。越权、不存在或项目关系不符返回 `404 not_found`。已接收完成回执、运行宿主缺少可信退出观察或状态不可取消时返回 `409 conflict`。结果不明时回读原详情。
 - 只有 `succeeded` 且补丁已发布时可读取 diff。零字节 diff 是成功结果，未发布返回 `409`。待核对结果由可信部署侧处理。
-- 私有执行服务保留现有同构 `/v1/projects` 和 Run 路径。Web 目标使用相同任务路由提交与读取，避免为来自空间的任务建立第二套 Run 接口。
+- 私有执行服务保留现有同构 `/v1/projects` 和 Run 路径。空白 Task 和空间快照 Task 共用下节的 Task 路由提交与读取 Run。
 
-### Task 生命周期 · 目标契约
+### Task 生命周期
 
 表中路径以公开 `/api` 或私有 `/v1` 为前缀。私有请求由个人端附 service Bearer、认证派生的 `X-Bento-Owner-Id`。POST 要求同源会话校验。K 表示单一 UUID v4 `Idempotency-Key`。cancel 沿用现有无键的条件状态转换。URL 路径资源先校验再按 owner、Task、Run 关系查询。列表按创建时间、ID，Run 按 sequence，Event 按 sequence 升序。列表当前返回全量，events 未指定 after 时为 0，传入单个非负安全整数并按严格大于过滤。
 
