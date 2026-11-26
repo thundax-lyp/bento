@@ -29,6 +29,7 @@ async function main() {
         BENTO_PORT,
         BENTO_BIND_HOST = '127.0.0.1',
         BENTO_TENANT_QUEUE_LIMIT,
+        BENTO_TASK_RUN_APPROVAL = 'off',
         BENTO_TEMPORAL_ADDRESS,
         BENTO_TEMPORAL_NAMESPACE,
         BENTO_TEMPORAL_TASK_QUEUE,
@@ -39,6 +40,11 @@ async function main() {
         !/^sha256:[0-9a-f]{64}$/.test(BENTO_EXECUTION_ENVIRONMENT_VERSION ?? '')
     )
         throw new Error('Execution environment version required');
+    if (
+        BENTO_TASK_RUN_APPROVAL !== 'off' &&
+        BENTO_TASK_RUN_APPROVAL !== 'required'
+    )
+        throw new Error('Invalid Task Run approval policy');
     const state = resolve(BENTO_STATE_DIR);
     const port = Number(BENTO_PORT ?? 8788);
     if (!Number.isInteger(port) || port < 0 || port > 65535)
@@ -106,6 +112,7 @@ async function main() {
         port,
         bindHost: BENTO_BIND_HOST,
         host,
+        requireTaskRunApproval: BENTO_TASK_RUN_APPROVAL === 'required',
         ...(process.env.BENTO_GO_AUTHORITY
             ? { goControl: process.env.BENTO_GO_AUTHORITY }
             : {}),

@@ -157,7 +157,8 @@ export type ProjectDeletionReceipt =
     | { state: 'denied'; code: ProjectDeletionBlocker }
     | { state: 'deleting' | 'deleted' };
 
-const pending = "('queued','running','recovering','cancelling','needs_review')";
+const pending =
+    "('pending_approval','queued','running','recovering','cancelling','needs_review')";
 
 export function projectBinding(project: Project): Binding {
     return {
@@ -174,13 +175,20 @@ export class Store {
     private readonly evidence: TaskEvidenceStore;
 
     private readonly tenantQueueLimit: number;
+    private readonly requireTaskRunApproval: boolean;
     private readonly path: string;
     private readonly goControl: string | undefined;
 
-    constructor(path: string, tenantQueueLimit = 16, goControl?: string) {
+    constructor(
+        path: string,
+        tenantQueueLimit = 16,
+        goControl?: string,
+        requireTaskRunApproval = false,
+    ) {
         this.path = path;
         this.goControl = goControl;
         this.tenantQueueLimit = tenantQueueLimit;
+        this.requireTaskRunApproval = requireTaskRunApproval;
         this.db = new DatabaseSync(path);
         this.evidence = new TaskEvidenceStore(
             this.db,
@@ -230,6 +238,11 @@ export class Store {
             CREATE UNIQUE INDEX IF NOT EXISTS one_pending_run_per_project
                 ON runs(projectId) WHERE status IN ${pending};
             DROP INDEX IF EXISTS one_active_host_run;
+            CREATE TABLE IF NOT EXISTS run_approval_decisions (
+                runId TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+                action TEXT NOT NULL CHECK(action IN ('approve-run','reject-run')),
+                decidedAt TEXT NOT NULL
+            ) STRICT;
             CREATE TABLE IF NOT EXISTS run_dispatches (
                 runId TEXT PRIMARY KEY REFERENCES runs(id)
             );
@@ -336,6 +349,11 @@ export class Store {
     }
 
     drainOwner(owner: string) {
+        if (this.goControl) {
+            if (this.business('drain-owner', { owner }) !== true)
+                throw new Error('Go owner drain unavailable');
+            return;
+        }
         this.db
             .prepare('INSERT OR IGNORE INTO draining_owners VALUES (?)')
             .run(owner);
@@ -1935,7 +1953,7 @@ export class Store {
         const count = this.db
             .prepare(
                 `SELECT (
-                (SELECT count(*) FROM projects p JOIN runs r ON r.projectId=p.id WHERE p.owner=? AND r.status='queued') +
+                (SELECT count(*) FROM projects p JOIN runs r ON r.projectId=p.id WHERE p.owner=? AND r.status IN ('queued','pending_approval')) +
                 (SELECT count(*) FROM tasks t JOIN retry_attempts a ON a.taskId=t.id WHERE t.owner=? AND a.phase IN ${pendingRetries})
             ) AS value`,
             )
@@ -2095,6 +2113,7 @@ export class Store {
                     key,
                     prompt,
                     task,
+                    requireApproval: task && this.requireTaskRunApproval,
                     body: task
                         ? JSON.stringify({
                               kind: 'user_message',
@@ -2187,7 +2206,7 @@ export class Store {
             if (current.status !== 'cancelled') {
                 const result = this.db
                     .prepare(
-                        "UPDATE runs SET status='cancelled', summary=?, updatedAt=? WHERE id=? AND projectId=? AND status='queued'",
+                        "UPDATE runs SET status='cancelled', summary=?, updatedAt=? WHERE id=? AND projectId=? AND status IN ('queued','pending_approval')",
                     )
                     .run('Cancelled before start.', now(), id, project);
                 if (result.changes !== 1)

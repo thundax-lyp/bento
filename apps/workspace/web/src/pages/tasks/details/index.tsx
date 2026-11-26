@@ -313,6 +313,7 @@ function TaskDetailsContent({ account, id }: { account: string; id: string }) {
                     </ol>
                     {last &&
                         [
+                            'pending_approval',
                             'queued',
                             'running',
                             'recovering',
@@ -425,9 +426,11 @@ function TaskDetailsContent({ account, id }: { account: string; id: string }) {
                                     disabled={!mutable || pending}
                                     onClick={() => cancel.mutate(selected.id)}
                                 >
-                                    {selected.status === 'queued'
-                                        ? '取消排队'
-                                        : '请求停止'}
+                                    {selected.status === 'pending_approval'
+                                        ? '取消审批请求'
+                                        : selected.status === 'queued'
+                                          ? '取消排队'
+                                          : '请求停止'}
                                 </Button>
                             )}
                             {(selected.status === 'failed' ||

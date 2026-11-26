@@ -41,8 +41,8 @@
 | `A5-01` | 最终执行链 | 单轮真实纵向链路 | 已实现 | 已选 TypeScript Orchestrator/OpenShell 候选实测 Run、Session、Workspace 和四项工具（`72b1a26`）。[证据](evidence/A5.md#a5-01-单轮真实执行) |
 | `A5-02` | 最终执行链 | 未启用执行入口 | 已实现 | 同版合法租约请求 PTY、SSH 均被拒绝，独立核对零启动（`1cec35c`）。[证据](evidence/A5.md#a5-02-禁用入口) |
 | `A5-03` | 最终执行链 | 工具完成后崩溃 | 已实现 | 合入版 `039fc4d` 实栈通过写后中断、双侧停止、旧代拒写和 UNKNOWN 零重放，独立卷计数前后均为 1。[证据](evidence/A5.md#主线合入后实栈复验) |
-| **`A6`** | [调度与池化](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a6-调度与池化) | **需求汇总** | **部分实现** | 真实 Temporal 重投和 Worker 池复用已验。审批、心跳与双侧停止、完整容量和升级排空待验。[证据](evidence/A6.md) |
-| `A6-01` | 调度与池化 | Run 派发、审批与受控复用 | 部分实现 | 已回读真实 Temporal 派发，实测取消、安全重试、双槽和后续派发。审批及完整资源回收待验。 [证据](evidence/SINGLE-HOST.md) |
+| **`A6`** | [调度与池化](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a6-调度与池化) | **需求汇总** | **部分实现** | Run 审批与资源回收、Temporal 重投、Worker 池复用和升级排空已验。独立心跳失联、执行超时和完整容量待验。[证据](evidence/A6.md) |
+| `A6-01` | 调度与池化 | Run 派发、审批与受控复用 | 已实现 | 受信审批、拒绝、待审批取消和账号关闭均在真实 Temporal 与正式 Docker Worker 实栈通过。批准 Run 单次派发，旧授权、容器、连接和槽位已回收。[审批与回收证据](evidence/A6.md#a6-01-task-run-审批与资源回收) |
 | `A6-02` | 调度与池化 | Activity 重试 | 已实现 | 真实 Temporal 重投 9/9。宿主或原库重启后复用回执，副作用一次。[证据](evidence/A6.md#a6-02-真实-temporal-重投) |
 | `A6-03` | 调度与池化 | 失联或超时 | 部分实现 | 实栈验证 Worker 退出、撤权、槽位释放和后续派发。独立心跳失联或执行超时待验。 [证据](evidence/SINGLE-HOST.md) |
 | `A6-04` | 调度与池化 | 容量耗尽 | 部分实现 | 实栈双槽与第三 Run 排队通过，确认 Worker 内存及 PID 硬上限。完整资源与真实配额耗尽待验。 [证据](evidence/SINGLE-HOST.md) |
