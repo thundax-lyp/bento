@@ -15,6 +15,7 @@ type InstallReview = (
     readTaskRetryClosure: ExecutionService['readTaskRetryClosure'],
     reconcileTaskRetry: ExecutionService['reconcileTaskRetry'],
     listPendingRunReviews: ExecutionService['listPendingRunReviews'],
+    sharedSessions?: ExecutionService['sharedSessions'],
 ) => () => void | Promise<void>;
 
 async function main() {
@@ -133,6 +134,7 @@ async function main() {
             service.readTaskRetryClosure,
             service.reconcileTaskRetry,
             service.listPendingRunReviews,
+            ...(service.sharedSessions ? [service.sharedSessions] : []),
         );
         if (installReview && typeof stopReview !== 'function')
             throw new Error(

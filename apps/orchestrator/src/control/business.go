@@ -13,6 +13,7 @@ import (
 )
 
 type businessRequest struct {
+	Session         string
 	Run             string
 	Project         string
 	Slots           int
@@ -277,7 +278,7 @@ func enqueueBusinessRun(ctx context.Context, db *sql.Conn, action string, r busi
 		}
 		result, err = tx.ExecContext(ctx, `INSERT INTO runs
    (id,projectId,sessionId,key,prompt,status,createdAt,updatedAt,taskSequence)
-   SELECT ?,p.id,p.sessionId,?,?,'queued',?,?,CASE WHEN ? THEN
+   SELECT ?,p.id,?, ?,?,'queued',?,?,CASE WHEN ? THEN
     (SELECT COALESCE(MAX(taskSequence),0)+1 FROM runs WHERE projectId=p.id) ELSE NULL END
    FROM projects p WHERE p.id=? AND p.owner=? AND p.status='ready'
    AND NOT EXISTS(SELECT 1 FROM runs WHERE projectId=p.id AND key=?)
@@ -285,7 +286,7 @@ func enqueueBusinessRun(ctx context.Context, db *sql.Conn, action string, r busi
    AND NOT EXISTS(SELECT 1 FROM draining_owners WHERE owner=p.owner)
    AND (NOT ? OR EXISTS(SELECT 1 FROM tasks WHERE id=p.id AND owner=p.owner AND closedReason IS NULL))
    AND (NOT ? OR NOT EXISTS(SELECT 1 FROM retry_attempts WHERE taskId=p.id AND (key=? OR phase IN ('preparing','workspace_restored','history_restored','blocked'))))
-   AND `+queueCapacity, r.Run, r.Key, r.Prompt, now, now, r.Task, r.Project, r.Owner, r.Key, r.Task, r.Task, r.Key, r.Owner, r.Owner, r.QueueLimit)
+   AND `+queueCapacity, r.Run, r.Session, r.Key, r.Prompt, now, now, r.Task, r.Project, r.Owner, r.Key, r.Task, r.Task, r.Key, r.Owner, r.Owner, r.QueueLimit)
 		if r.Task {
 			taskID, runID, eventID, body = r.Project, r.Run, r.Run+":user", r.Body
 		}

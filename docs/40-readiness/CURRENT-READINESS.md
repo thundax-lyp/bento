@@ -17,7 +17,7 @@
 | `A1-02` | 身份与绑定 | 伪造资源绑定 | 已实现 | 本地 HTTP、持久历史及官方 SDK mTLS 绑定隔离 12/12（`b845c09`）。[证据](evidence/A1.md#a1-02-伪造资源绑定本地验收) |
 | `A1-03` | 身份与绑定 | 旧执行授权 | 已实现 | 单宿主验证旧授权拒绝新流、重连、持久化写入及官方 Provider 操作。[证据](evidence/A1.md#a1-03-旧执行授权本地验收) |
 | `A1-04` | 身份与绑定 | 绕过受信入口 | 部分实现 | 独立 Worker 的管理入口、Gateway 和 MySQL 直连均不可达。SDK 认证拒绝及活跃 Worker 的凭据可读范围待验。 [证据](evidence/SINGLE-HOST.md) |
-| `A1-05` | 身份与绑定 | 共享卷上的单 Session 撤权 | 待核验 | 待验共享卷上的单会话撤权。 |
+| `A1-05` | 身份与绑定 | 共享卷上的单 Session 撤权 | 已实现 | 真实 Docker/OpenShell 共享卷上，目标旧授权和新申请均拒绝，另一个合法 Session 继续写入。[证据](evidence/A4.md) |
 | **`A2`** | [持久会话](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a2-持久会话) | **需求汇总** | **已实现** | 五项持久会话场景已完成本地验收。[正常链路](evidence/A2.md#a2-官方-provider-本地验收) · [崩溃恢复](evidence/A2.md#a2-崩溃恢复本地验收) |
 | `A2-01` | 持久会话 | 持久批次与恢复 | 已实现 | 官方 Provider 经 HTTP/SQLite 持久化并恢复续轮（`3ac9d36`）。[证据](evidence/A2.md#a2-官方-provider-本地验收) |
 | `A2-02` | 持久会话 | 旧代操作 | 已实现 | 独立旧代 append、flush、close 均返回 403（`3ac9d36`）。[证据](evidence/A2.md#a2-官方-provider-本地验收) |
@@ -32,11 +32,11 @@
 | `A3-05` | 接管状态机 | 迟到的停止请求 | 部分实现 | 实栈 Go 拒绝旧代停止预约，新代 READY 保持。已发出的迟到 stop 待验。 [证据](evidence/SINGLE-HOST.md) |
 | `A3-06` | 接管状态机 | 副作用未知 | 已实现 | 真实 OpenShell 写后中断保留原 UNKNOWN，重投无新增 Exec，独立读卷计数为 1。 [证据](evidence/SINGLE-HOST.md) |
 | `A3-07` | 接管状态机 | 启动在途与并发重投 | 部分实现 | 实栈拒绝旧代启动预约。Docker 启动在途、快速退出和并发重投待验。 [证据](evidence/SINGLE-HOST.md) |
-| **`A4`** | [数据生命周期](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a4-数据生命周期) | **需求汇总** | **部分实现** | 已有项目导入、工作区绑定与删除门禁。缺真实共享卷的并发冲突策略和按引用回收。 |
-| `A4-01` | 数据生命周期 | 导入及卷生命周期 | 部分实现 | 已有导入、绑定与删除门禁；真实卷生命周期待验。 |
-| `A4-02` | 数据生命周期 | 重复导入 | 待核验 | 待核对重复导入与未提交改动的独立证据。 |
-| `A4-03` | 数据生命周期 | 共享卷并发写入 | 待实现 | 真实共享卷并发冲突策略待补。 |
-| `A4-04` | 数据生命周期 | 共享卷仍有引用 | 待实现 | 共享卷的按引用回收待补。 |
+| **`A4`** | [数据生命周期](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a4-数据生命周期) | **需求汇总** | **已实现** | 单宿主可信控制面在同一真实卷上通过 A4-01～04。[证据与覆盖范围](evidence/A4.md) |
+| `A4-01` | 数据生命周期 | 导入及卷生命周期 | 已实现 | 真实导入和同卷双 Session 绑定通过，跨 owner 拒绝，重建后仍挂原卷，文件与权限一致。[证据](evidence/A4.md) |
+| `A4-02` | 数据生命周期 | 重复导入 | 已实现 | 真实卷同键同输入返回 200，异输入返回 409。两次均保留原卷与未提交文件。[证据](evidence/A4.md) |
+| `A4-03` | 数据生命周期 | 共享卷并发写入 | 已实现 | 真实写入进行中，第二个 Session 获得 `volume_busy`，操作记录为零，确认停止后重试成功。[证据](evidence/A4.md) |
+| `A4-04` | 数据生命周期 | 共享卷仍有引用 | 已实现 | 删除一条引用后，普通 Run HTTP 仍能选择另一 Session 读写原卷。最终引用释放、首次删卷失败后，重启自动回收且持久回执可重读。[证据](evidence/A4.md) |
 | **`A5`** | [最终执行链](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a5-最终执行链) | **需求汇总** | **部分实现** | 真实四工具同轮和禁用 PTY、SSH 已在独占候选验收，工具后崩溃仍待实测。[证据](evidence/A5.md) |
 | `A5-01` | 最终执行链 | 单轮真实纵向链路 | 已实现 | 已选 TypeScript Orchestrator/OpenShell 候选实测 Run、Session、Workspace 和四项工具（`72b1a26`）。[证据](evidence/A5.md#a5-01-单轮真实执行) |
 | `A5-02` | 最终执行链 | 未启用执行入口 | 已实现 | 同版合法租约请求 PTY、SSH 均被拒绝，独立核对零启动（`1cec35c`）。[证据](evidence/A5.md#a5-02-禁用入口) |

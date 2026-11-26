@@ -74,18 +74,18 @@ func authorityCommand(db *sql.Conn, action, path string, r authorityRequest) (st
 			return "", errAuthority
 		}
 		return "", change(`INSERT INTO execution_sessions
-			(session,tenant,project,sandbox,volume,generation,state) VALUES (?,?,?,?,?,1,'READY')`,
-			r.Session, r.Tenant, r.Project, r.Sandbox, r.Volume)
+			(session,tenant,project,sandbox,volume,generation,state)
+			SELECT ?,?,?,?,?,1,'READY'
+			WHERE NOT EXISTS (SELECT 1 FROM execution_sessions WHERE volume=?)
+			AND NOT EXISTS (SELECT 1 FROM volume_reclaims WHERE volume=?)
+			AND NOT EXISTS (SELECT 1 FROM released_session_references WHERE session=?)`,
+			r.Session, r.Tenant, r.Project, r.Sandbox, r.Volume, r.Volume, r.Volume, r.Session)
 	case "admit":
 		now := time.Now().UnixMilli()
 		if r.Run == "" || r.LeaseMs <= 0 || r.LeaseMs > math.MaxInt64-now {
 			return "", errAuthority
 		}
-		token := hex.EncodeToString(randBytes())
-		digest := sha256.Sum256([]byte(token))
-		err := change(`UPDATE execution_sessions SET state='RUNNING',run=?,capability=?,expires=?
-			WHERE session=? AND generation=? AND state='READY'`, r.Run, hex.EncodeToString(digest[:]), now+r.LeaseMs, r.Session, r.Generation)
-		return token, err
+		return admitExecution(ctx, db, path, r, now+r.LeaseMs)
 	case "revoke":
 		return "", change(`UPDATE execution_sessions SET state='DRAINING',capability=NULL
 			WHERE session=? AND generation=? AND state IN ('RUNNING','READY')`, r.Session, r.Generation)
@@ -284,4 +284,53 @@ func runAuthority(path, action string) error {
 		return errAuthority
 	}
 	return json.NewEncoder(os.Stdout).Encode(value)
+}
+
+func admitExecution(ctx context.Context, db *sql.Conn, path string, r authorityRequest, expires int64) (string, error) {
+	if r.Generation > 1 {
+		if _, err := db.ExecContext(ctx, "ATTACH DATABASE ? AS history", filepath.Join(filepath.Dir(path), "history.sqlite")); err != nil {
+			return "", err
+		}
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	var busy bool
+	err = tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM execution_sessions other
+  WHERE other.volume=(SELECT volume FROM execution_sessions WHERE session=?) AND other.session<>?
+  AND (other.run IS NOT NULL OR EXISTS(SELECT 1 FROM operations WHERE session=other.session AND state='UNKNOWN')))`, r.Session, r.Session).Scan(&busy)
+	if err != nil {
+		return "", err
+	}
+	if busy {
+		return "volume_busy", nil
+	}
+	token := hex.EncodeToString(randBytes())
+	digest := sha256.Sum256([]byte(token))
+	err = requireAuthorityChange(tx.ExecContext(ctx, `UPDATE execution_sessions SET state='RUNNING',run=?,capability=?,expires=?
+  WHERE session=? AND generation=? AND state='READY' AND retiring=0`, r.Run, hex.EncodeToString(digest[:]), expires, r.Session, r.Generation))
+	if err != nil {
+		return "", err
+	}
+	if r.Generation > 1 {
+		result, err := tx.ExecContext(ctx, `UPDATE history.sessions SET epoch=?,owner=?
+   WHERE id=? AND handle IS NULL AND ((epoch=? AND owner='bento:revoked') OR (epoch=? AND owner=?))`,
+			r.Generation, r.Run, r.Session, r.Generation-1, r.Generation, r.Run)
+		reserved, err := reservation(result, err)
+		if err != nil {
+			return "", err
+		}
+		if reserved == "" {
+			var exists bool
+			if err = tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM history.sessions WHERE id=?)", r.Session).Scan(&exists); err != nil {
+				return "", err
+			}
+			if exists {
+				return "", errAuthority
+			}
+		}
+	}
+	return token, tx.Commit()
 }

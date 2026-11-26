@@ -680,6 +680,14 @@ export class Store {
         return projectView(project);
     }
 
+    sharedProjectBinding(owner: string, id: string) {
+        this.requireOpenOwner(owner);
+        const project = this.ownedProject(owner, id);
+        if (project.status !== 'ready' || this.isProjectDeleting(id))
+            throw conflict('project_not_ready', 'Project is not ready.');
+        return projectBinding(project);
+    }
+
     projects(owner: string) {
         return (
             this.db
@@ -1994,10 +2002,33 @@ export class Store {
             throw conflict('project_busy', 'Project deletion is in progress.');
     }
 
-    addRun(owner: string, projectId: string, key: string, prompt: string) {
-        if (this.goControl)
-            return this.enqueueRun(owner, projectId, key, prompt);
-        return this.write(() => this.enqueueRun(owner, projectId, key, prompt));
+    hasPendingProjectRun(projectId: string) {
+        return !!this.db
+            .prepare(
+                `SELECT 1 FROM runs WHERE projectId=? AND status IN ${pending}`,
+            )
+            .get(projectId);
+    }
+
+    addRun(
+        owner: string,
+        projectId: string,
+        key: string,
+        prompt: string,
+        sessionId?: string,
+        validateSession?: (binding: Binding) => void,
+    ) {
+        const enqueue = () =>
+            this.enqueueRun(
+                owner,
+                projectId,
+                key,
+                prompt,
+                false,
+                sessionId,
+                validateSession,
+            );
+        return this.goControl ? enqueue() : this.write(enqueue);
     }
 
     private enqueueRun(
@@ -2006,15 +2037,21 @@ export class Store {
         key: string,
         prompt: string,
         task = false,
+        sessionId?: string,
+        validateSession?: (binding: Binding) => void,
     ) {
         if (!task) this.requireRunProject(owner, projectId);
         this.requireOpenOwner(owner);
         const project = this.ownedProject(owner, projectId, task);
+        const selectedSession = sessionId ?? project.sessionId;
         const previous = this.db
             .prepare('SELECT * FROM runs WHERE projectId=? AND key=?')
             .get(projectId, key) as Run | undefined;
         if (previous) {
-            if (previous.prompt !== prompt)
+            if (
+                previous.prompt !== prompt ||
+                previous.sessionId !== selectedSession
+            )
                 throw conflict(
                     'idempotency_conflict',
                     'Idempotency-Key already belongs to a different input.',
@@ -2042,12 +2079,17 @@ export class Store {
                 'project_busy',
                 'Project already has an unfinished Run.',
             );
+        validateSession?.({
+            ...projectBinding(project),
+            session: selectedSession,
+        });
         const id = randomUUID();
         const created = now();
         if (this.goControl) {
             if (
                 this.business('enqueue', {
                     run: id,
+                    session: selectedSession,
                     project: projectId,
                     owner,
                     key,
@@ -2077,7 +2119,7 @@ export class Store {
             .run(
                 id,
                 projectId,
-                project.sessionId,
+                selectedSession,
                 key,
                 prompt,
                 created,

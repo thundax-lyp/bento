@@ -62,6 +62,15 @@ Docker/OpenShell 故障验收遵循[故障注入约束](../10-requirements/APPLI
 
 数据库事务与远端资源变化不构成同一原子事务。intent、observe/reconcile、可信补偿、receipt 与 READY 必须形成可恢复协议；本地进程中断、SSH/PTC 停止、工具中断恢复和最新SDK入口各有证据，最终实现仍须在同一链做联合故障验收。
 
+## 项目导入与共享卷生命周期
+
+- **导入与绑定**。Orchestrator 按 owner 和幂等键保留导入回执。同键同输入返回原项目，同键异输入返回 `409 idempotency_conflict`。新卷在 staging 校验文件树、受支持的权限和内容哈希后进入 READY。已有 READY 卷再次绑定时只核对身份和挂载，保留当前工作树。一个 Workspace 可显式绑定多个同租户的合法 Session，每个 Session 使用独立 sandbox、授权和代次。绑定记录固定 tenant、Workspace、volume、Session 与 sandbox，拒绝越权和挂载不符。重建 sandbox 使用原卷并重新核对绑定。
+- **并发写入**。采用卷级独占写入。Orchestrator 在启动可写 Run 或授予其他写入口前，原子登记 volume、Session、Run（如适用）与 generation 的写入权。另一合法 Session 的写请求返回可重试的 `volume_busy` 冲突，保持无副作用。文件工具、Bash、子 Agent 及启用的 PTY、SSH 均受此门禁约束。租约过期或撤权后，确认旧代进程、连接与写挂载均无法再写，才允许下一写入者。存在未决写入证据时保持阻塞并对账。
+- **撤权与引用**。Orchestrator 持久记录 Session 绑定、释放回执及卷回收回执。当前项目卷的持有者是各个 Session，项目元数据可以在卷回收后按项目删除流程清理。撤权只使目标 Session 的授权失效并停止该 Session 的执行，保留它的持久绑定直到显式解除。删除 Session 时先拒绝该 Session 的新执行，确认停止与卸载后释放它的引用。其他有效引用继续保有同一卷及访问权限。
+- **最终回收**。最后一个持久引用释放时，原子将卷标为待回收并拒绝新绑定。可信宿主核对卷所有权、零挂载、零写入者后删除，Orchestrator 持久化已删除回执。启动及运行时自动按原卷身份继续对账，区分确认不存在与观察失败。最后一个引用删除与待回收状态在同一 SQLite 事务提交。待回收及回收成功的卷 ID 均拒绝重新绑定。
+
+可信控制面通过 Orchestrator 的 `sharedSessions` 管理绑定与 Run 授权，首个 Session 仍随项目导入建立。项目 Run 可显式绑定同卷的第二个 Session，调度和接管从 Run 保存的 Session ID 读取权威绑定。外部命令宿主须启用共享卷并实现独立的 attach、detach、reclaim 观察。当前实现用于项目执行路径，Task 恢复路径保持独占卷。部署接线和运行方式见 [部署手册](../../deploy/README.md#共享卷宿主)，逐项实测见 [A4 验收](../40-readiness/evidence/A4.md)。
+
 ## 执行链实施设计
 
 各阶段放行条件见 [交付验收](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#执行链验收门槛)。
