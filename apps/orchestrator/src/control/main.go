@@ -7,6 +7,12 @@ import (
 )
 
 func main() {
+	if len(os.Args) == 3 && os.Args[1] == "recovery-owner" {
+		if err := runRecoveryOwner(context.Background(), os.Args[2], os.Stdin, os.Stdout); err != nil {
+			log.Fatal("Go recovery owner command failed")
+		}
+		return
+	}
 	if len(os.Args) == 3 && os.Args[1] == "run-ledger" {
 		if err := runLedger(context.Background(), os.Args[2], os.Stdin, os.Stdout); err != nil {
 			log.Fatal("Go Run ledger controller failed")
