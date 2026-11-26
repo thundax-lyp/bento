@@ -113,6 +113,29 @@ services:
             - bento-mysql-data:/var/lib/mysql
         restart: unless-stopped
 
+    bento-admin:
+        profiles: [admin]
+        build:
+            context: ..
+            dockerfile: deploy/admin.Dockerfile
+        init: true
+        restart: unless-stopped
+        environment:
+            BENTO_ADMIN_LISTEN: 0.0.0.0:8080
+            BENTO_ADMIN_ASSET_ROOT: /app
+            BENTO_ADMIN_PUBLIC_ORIGIN: ${BENTO_ADMIN_PUBLIC_ORIGIN:-}
+            BENTO_ADMIN_OIDC_ISSUER: ${BENTO_ADMIN_OIDC_ISSUER:-}
+            BENTO_ADMIN_OIDC_CLIENT: ${BENTO_ADMIN_OIDC_CLIENT:-}
+            BENTO_ADMIN_OIDC_SECRET: ${BENTO_ADMIN_OIDC_SECRET:-}
+            BENTO_ADMIN_SERVICE_BEARER: ${BENTO_ADMIN_SERVICE_BEARER:-}
+            BENTO_ADMIN_WORKSPACE_GRANTS: ${BENTO_ADMIN_WORKSPACE_GRANTS:-}
+            BENTO_EXECUTION_ORIGIN: http://orchestrator:8788
+        ports:
+            - '127.0.0.1:${BENTO_ADMIN_PORT:-8081}:8080'
+        depends_on:
+            orchestrator:
+                condition: service_healthy
+
     orchestrator:
         build:
             context: ..
@@ -128,6 +151,8 @@ services:
             BENTO_EXECUTION_ENVIRONMENT_VERSION: ${BENTO_EXECUTION_ENVIRONMENT_VERSION:?Set BENTO_EXECUTION_ENVIRONMENT_VERSION}
             BENTO_BIND_HOST: 0.0.0.0
             BENTO_PORT: '8788'
+            BENTO_ADMIN_SERVICE_BEARER: ${BENTO_ADMIN_SERVICE_BEARER:-}
+            BENTO_ADMIN_WORKSPACE_GRANTS: ${BENTO_ADMIN_WORKSPACE_GRANTS:-}
             BENTO_SERVICE_BEARER: ${BENTO_EXECUTION_BEARER:?Set BENTO_EXECUTION_BEARER}
         command:
             [

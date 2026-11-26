@@ -36,3 +36,13 @@ apps/workspace/web/src/**/*.test.tsx
 apps/workspace/api/go/*_test.go
 !shared/
 !shared/text-snapshot.ts
+!apps/admin/
+!apps/admin/api/
+!apps/admin/api/main.go
+!apps/admin/api/go.mod
+!apps/admin/api/go.sum
+!apps/admin/auth/
+!apps/admin/auth/login.html
+!apps/admin/web/
+!apps/admin/web/index.html
+!deploy/admin.Dockerfile
