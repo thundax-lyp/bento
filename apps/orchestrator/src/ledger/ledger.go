@@ -270,7 +270,7 @@ SELECT EXISTS(
 		var missingDispatch bool
 		if err := tx.QueryRowContext(ctx, `
 SELECT EXISTS(SELECT 1 FROM task_submissions WHERE run_id = ?)
-   AND NOT EXISTS(SELECT 1 FROM dispatches WHERE run_id = ?)`, runID, runID).Scan(&missingDispatch); err != nil {
+   AND NOT EXISTS(SELECT 1 FROM dispatches WHERE run_id = ? AND pending = 1)`, runID, runID).Scan(&missingDispatch); err != nil {
 			return err
 		}
 		if missingDispatch {

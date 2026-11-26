@@ -162,21 +162,22 @@ func (l *Ledger) ReserveDispatch(ctx context.Context, runID string) (string, err
 		if run.Status != Queued {
 			return ErrTransition
 		}
-		var exists, occupied bool
+		var reserved, occupied bool
 		if err := tx.QueryRowContext(ctx, `
-SELECT EXISTS(SELECT 1 FROM dispatches WHERE run_id = ?),
+SELECT EXISTS(SELECT 1 FROM dispatches WHERE run_id = ? AND pending = 1),
        EXISTS(SELECT 1 FROM dispatches WHERE pending = 1)
        OR EXISTS(SELECT 1 FROM runs WHERE status IN ('starting', 'running', 'stopping', 'unknown'))
-`, runID).Scan(&exists, &occupied); err != nil {
+`, runID).Scan(&reserved, &occupied); err != nil {
 			return err
 		}
-		if exists {
+		if reserved {
 			return nil
 		}
 		if occupied {
 			return ErrSlotBusy
 		}
-		_, err = tx.ExecContext(ctx, "INSERT INTO dispatches(run_id, pending) VALUES (?, 1)", runID)
+		_, err = tx.ExecContext(ctx, `INSERT INTO dispatches(run_id, pending) VALUES (?, 1)
+ON CONFLICT(run_id) DO UPDATE SET pending = 1`, runID)
 		return err
 	})
 	if err != nil {

@@ -286,3 +286,43 @@ func TestDispatchReservationExcludesOtherRunsAndSurvivesRestart(t *testing.T) {
 	_, err = l.ReserveDispatch(ctx, "other")
 	must(t, err)
 }
+
+func TestRequeuedTaskMustReacquireDispatchReservation(t *testing.T) {
+	ctx := t.Context()
+	l := openLedger(t, filepath.Join(t.TempDir(), "runs.sqlite"))
+	_, err := l.SubmitTaskRun(ctx, Task{ID: "task", Name: "Task", Binding: testBinding},
+		"run", "key", "Inspect")
+	must(t, err)
+	_, err = l.Submit(ctx, "other", testBinding, "Inspect")
+	must(t, err)
+	workflowID, err := l.ReserveDispatch(ctx, "run")
+	must(t, err)
+	a, _, err := l.ConsumeStart(ctx, "run", "first")
+	must(t, err)
+	must(t, l.Revoke(ctx, a))
+	must(t, l.RecordStop(ctx, a, StopObservation{Host: "host", Sandbox: "sandbox"}))
+	must(t, l.Resolve(ctx, a, Outcome{Status: Queued, Reference: "no-effect"}))
+
+	_, _, err = l.ConsumeStart(ctx, "run", "second")
+	wantError(t, err, ErrTransition)
+	_, err = l.ReserveDispatch(ctx, "other")
+	must(t, err)
+	_, err = l.ReserveDispatch(ctx, "run")
+	wantError(t, err, ErrSlotBusy)
+	must(t, l.CancelQueued(ctx, "other"))
+
+	reacquired, err := l.ReserveDispatch(ctx, "run")
+	must(t, err)
+	if reacquired != workflowID {
+		t.Fatalf("reacquired workflow ID = %s, want %s", reacquired, workflowID)
+	}
+	_, err = l.Submit(ctx, "competitor", testBinding, "Inspect")
+	must(t, err)
+	_, err = l.ReserveDispatch(ctx, "competitor")
+	wantError(t, err, ErrSlotBusy)
+	next, issued, err := l.ConsumeStart(ctx, "run", "second")
+	must(t, err)
+	if !issued || next.Generation != a.Generation+1 {
+		t.Fatalf("restarted attempt = %+v, issued %v", next, issued)
+	}
+}

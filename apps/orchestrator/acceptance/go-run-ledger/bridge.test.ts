@@ -213,6 +213,7 @@ test('TS commands are persisted by the Go Run ledger controller', async (t) => {
             stops: { Sandbox: 'sandbox' },
         });
         await second.call('resolve', { attempt: key, outcome });
+        await second.call('reserveDispatch', { runId: 'run' });
         const next = await second.call('consumeStart', {
             runId: 'run',
             attemptId: 'a2',
