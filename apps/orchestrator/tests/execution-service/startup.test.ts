@@ -119,6 +119,96 @@ test('startup requires the trusted host environment version', async (t) => {
     }
 });
 
+test('recovery owner gates the normal service startup before opening state', async (t) => {
+    const root = await mkdtemp(join(tmpdir(), 'bento-recovery-gate-'));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    const gate = join(root, 'gate.json');
+    const command = join(root, 'owner');
+    const reply = join(root, 'owner.json');
+    const owner = {
+        host: 'backup',
+        epoch: 2,
+        checkpoint: 'a'.repeat(64),
+        isolation: 'b'.repeat(64),
+    };
+    await writeFile(
+        command,
+        '#!/bin/sh\n[ "$1" = test-deployment ] && cat "$(dirname "$0")/owner.json"\n',
+        { mode: 0o700 },
+    );
+    await writeFile(
+        gate,
+        JSON.stringify({
+            deployment: 'test-deployment',
+            authorityCommand: command,
+            ...owner,
+        }),
+    );
+
+    function start(state: string) {
+        return spawn(
+            process.execPath,
+            [
+                ...process.execArgv,
+                fileURLToPath(
+                    new URL(
+                        '../../src/execution-service/start.ts',
+                        import.meta.url,
+                    ),
+                ),
+                '--local',
+            ],
+            {
+                env: {
+                    ...process.env,
+                    BENTO_STATE_DIR: state,
+                    BENTO_EXECUTION_ENVIRONMENT_VERSION:
+                        localEnvironmentVersion,
+                    BENTO_SERVICE_BEARER: testToken,
+                    BENTO_PORT: '0',
+                    BENTO_RECOVERY_GATE: gate,
+                },
+                stdio: ['ignore', 'pipe', 'ignore'],
+            },
+        );
+    }
+
+    const rejected = join(root, 'rejected');
+    for (const mismatch of [
+        undefined,
+        { ...owner, host: 'source' },
+        { ...owner, epoch: owner.epoch - 1 },
+        { ...owner, checkpoint: 'c'.repeat(64) },
+        { ...owner, isolation: 'd'.repeat(64) },
+    ]) {
+        if (mismatch) await writeFile(reply, JSON.stringify(mismatch));
+        assert.deepEqual(await once(start(rejected), 'close'), [1, null]);
+        await assert.rejects(readFile(join(rejected, 'business.sqlite')), {
+            code: 'ENOENT',
+        });
+    }
+
+    await writeFile(reply, JSON.stringify(owner));
+    const child = start(join(root, 'accepted'));
+    const closed = once(child, 'close');
+    const lines = createInterface({ input: child.stdout });
+    try {
+        const [url] = await Promise.race([
+            once(lines, 'line'),
+            closed.then(() => {
+                throw new Error('Current owner did not start');
+            }),
+        ]);
+        assert.equal((await client(url)('')).status, 200);
+        child.kill('SIGTERM');
+        assert.deepEqual(await closed, [0, null]);
+    } finally {
+        child.kill('SIGKILL');
+        await closed;
+        lines.close();
+    }
+});
+
 test('command host requests the frozen environment and exposes no fixture recovery', async (t) => {
     const directory = await mkdtemp(join(tmpdir(), 'bento-command-version-'));
     t.after(() => rm(directory, { recursive: true, force: true }));
