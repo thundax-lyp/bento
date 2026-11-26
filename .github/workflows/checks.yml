@@ -175,6 +175,7 @@ jobs:
                   cache: pnpm
             - run: pnpm install --frozen-lockfile
             - run: pnpm check:workspace
+            - run: pnpm check:admin
 
     orchestrator:
         name: Orchestrator core checks

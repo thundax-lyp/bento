@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Workspace 诊断</title>
+    <main>
+        <h1>Workspace 诊断</h1>
+        <form method="post" action="/diagnostics">
+            <label
+                >已授权 Workspace
+                <select name="workspace" required>
+                    {{range .Workspaces}}
+                    <option>{{.}}</option>
+                    {{end}}
+                </select></label
+            >
+            <input type="hidden" name="csrf" value="{{.CSRF}}" />
+            <input type="hidden" name="key" value="{{.Key}}" />
+            <button type="submit">运行诊断</button>
+        </form>
+        {{with .Run}}
+        <section>
+            <p>Run {{.ID}} · {{.Status}}</p>
+            <a href="">刷新状态</a>
+        </section>
+        {{end}}
+    </main>
+</html>

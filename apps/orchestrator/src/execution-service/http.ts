@@ -15,6 +15,12 @@ import {
     RequestError,
     runInput,
 } from './input.ts';
+import {
+    diagnosticAuthorization,
+    diagnosticKeyPrefix,
+    diagnosticPrompt,
+    type AdminDiagnostics,
+} from './admin-diagnostics.ts';
 import type { ProjectDeletionReceipt, Store } from './store.ts';
 
 const digest = (value: string) => createHash('sha256').update(value).digest();
@@ -420,15 +426,58 @@ export function executionHttp(
     ) => Promise<ProjectDeletionReceipt>,
     tasks?: Tasks,
     addProjectRun?: Store['addRun'],
+    adminDiagnostics?: AdminDiagnostics,
+    validateDiagnosticSession?: Parameters<Store['addDiagnosticRun']>[4],
 ) {
     const authorization = digest('Bearer ' + token);
+    const admin = diagnosticAuthorization(token, adminDiagnostics);
     const server = createServer(async (req, res) => {
         try {
             const supplied = req.headers.authorization;
+            const pathname = (req.url ?? '').split('?')[0];
+            const adminNamespace = /^\/v1\/admin(?:$|\/)/.test(pathname ?? '');
+            const workspaceIdentity =
+                !!supplied && timingSafeEqual(authorization, digest(supplied));
+            if (admin.matches(supplied)) {
+                const route =
+                    /^\/v1\/admin\/workspaces\/([^/]+)\/diagnostic-runs(?:\/([^/]+))?$/.exec(
+                        pathname ?? '',
+                    );
+                const workspace = route?.[1];
+                const runId = route?.[2];
+                const submit = req.method === 'POST' && !runId;
+                if (!workspace || (!submit && !(req.method === 'GET' && runId)))
+                    throw new RequestError(
+                        403,
+                        'operation_denied',
+                        'Operation denied.',
+                    );
+                const owner = admin.authorize(
+                    req.headers['x-bento-admin-subject'],
+                    workspace,
+                );
+                if (runId)
+                    return json(
+                        res,
+                        200,
+                        store.diagnosticRun(owner, workspace, runId),
+                    );
+                const result = store.addDiagnosticRun(
+                    owner,
+                    workspace,
+                    diagnosticKeyPrefix + taskKey(req),
+                    diagnosticPrompt,
+                    validateDiagnosticSession,
+                );
+                json(res, result.replay ? 200 : 202, result.run);
+                wake();
+                return;
+            }
+            if (adminNamespace && workspaceIdentity)
+                throw new RequestError(403, 'caller_denied', 'Caller denied.');
             const owner = req.headers['x-bento-owner-id'];
             if (
-                !supplied ||
-                !timingSafeEqual(authorization, digest(supplied)) ||
+                !workspaceIdentity ||
                 typeof owner !== 'string' ||
                 !/^[!-~]{1,256}$/.test(owner) ||
                 owner.includes(',')
@@ -439,7 +488,6 @@ export function executionHttp(
                     'Service authentication required.',
                 );
 
-            const pathname = (req.url ?? '').split('?')[0];
             if (
                 tasks &&
                 pathname &&
@@ -570,6 +618,11 @@ export function executionHttp(
                             !uuidV4.test(sessionId))
                     )
                         throw invalid('Invalid project Session.');
+                    if (
+                        typeof key === 'string' &&
+                        key.startsWith(diagnosticKeyPrefix)
+                    )
+                        throw invalid('Reserved Idempotency-Key.');
                     const input = runInput(
                         bodyInput,
                         typeof key === 'string' ? key : undefined,

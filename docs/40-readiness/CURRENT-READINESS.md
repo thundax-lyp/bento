@@ -9,9 +9,9 @@
 <!-- prettier-ignore -->
 | 编号 | 一级需求 | 验收场景 | 状态 | 证据与剩余验收 |
 | --- | --- | --- | --- | --- |
-| **`APP-01`** | [独立应用入口](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#app-01-独立应用入口) | **需求汇总** | **部分实现** | 个人端已接入 Web、Go HTTP 与 MySQL。待接入管理端及双端统一编排。 |
-| `APP-01-01` | 独立应用入口 | 双端独立入口与共享编排 | 部分实现 | 个人端已有独立认证、Web 和 Go HTTP 入口，管理端和双 API 编排接入待实现。 |
-| `APP-01-02` | 独立应用入口 | 跨端或越权调用 | 待核验 | 待核对两个端的调用方、操作及资源范围拒绝证据。 |
+| **`APP-01`** | [独立应用入口](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#app-01-独立应用入口) | **需求汇总** | **已实现** | 已通过 TS 基线及 Go 权威路径的双端独占 Docker 复验。[证据](evidence/APP-01.md#go-权威路径复验) |
+| `APP-01-01` | 独立应用入口 | 双端独立入口与共享编排 | 已实现 | 独立 Realm、双端真实 Worker Run 与权威状态回读通过。[证据](evidence/APP-01.md#go-权威路径复验) |
+| `APP-01-02` | 独立应用入口 | 跨端或越权调用 | 已实现 | 调用方、操作、Workspace 三类拒绝通过，业务与授权账本无变更。[证据](evidence/APP-01.md#go-权威路径复验) |
 | **`A1`** | [身份与绑定](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a1-身份与绑定) | **需求汇总** | **部分实现** | 已有组织准入、账号绑定与执行授权。完整登录到 Run、沙盒和卷的链路待验。 |
 | `A1-01` | 身份与绑定 | 服务端绑定与当次授权 | 已实现 | 个人端、内部 owner、Task、Workspace、Run、Session、沙盒、卷和当次授权绑定已交叉核对。 [证据](evidence/SINGLE-HOST.md) |
 | `A1-02` | 身份与绑定 | 伪造资源绑定 | 已实现 | 本地 HTTP、持久历史及官方 SDK mTLS 绑定隔离 12/12（`b845c09`）。[证据](evidence/A1.md#a1-02-伪造资源绑定本地验收) |

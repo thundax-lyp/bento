@@ -298,3 +298,9 @@ node apps/orchestrator/acceptance/worker-reuse/check-package.mjs
 默认 `soak` 模式成功须五case无skip、64轮四项隔离全通过、跨度至少315秒、同一实际PID，以及撤权/清理失败换PID、同库重开与资源归零。PR CI 显式设置 `BENTO_A6_WORKER_REUSE_MODE=burst`，保留全部64轮与逐轮断言但不补足轮间5秒等待；main CI及本地默认使用 `soak`。本地可在上述命令前设置同名变量复现连续模式，其他值直接失败。诊断输出记录模式、间隔和实际跨度；连续模式通过不能作为长期驻留证据。测试失败按对应case和分项定位，保留失败结论；只清理本次准确拥有的临时资源，不删除其他服务状态。SDK默认走原[官方准备工具](../apps/orchestrator/tests/openshell/binding-grants/sdk.ts)及六项schema探针；固定源码revision为`ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47`，TLS/安装和构建预算不变。官方源码归档首次下载并通过固定SHA-256校验后，保存到仓库旁的`../bento-sdk-cache/openshell/<revision>/source.tar.gz`；后续准备逐次复验并复用，npm/Buf下载内容分别缓存在同级`npm/`和`buf/`。每次构建仍使用独立临时目录，清理测试不会删除缓存；源码缓存损坏时明确失败，应先核对原因再删除该版本缓存并重新获取。
 
 本轮本地可显式指定`BENTO_A6_WORKER_REUSE_SDK_BUNDLE`为仓库外、已经审核身份的受控输入；wrapper逐项核验固定历史清单/完整SHA，隔离复制并执行相同六探针，错误不回退来源。该本地输入绑定本轮已核SDK，不能自行重签manifest或将任意SDK路径当成受控输入；CI不设置该变量，按官方来源真实构建。验收模式必须与[Readiness](../docs/40-readiness/evidence/A6.md#a6-05-worker-长期池复用)证据对应，受控来源通过不表示默认网络准备已恢复。临时SDK、mTLS材料、config、数据库和trace均在仓库外，不进入npm包；完整门禁保留真实Temporal九项。
+
+## 管理端诊断入口
+
+为管理端准备独立 Keycloak Realm 和启用授权码流程的机密客户端，注册精确回调 `<管理端 HTTPS origin>/auth/callback`。在同一部署配置中设置 `BENTO_ADMIN_PUBLIC_ORIGIN`、`BENTO_ADMIN_OIDC_ISSUER`、`BENTO_ADMIN_OIDC_CLIENT`、`BENTO_ADMIN_OIDC_SECRET`、`BENTO_ADMIN_SERVICE_BEARER` 和 `BENTO_ADMIN_WORKSPACE_GRANTS`。管理服务凭据须与个人端执行服务凭据不同。授权条目格式见[应用 API 与 Orchestrator](../docs/20-interfaces/APP-ORCHESTRATOR-INTERFACE.md)。
+
+从仓库根目录使用 `docker compose -f deploy/compose.yaml --profile admin up -d --build` 启用管理端。将管理域名的 HTTPS 反向代理接到宿主回环端口 `BENTO_ADMIN_PORT`，默认 8081。用获授权账号登录，从列表选择已有执行 Workspace，提交诊断后打开独立 Run 状态页。无法登录时核对 Realm、回调和反向代理。收到拒绝时核对管理员 subject、Workspace 和 owner 绑定，以及 API 和 Orchestrator 的配置一致性。停用入口时停止 `bento-admin` 并移除管理服务凭据和授权配置，再重建 Orchestrator 应用配置。

@@ -56,3 +56,5 @@ Worker正式运行时可选用[base-bootstrap.ts](apps/worker/base-bootstrap.ts)
 `pnpm --filter @bento/orchestrator test:worker-runtime`运行bootstrap/transport单测，`test:worker-reuse`运行SDK准备、生产ingress和64轮常驻Worker验收（默认长时模式最少315秒）；两者均纳入本地 `check:core`。PR CI 使用 `BENTO_A6_WORKER_REUSE_MODE=burst` 连续执行相同64轮及隔离断言，不主动补足轮间5秒间隔；main CI和本地默认 `soak` 保留至少315秒跨度。连续模式不代表长时间驻留验证通过。GitHub CI 对仅涉及执行服务测试目录和两个 Go Temporal 测试文件的变更运行常规检查。Orchestrator 或 Worker 的运行代码、部署、验收及未知范围变更仍触发常驻 Worker 验收。SDK默认按固定官方来源真实构建，本地受控输入范围见部署手册。
 
 使用 ESLint 与 Prettier，统一 4 空格缩进。
+
+管理端诊断入口的配置与启动见[部署手册](deploy/README.md#管理端诊断入口)。

@@ -29,6 +29,7 @@ type businessRequest struct {
 	Key             string
 	Prompt          string
 	Task            bool
+	Diagnostic      bool
 	RequireApproval bool
 	QueueLimit      int
 	Attempt         string
@@ -339,7 +340,7 @@ func enqueueBusinessRun(ctx context.Context, db *sql.Conn, action string, r busi
 	var taskID, runID, eventID, body string
 	switch action {
 	case "enqueue":
-		if r.Task && !json.Valid([]byte(r.Body)) {
+		if (r.Task && !json.Valid([]byte(r.Body))) || (r.Task && r.Diagnostic) {
 			return false, errAuthority
 		}
 		result, err = tx.ExecContext(ctx, `INSERT INTO runs
@@ -394,6 +395,11 @@ func enqueueBusinessRun(ctx context.Context, db *sql.Conn, action string, r busi
 	reserved, err := reservation(result, err)
 	if err != nil || reserved == "" {
 		return false, err
+	}
+	if action == "enqueue" && r.Diagnostic {
+		if _, err := tx.ExecContext(ctx, "INSERT INTO admin_diagnostic_runs(runId) VALUES (?)", r.Run); err != nil {
+			return false, err
+		}
 	}
 	if eventID != "" {
 		_, err = tx.ExecContext(ctx, `INSERT INTO task_events
