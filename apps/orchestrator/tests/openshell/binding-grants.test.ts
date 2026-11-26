@@ -75,6 +75,37 @@ test(
     },
 );
 
+test(
+    'A1-04 SDK ingress rejects absent and invalid execution authorization',
+    { timeout: 60_000, concurrency: false },
+    async () => {
+        const fixture = await createGrantFixture(sdk);
+        try {
+            const client = fixture.connect();
+            const counts = fixture.counts();
+            const state = fixture.snapshot();
+            const operations = fixture.operations();
+            for (const authorization of [null, 'Bearer ' + randomUUID()]) {
+                for (const method of methods) {
+                    const result = await fixture.request(client, method, {
+                        authorization,
+                    });
+                    assert.equal(result.status, '16');
+                }
+            }
+            assert.deepEqual(fixture.counts(), counts);
+            assert.deepEqual(fixture.snapshot(), state);
+            assert.deepEqual(fixture.operations(), operations);
+            assert.equal(
+                (await fixture.request(client, 'GetSandbox')).status,
+                '0',
+            );
+        } finally {
+            await fixture.dispose();
+        }
+    },
+);
+
 for (const mode of ['N', 'R'] as const)
     for (const method of methods)
         test(

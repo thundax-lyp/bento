@@ -580,13 +580,19 @@ export async function createGrantFixture(sdk: PreparedSdk) {
                 clients.set(client, closed(client));
                 return client;
             },
-            async request(client: ClientHttp2Session, method: SdkMethod) {
+            async request(
+                client: ClientHttp2Session,
+                method: SdkMethod,
+                {
+                    authorization = 'Bearer ' + grant.token,
+                }: { authorization?: string | null } = {},
+            ) {
                 const stream = client.request({
                     ':method': 'POST',
                     ':path': rpcPrefix + method,
                     'content-type': 'application/grpc',
                     te: 'trailers',
-                    authorization: 'Bearer ' + grant.token,
+                    ...(authorization === null ? {} : { authorization }),
                 });
                 let status: string | undefined;
                 let headerStatus: string | undefined;
