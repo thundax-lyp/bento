@@ -65,6 +65,14 @@ export class SingleHostExecution {
         return this.authority.inspect(session);
     }
 
+    sessionAvailable(session: string) {
+        return this.authority.sessionAvailable(session);
+    }
+
+    hasVolumeWriter(volume: string) {
+        return this.authority.hasVolumeWriter(volume);
+    }
+
     async purge(binding: Binding, remove: (binding: Binding) => Promise<void>) {
         if (this.authority.isReclaimed(binding)) return;
         const generation = this.authority.checkPurge(binding);

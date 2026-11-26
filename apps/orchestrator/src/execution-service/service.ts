@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { SingleHostExecution } from '../openshell/single-host.ts';
 import { unifiedDiff } from './diff.ts';
 import { executionHttp, RetryUnavailable } from './http.ts';
-import { conflict, textSnapshot } from './input.ts';
+import { conflict, missing, textSnapshot } from './input.ts';
 import { snapshotSha256 } from './snapshot.ts';
 import { projectBinding, Store, type ProjectDeletionReceipt } from './store.ts';
 import { taskRetryRecovery } from './task-retry-recovery.ts';
@@ -140,6 +140,39 @@ export async function serveExecution(options: Options) {
         );
         const db = store;
         const execution = control;
+        function runBinding(run: Run): Binding {
+            const primary = db.binding(run);
+            if (primary.session === run.sessionId) return primary;
+            return checkedProjectSession({
+                ...primary,
+                session: run.sessionId,
+            });
+        }
+
+        function checkedProjectSession(binding: Binding) {
+            let current;
+            try {
+                current = execution.inspect(binding.session);
+            } catch {
+                throw missing();
+            }
+            if (
+                current.tenant !== binding.tenant ||
+                current.project !== binding.project ||
+                current.volume !== binding.volume
+            )
+                throw missing();
+            return { ...binding, sandbox: current.sandbox };
+        }
+
+        function ensureProjectRunIdle(project: string) {
+            if (db.hasPendingProjectRun(project))
+                throw conflict(
+                    'project_busy',
+                    'Project already has an unfinished Run.',
+                );
+        }
+
         const live = new Map<string, WorkerRequest['mode']>();
         const executing = new Map<
             string,
@@ -267,7 +300,7 @@ export async function serveExecution(options: Options) {
                     'review_unavailable',
                     'Run is not awaiting recovery review.',
                 );
-            const binding = db.binding(run);
+            const binding = runBinding(run);
             if (
                 sdkOperationId !== undefined &&
                 (run.taskSequence === null ||
@@ -454,7 +487,7 @@ export async function serveExecution(options: Options) {
                     !recovery.observeSdkRetrySafety)
             )
                 return false;
-            const binding = db.binding(run);
+            const binding = runBinding(run);
             const nextGeneration = generation + 1;
             if (
                 mode === 'observe-ready' &&
@@ -600,7 +633,7 @@ export async function serveExecution(options: Options) {
         async function finishTaskClosure(input: TaskClosureInput) {
             const run = db.findRun(input.runId);
             const generation = run.admittedGeneration;
-            const binding = db.binding(run);
+            const binding = runBinding(run);
             const unavailable = () =>
                 conflict(
                     'review_unavailable',
@@ -722,7 +755,7 @@ export async function serveExecution(options: Options) {
             advancingRetries.add(attempt.id);
             try {
                 const run = db.findRun(attempt.sourceRunId);
-                const binding = db.binding(run);
+                const binding = runBinding(run);
                 const exit = await taskExit(
                     run,
                     binding,
@@ -869,7 +902,7 @@ export async function serveExecution(options: Options) {
 
             const current = execution.inspect(run.sessionId);
             const worker = executing.get(id);
-            const binding = db.binding(run);
+            const binding = runBinding(run);
             if (
                 current.session !== binding.session ||
                 current.tenant !== binding.tenant ||
@@ -1052,7 +1085,7 @@ export async function serveExecution(options: Options) {
         async function finish(run: Run) {
             try {
                 const after = textSnapshot(
-                    await host.snapshot(db.binding(run)),
+                    await host.snapshot(runBinding(run)),
                 );
                 const diff = await unifiedDiff(
                     textSnapshot(JSON.parse(run.baseline ?? 'null')),
@@ -1115,7 +1148,7 @@ export async function serveExecution(options: Options) {
                 try {
                     result = await worker(
                         run,
-                        db.binding(run),
+                        runBinding(run),
                         'recover',
                         slot,
                     );
@@ -1200,7 +1233,7 @@ export async function serveExecution(options: Options) {
             const generation = run.cancelGeneration;
             if (generation === null)
                 throw new Error('Cancellation intent unavailable');
-            const binding = db.binding(run);
+            const binding = runBinding(run);
             const current =
                 generation === 0
                     ? execution.inspect(run.sessionId)
@@ -1285,7 +1318,7 @@ export async function serveExecution(options: Options) {
             }
             if (run.status !== 'queued') return;
             const queued = run;
-            const binding = db.binding(queued);
+            const binding = runBinding(queued);
             let before: FileText[];
             try {
                 before = textSnapshot(await host.snapshot(binding));
@@ -1610,6 +1643,33 @@ export async function serveExecution(options: Options) {
                     },
                     purgeSource: purgeTaskSource,
                 },
+                sharedVolume
+                    ? (owner, project, key, prompt, sessionId) =>
+                          db.addRun(
+                              owner,
+                              project,
+                              key,
+                              prompt,
+                              sessionId,
+                              (binding) => {
+                                  const target = checkedProjectSession(binding);
+                                  if (
+                                      !execution.sessionAvailable(
+                                          target.session,
+                                      )
+                                  )
+                                      throw conflict(
+                                          'session_not_ready',
+                                          'Session is not ready.',
+                                      );
+                                  if (execution.hasVolumeWriter(target.volume))
+                                      throw conflict(
+                                          'volume_busy',
+                                          'The volume already has a writer.',
+                                      );
+                              },
+                          )
+                    : undefined,
             ),
             options.port,
             options.bindHost,
@@ -1628,14 +1688,18 @@ export async function serveExecution(options: Options) {
                         target,
                         sharedVolume,
                     ),
-                rebuild: (binding: Binding) =>
-                    execution.rebuild(binding, sharedVolume),
+                rebuild(binding: Binding) {
+                    ensureProjectRunIdle(binding.project);
+                    return execution.rebuild(binding, sharedVolume);
+                },
                 async revoke(binding: Binding) {
+                    ensureProjectRunIdle(binding.project);
                     const result = await execution.revoke(binding);
                     sharedGrants.delete(binding.session);
                     return result;
                 },
                 async release(binding: Binding) {
+                    ensureProjectRunIdle(binding.project);
                     const result = await execution.release(
                         binding,
                         sharedVolume,
@@ -1645,6 +1709,7 @@ export async function serveExecution(options: Options) {
                 },
                 inspect: (session: string) => execution.inspect(session),
                 admit(session: string, generation: number, run: string) {
+                    ensureProjectRunIdle(execution.inspect(session).project);
                     const grant = execution.admit(
                         session,
                         generation,

@@ -419,6 +419,7 @@ export function executionHttp(
         operationId: string,
     ) => Promise<ProjectDeletionReceipt>,
     tasks?: Tasks,
+    addProjectRun?: Store['addRun'],
 ) {
     const authorization = digest('Bearer ' + token);
     const server = createServer(async (req, res) => {
@@ -560,15 +561,25 @@ export function executionHttp(
                 if (req.method === 'POST') {
                     store.requireRunProject(owner, projectId);
                     const key = req.headers['idempotency-key'];
+                    const bodyInput = object(await body(req, maxRunBody));
+                    const { sessionId } = bodyInput;
+                    if (
+                        sessionId !== undefined &&
+                        (!addProjectRun ||
+                            typeof sessionId !== 'string' ||
+                            !uuidV4.test(sessionId))
+                    )
+                        throw invalid('Invalid project Session.');
                     const input = runInput(
-                        await body(req, maxRunBody),
+                        bodyInput,
                         typeof key === 'string' ? key : undefined,
                     );
-                    const result = store.addRun(
+                    const result = (addProjectRun ?? store.addRun.bind(store))(
                         owner,
                         projectId,
                         input.key,
                         input.prompt,
+                        sessionId,
                     );
                     json(res, result.replay ? 200 : 202, result.run);
                     wake();

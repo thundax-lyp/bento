@@ -417,6 +417,22 @@ export class Authority {
         if (Number(changes) !== 1) throw new Error('admission or CAS denied');
     }
 
+    sessionAvailable(session: string) {
+        const row = this.row(session);
+        return row.state === 'READY' && row.retiring === 0;
+    }
+
+    hasVolumeWriter(volume: string) {
+        return !!this.db
+            .prepare(
+                `SELECT 1 FROM execution_sessions AS s
+                 WHERE s.volume=? AND (s.run IS NOT NULL OR EXISTS (
+                    SELECT 1 FROM operations WHERE session=s.session AND state='UNKNOWN'
+                 ))`,
+            )
+            .get(volume);
+    }
+
     admit(
         session: string,
         generation: number,
