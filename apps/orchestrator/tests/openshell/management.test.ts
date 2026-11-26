@@ -215,3 +215,69 @@ test('a reopened controller resumes a reserved start without restarting an exite
         reopened.close();
     }
 });
+
+test('takeover confirms physical freeze before revoking execution access', async (t) => {
+    const directory = await mkdtemp(join(tmpdir(), 'bento-freeze-recovery-'));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const paths = {
+        authority: join(directory, 'authority.sqlite'),
+        history: join(directory, 'history.sqlite'),
+    };
+    const observation = {
+        sandbox: binding.sandbox,
+        volume: binding.volume,
+        running: true,
+        installed: true,
+    };
+    let frozen = false;
+    let stopped = false;
+    const host = {
+        async freezeGeneration(current: { hasCapability: boolean }) {
+            assert.equal(current.hasCapability, true);
+            if (!frozen) {
+                frozen = true;
+                throw new Error('freeze reply lost');
+            }
+        },
+        async stop() {
+            assert.fail('unscoped stop must not be dispatched');
+        },
+        async stopGeneration(current: { hasCapability: boolean }) {
+            assert.equal(current.hasCapability, false);
+            assert.equal(frozen, true);
+            stopped = true;
+        },
+        async stopped() {
+            return stopped;
+        },
+        async start() {
+            assert.equal(stopped, true);
+        },
+        async running() {
+            return observation;
+        },
+    };
+    const first = new SingleHostExecution(paths, host);
+    try {
+        first.bind(binding, observation);
+        first.admit(binding.session, 1, 'original-run', 60_000);
+        await assert.rejects(
+            first.takeover(binding.session, 1),
+            /freeze reply lost/,
+        );
+        assert.equal(first.inspect(binding.session).state, 'RUNNING');
+        assert.equal(first.inspect(binding.session).hasCapability, true);
+        assert.equal(stopped, false);
+    } finally {
+        first.close();
+    }
+
+    const reopened = new SingleHostExecution(paths, host);
+    try {
+        const result = await reopened.takeover(binding.session, 1);
+        assert.equal(result.state, 'READY');
+        assert.equal(result.generation, 2);
+    } finally {
+        reopened.close();
+    }
+});

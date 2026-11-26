@@ -38,6 +38,7 @@ type Settings = {
     sharedVolumes?: boolean;
     generationScopedStop?: boolean;
     generationScopedStart?: boolean;
+    generationScopedFreeze?: boolean;
     controlTimeoutMs?: number;
     taskObservationModule?: string;
 };
@@ -191,6 +192,12 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
         typeof settings.generationScopedStart !== 'boolean'
     )
         throw new Error('Invalid generation-scoped start setting');
+    if (
+        settings.generationScopedFreeze !== undefined &&
+        (typeof settings.generationScopedFreeze !== 'boolean' ||
+            (settings.generationScopedFreeze && !settings.generationScopedStop))
+    )
+        throw new Error('Generation freeze requires generation-scoped stop');
     const slots = settings.workerSlots ?? 1;
     if (
         (slots !== 1 && slots !== 2) ||
@@ -324,6 +331,11 @@ export async function commandHost(configPath: string): Promise<ExecutionHost> {
         ...(settings.generationScopedStop === true && {
             async stopGeneration(binding) {
                 await call('stopGeneration', binding);
+            },
+        }),
+        ...(settings.generationScopedFreeze === true && {
+            async freezeGeneration(binding) {
+                await call('freezeGeneration', binding);
             },
         }),
         async start(binding) {

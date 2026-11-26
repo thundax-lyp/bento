@@ -115,6 +115,8 @@ PASS 要求基线 Web 健康，首页和匿名会话返回 200、401。候选 We
 
 需要在控制器重启后恢复启动派发时，模块宿主实现 `startGeneration(binding)`。命令宿主设置 `generationScopedStart: true` 并处理 `{action:"startGeneration",binding}`。请求中的 `binding.generation` 是原代，启动权对应同一 Session 的下一代。宿主须跨进程持久去重，请求重投只对账同一个下一代实例。已退出或已删除的实例仍保留启动消费记录，旧请求不得重新启动或创建替代实例。控制器随后通过 `running(binding)` 独立确认实际实例、策略和卷，才发布 READY。
 
+可直接写卷的原沙盒需要在撤权前停写。模块宿主实现 `freezeGeneration(binding)`，命令宿主设置 `generationScopedFreeze: true` 并处理 `{action:"freezeGeneration",binding}`。该能力要求同时支持按代次停止。宿主须验证原代实例与卷的绑定，用不可变实例标识暂停原容器并独立确认停写。控制器重开后再次请求暂停时，宿主应核对同一实例。停止原代前保持暂停，停止操作直接终止原实例。Worker 和沙盒停止仍由独立证明确认。
+
 运行边界和既有实验结果见[需求完成状况](../docs/40-readiness/CURRENT-READINESS.md)。
 
 ### 配置执行服务

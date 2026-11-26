@@ -1094,7 +1094,7 @@ export async function serveExecution(options: Options) {
                     activitySignal?.aborted || executionDeadline.aborted;
                 try {
                     if (leaseLost)
-                        execution.drainAttempt(
+                        await execution.drainAttempt(
                             binding.session,
                             grant.generation,
                             run.id,
