@@ -12,6 +12,8 @@
 !apps/orchestrator/src/
 !apps/orchestrator/src/control/
 !apps/orchestrator/src/control/main.go
+!apps/orchestrator/src/control/authority.go
+!apps/orchestrator/src/control/business.go
 !apps/orchestrator/src/control/temporal.go
 !apps/orchestrator/src/control/run_ledger.go
 !apps/orchestrator/src/ledger/

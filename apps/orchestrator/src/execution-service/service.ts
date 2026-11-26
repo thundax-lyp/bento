@@ -5,6 +5,7 @@ import type { Http2Server } from 'node:http2';
 import type { Socket } from 'node:net';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { setTimeout as delay } from 'node:timers/promises';
 import { SingleHostExecution } from '../openshell/single-host.ts';
 import { unifiedDiff } from './diff.ts';
 import { executionHttp, RetryUnavailable } from './http.ts';
@@ -50,12 +51,16 @@ type Options = {
     tenantQueueLimit?: number;
     host: ExecutionHost;
     temporal?: TemporalRunOptions;
+    goControl?: string;
 };
 
 export async function serveExecution(options: Options) {
     const { host, token } = options;
     const sharedVolume = host.sharedVolume;
     const slots = host.workerSlots ?? 1;
+    const supportsPhysicalStop = Boolean(
+        host.sdk && host.observeWorkerExit && host.observeTaskVolumeStopped,
+    );
     if (slots !== 1 && (slots !== 2 || !host.warmWorker || !options.temporal))
         throw new Error(
             'Two worker slots require Temporal and a warm worker pool',
@@ -85,6 +90,7 @@ export async function serveExecution(options: Options) {
     let scheduled: NodeJS.Timeout | undefined;
     let active: Promise<void> | undefined;
     let importing = false;
+    let draining = false;
     let closeWarmWorker: (() => Promise<void>) | undefined;
     let scheduler: Awaited<ReturnType<typeof temporalRuns>> | undefined;
     const projectPurges = new Map<string, Promise<ProjectDeletionReceipt>>();
@@ -130,15 +136,21 @@ export async function serveExecution(options: Options) {
 
     try {
         lock.exec('BEGIN IMMEDIATE');
-        store = new Store(join(dir, 'business.sqlite'), tenantQueueLimit);
+        store = new Store(
+            join(dir, 'business.sqlite'),
+            tenantQueueLimit,
+            options.goControl,
+        );
         control = new SingleHostExecution(
             {
                 authority: join(dir, 'authority.sqlite'),
                 history: join(dir, 'history.sqlite'),
+                ...(options.goControl ? { goControl: options.goControl } : {}),
             },
             host,
         );
         const db = store;
+        db.resumeRunAdmission();
         const execution = control;
         function runBinding(run: Run): Binding {
             const primary = db.binding(run);
@@ -1079,7 +1091,63 @@ export async function serveExecution(options: Options) {
             if (current.state === 'READY') return;
             if (current.run !== run.id)
                 throw new Error('Run does not own the execution slot');
-            await execution.takeover(run.sessionId, current.generation);
+            const generation = current.generation;
+            await execution.takeover(run.sessionId, generation, async () => {
+                if (
+                    !supportsPhysicalStop ||
+                    run.admittedGeneration !== generation ||
+                    !execution.hasUnknownOperations(run.sessionId, generation)
+                )
+                    return;
+                if (db.readPhysicalStopProof(run.id, generation)) return;
+                const binding = runBinding(run);
+                const bindingDigest = executionBindingDigest(binding);
+                const exit = await taskExit(run, binding, generation);
+                const observed = exit
+                    ? await host.observeTaskVolumeStopped?.(
+                          binding,
+                          run.id,
+                          generation,
+                      )
+                    : undefined;
+                const observedAt = Date.parse(observed?.observedAt ?? '');
+                if (
+                    !exit ||
+                    !observed ||
+                    observed.runId !== run.id ||
+                    observed.sessionId !== binding.session ||
+                    observed.generation !== generation ||
+                    observed.bindingDigest !== bindingDigest ||
+                    observed.restoreIdle !== true ||
+                    observed.volumeWriters !== 0 ||
+                    observed.sandboxStopped !== true ||
+                    !Number.isFinite(observedAt) ||
+                    observedAt < Date.parse(exit.exitedAt) ||
+                    observedAt > Date.now()
+                )
+                    throw new Error('Physical stop proof is unavailable');
+                const proof = JSON.stringify({
+                    runId: run.id,
+                    sessionId: binding.session,
+                    generation,
+                    bindingDigest,
+                    workerExitedAt: exit.exitedAt,
+                    sandboxStopped: true,
+                    volumeWriters: 0,
+                    restoreIdle: true,
+                    grantRevoked: true,
+                    observedAt: observed.observedAt,
+                });
+                if (
+                    !execution.persistPhysicalStopProof(
+                        binding.session,
+                        run.id,
+                        generation,
+                        proof,
+                    )
+                )
+                    db.recordPhysicalStopProof(run.id, generation, proof);
+            });
         }
 
         async function finish(run: Run) {
@@ -1162,20 +1230,35 @@ export async function serveExecution(options: Options) {
                         execution.inspect(run.sessionId).generation,
                     );
                 await fence(run);
-                db.status(
-                    run.id,
-                    'needs_review',
+                completeReview(
+                    run,
                     result === 'recovered'
                         ? 'Previous execution outcome is unknown. Waiting for review.'
                         : 'Recovery could not be confirmed. Waiting for review.',
                 );
             } else {
-                db.status(
-                    run.id,
-                    'needs_review',
+                completeReview(
+                    run,
                     'Recovery was interrupted. Waiting for review.',
                 );
             }
+        }
+
+        function completeReview(run: Run, summary: string) {
+            const generation = run.admittedGeneration;
+            if (
+                generation !== null &&
+                (db.readPhysicalStopProof(run.id, generation) ||
+                    (supportsPhysicalStop &&
+                        execution.hasUnknownOperations(
+                            run.sessionId,
+                            generation,
+                        )))
+            ) {
+                db.completeAmbiguousRecovery(run.id, generation, summary);
+                return;
+            }
+            db.status(run.id, 'needs_review', summary);
         }
 
         async function importProject(
@@ -1379,14 +1462,30 @@ export async function serveExecution(options: Options) {
                 async (runId) => {
                     stop.signal.throwIfAborted();
                     const run = db.findRun(runId);
+                    if (draining && run.status === 'queued')
+                        throw new Error('Execution host is draining');
                     if (
                         run.status === 'cancelled' ||
                         db.isProjectDeleting(run.projectId)
-                    )
+                    ) {
+                        db.releaseRunSlot(runId);
                         return;
+                    }
                     if (importing || [...assigned.values()].includes(runId))
                         throw new Error('Execution host is occupied');
-                    const slot = assigned.has(0) ? 1 : 0;
+                    const slot =
+                        db.acquireRunSlot(runId, slots) ??
+                        (assigned.has(0) ? 1 : 0);
+                    if (slot === -1) {
+                        if (
+                            run.status === 'queued' ||
+                            run.status === 'running' ||
+                            run.status === 'recovering' ||
+                            run.status === 'cancelling'
+                        )
+                            throw new Error('Run is waiting for dispatch');
+                        return;
+                    }
                     if (slot >= slots || assigned.has(slot))
                         throw new Error('Execution host is occupied');
                     assigned.set(slot, runId);
@@ -1401,6 +1500,7 @@ export async function serveExecution(options: Options) {
                         stop.signal.throwIfAborted();
                     } finally {
                         assigned.delete(slot);
+                        db.releaseRunSlot(runId);
                     }
                 },
             );
@@ -1422,7 +1522,7 @@ export async function serveExecution(options: Options) {
             if (scheduler) {
                 // Reserve only available slots before publishing their Workflows.
                 // SQLite retains the decisions if publication or the controller fails.
-                for (let i = 0; i < slots; i++) {
+                for (let i = 0; !draining && i < slots; i++) {
                     const snapshot = db.dispatchSnapshot(slots);
                     if (!snapshot.queued.length) break;
                     let selected: string;
@@ -1461,7 +1561,7 @@ export async function serveExecution(options: Options) {
                 if (stop.signal.aborted || assigned.size) return;
             } else {
                 const unfinished = db.next('active');
-                if (unfinished) return driveRun(unfinished, 0);
+                if (unfinished) return driveLocal(unfinished);
             }
             const attempt = db.nextTaskRetry(retryCursor);
             if (attempt) {
@@ -1479,9 +1579,21 @@ export async function serveExecution(options: Options) {
                 }
                 return;
             }
-            if (!scheduler) {
+            if (!scheduler && !draining) {
                 const queued = db.next('queued');
-                if (queued) await driveRun(queued, 0);
+                if (queued) await driveLocal(queued);
+            }
+        }
+
+        async function driveLocal(run: Run) {
+            if (options.goControl && run.status === 'queued')
+                db.reserveDispatch(run.id, slots);
+            const slot = db.acquireRunSlot(run.id, slots) ?? 0;
+            if (slot < 0) throw new Error('Execution slot unavailable');
+            try {
+                await driveRun(run, slot);
+            } finally {
+                db.releaseRunSlot(run.id);
             }
         }
 
@@ -1679,6 +1791,14 @@ export async function serveExecution(options: Options) {
         return {
             url,
             close,
+            async drain() {
+                db.beginRunDrain();
+                draining = true;
+                while (active || assigned.size || !db.consumeUpgradeStops()) {
+                    stop.signal.throwIfAborted();
+                    await delay(retryMs, undefined, { signal: stop.signal });
+                }
+            },
             sharedSessions: sharedVolume && {
                 projectBinding: (owner: string, project: string) =>
                     db.sharedProjectBinding(owner, project),

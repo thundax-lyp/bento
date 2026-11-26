@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import {
     client,
     testToken,
@@ -10,14 +11,64 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import { SingleHostExecution } from '@/apps/orchestrator/src/openshell/single-host.ts';
 import type { Binding } from '@/apps/worker/protocol.ts';
+
+test('reopening a single-host ledger preserves existing Session bindings', async (t) => {
+    const path = await mkdtemp(join(tmpdir(), 'bento-existing-volume-'));
+    t.after(() => rm(path, { recursive: true, force: true }));
+    const authority = join(path, 'authority.sqlite');
+    const previous = new DatabaseSync(authority);
+    previous.exec(`
+        CREATE TABLE execution_sessions(session TEXT PRIMARY KEY, tenant TEXT, project TEXT,
+            sandbox TEXT, volume TEXT, generation INTEGER, state TEXT,
+            run TEXT, capability TEXT, expires INTEGER);
+        INSERT INTO execution_sessions VALUES
+            ('session','owner','project','sandbox','volume',1,'READY',NULL,NULL,NULL);
+    `);
+    previous.close();
+    const host = new SingleHostExecution(
+        {
+            authority,
+            history: join(path, 'history.sqlite'),
+            ...(process.env.BENTO_TEST_GO_CONTROL
+                ? { goControl: process.env.BENTO_TEST_GO_CONTROL }
+                : {}),
+        },
+        {
+            async start() {},
+            async stop() {},
+            async stopped() {
+                return true;
+            },
+            async running(binding) {
+                return {
+                    sandbox: binding.sandbox,
+                    volume: binding.volume,
+                    installed: true,
+                    running: true,
+                };
+            },
+        },
+    );
+    try {
+        assert.equal(host.inspect('session').volume, 'volume');
+        assert.equal(host.sessionAvailable('session'), true);
+        assert.equal(host.admit('session', 1, 'run', 1000).run, 'run');
+    } finally {
+        host.close();
+    }
+});
 
 test('shared volume keeps write authority and references across unconfirmed host operations', async () => {
     const path = await mkdtemp(join(tmpdir(), 'bento-shared-volume-'));
     const paths = {
         authority: join(path, 'authority.sqlite'),
         history: join(path, 'history.sqlite'),
+        ...(process.env.BENTO_TEST_GO_CONTROL
+            ? { goControl: process.env.BENTO_TEST_GO_CONTROL }
+            : {}),
     };
     const first: Binding = {
         tenant: 'owner',
@@ -117,6 +168,9 @@ test('attachment uses the surviving source Session after releasing the original'
     const service = await serveExecution({
         state: join(path, 'state'),
         token: testToken,
+        ...(process.env.BENTO_TEST_GO_CONTROL
+            ? { goControl: process.env.BENTO_TEST_GO_CONTROL }
+            : {}),
         host: {
             ...base,
             async stop() {},
@@ -154,8 +208,8 @@ test('attachment uses the surviving source Session after releasing the original'
         );
         const control = service.sharedSessions!;
         const first = control.projectBinding('account-a', id);
-        const second = { ...first, session: 'second', sandbox: 'second' };
-        const third = { ...first, session: 'third', sandbox: 'third' };
+        const second = { ...first, session: randomUUID(), sandbox: 'second' };
+        const third = { ...first, session: randomUUID(), sandbox: 'third' };
         await control.attach(first, second);
         assert.equal(await control.release(first), 'released');
         await assert.rejects(
@@ -164,6 +218,30 @@ test('attachment uses the surviving source Session after releasing the original'
         );
         assert.equal((await control.attach(second, third)).state, 'READY');
         assert.equal(control.inspect(third.session).volume, first.volume);
+        const body = { prompt: 'Shared volume Run', sessionId: third.session };
+        const accepted = await api(
+            '/' + id + '/runs',
+            'POST',
+            body,
+            'shared-run',
+        );
+        assert.equal(accepted.status, 202);
+        assert.equal(accepted.json().sessionId, third.session);
+        const replay = await api(
+            '/' + id + '/runs',
+            'POST',
+            body,
+            'shared-run',
+        );
+        assert.equal(replay.status, 200);
+        assert.equal(replay.json().id, accepted.json().id);
+        const changed = await api(
+            '/' + id + '/runs',
+            'POST',
+            { ...body, sessionId: second.session },
+            'shared-run',
+        );
+        assert.equal(changed.status, 409);
     } finally {
         await service.close();
     }

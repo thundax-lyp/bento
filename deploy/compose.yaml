@@ -124,6 +124,7 @@ services:
               required: false
         environment:
             BENTO_STATE_DIR: /data
+            BENTO_GO_AUTHORITY: /usr/local/bin/bento-orchestrator
             BENTO_EXECUTION_ENVIRONMENT_VERSION: ${BENTO_EXECUTION_ENVIRONMENT_VERSION:?Set BENTO_EXECUTION_ENVIRONMENT_VERSION}
             BENTO_BIND_HOST: 0.0.0.0
             BENTO_PORT: '8788'

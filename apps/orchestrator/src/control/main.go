@@ -13,6 +13,18 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) == 4 && os.Args[1] == "business" {
+		if err := runBusiness(os.Args[2], os.Args[3]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if len(os.Args) == 4 && os.Args[1] == "authority" {
+		if err := runAuthority(os.Args[2], os.Args[3]); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
 	if len(os.Args) > 2 || (len(os.Args) == 2 && os.Args[1] != "temporal") {
 		log.Fatal("invalid Bento orchestrator command")
 	}
