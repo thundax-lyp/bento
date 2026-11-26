@@ -177,6 +177,14 @@ SDK 宿主要提供安全重试，须具备 `sdk.decodeExecEvent`、独立的 `o
 
 程序化部署从 `serveExecution` 的返回值读取 `sharedSessions`。使用 `start.ts` 的部署可以从已有可信 `BENTO_REVIEW_MODULE` 安装函数第八参取得它。该控制面提供项目绑定查询、同卷绑定、重建、撤权、引用释放和独占写入授权。启用命令宿主且提供真实 SDK 时，`ingress()` 可开启独立 SDK 接入，端口由可信模块管理，访问仅接受该控制面签发的绑定授权。内部项目 Run HTTP 接受可选 `sessionId`，Workspace Web 沿用项目默认 Session。
 
+在专用 Docker/OpenShell 验收环境执行以下命令。需要本机 Docker CLI、已缓存的 `node:22-bookworm-slim` 读取镜像、启用共享卷的命令宿主配置、所固定 SDK 的 schema，以及空状态目录。配置只留在验收环境。验收脚本输出各场景的结构化断言，并释放测试资源。
+
+```sh
+node --import ./register-paths.mjs \
+  apps/orchestrator/acceptance/shared-volume/real.mjs \
+  "$BENTO_A4_HOST_CONFIG" "$BENTO_A4_SDK_RAW" "$BENTO_A4_STATE"
+```
+
 ### Task 事件投影
 
 Task 的 execute 请求含可选 `publicEventsUrl`，与当次 grant 一起交付 Worker。私有 DSH bootstrap 返回的 runtime 必须实现 `publicEvents(events): readonly PublicWorkerEvent[]`。收到 Task 请求但缺少此回调时，Worker 在提交 prompt 前返回待核对。旧项目请求继续使用原路径。
