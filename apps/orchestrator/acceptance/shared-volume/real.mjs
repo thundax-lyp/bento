@@ -121,6 +121,7 @@ let ingress;
 const connections = new Set();
 let first;
 let second;
+let replacement;
 let reclaimBlocked = false;
 const actualReclaim = host.sharedVolume.reclaim;
 host.sharedVolume.reclaim = async (binding) => {
@@ -435,6 +436,15 @@ try {
     assert.equal(reclaimReceipt(volume), undefined);
     assert.equal(identity(volume), initialIdentity);
     assert.equal(containers(first).length, 0);
+    replacement = {
+        ...second,
+        session: randomUUID(),
+        sandbox: 'b-' + randomBytes(8).toString('hex'),
+    };
+    assert.equal((await control.attach(second, replacement)).state, 'READY');
+    assert.equal(containers(replacement).length, 1);
+    assert.equal(identity(volume), initialIdentity);
+    assert.equal(await control.release(replacement), 'released');
     const runs = '/' + first.project + '/runs';
     const prompt = 'Write final acceptance marker.';
     const key = 'shared-session-run';
@@ -499,12 +509,13 @@ try {
         durableReclaimReceipt: 1,
         projectDeletion: 204,
         ordinaryRunOnSurvivor: result.body.status,
+        survivorAttachedReplacement: true,
     });
 } finally {
     reclaimBlocked = false;
     await closeIngress();
     if (service) {
-        for (const binding of [first, second].filter(Boolean))
+        for (const binding of [first, second, replacement].filter(Boolean))
             await service.sharedSessions?.release(binding).catch(() => {});
         await service.close();
     }

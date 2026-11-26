@@ -1,4 +1,11 @@
 import assert from 'node:assert/strict';
+import {
+    client,
+    testToken,
+    until,
+} from '@/apps/orchestrator/tests/execution-service/fixtures/service.ts';
+import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
+import { serveExecution } from '@/apps/orchestrator/src/execution-service/service.ts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -100,5 +107,64 @@ test('shared volume keeps write authority and references across unconfirmed host
     } finally {
         control.close();
         await rm(path, { recursive: true, force: true });
+    }
+});
+
+test('attachment uses the surviving source Session after releasing the original', async (t) => {
+    const path = await mkdtemp(join(tmpdir(), 'bento-surviving-session-'));
+    t.after(() => rm(path, { recursive: true, force: true }));
+    const base = localHost(join(path, 'volume'));
+    const service = await serveExecution({
+        state: join(path, 'state'),
+        token: testToken,
+        host: {
+            ...base,
+            async stop() {},
+            async stopped() {
+                return true;
+            },
+            sharedVolume: {
+                async attach(binding) {
+                    return {
+                        sandbox: binding.sandbox,
+                        volume: binding.volume,
+                        running: true,
+                        installed: true,
+                    };
+                },
+                async detach() {},
+                async reclaim() {},
+            },
+        },
+    });
+    try {
+        const api = client(service.url);
+        const created = await api(
+            '',
+            'POST',
+            { name: 'Shared', files: [{ path: 'README.md', text: 'Shared' }] },
+            'attach',
+        );
+        assert.equal(created.status, 201);
+        const { id } = created.json();
+        await until(
+            () => api('/' + id),
+            (result) => result.json().status === 'ready',
+            'project ready',
+        );
+        const control = service.sharedSessions!;
+        const first = control.projectBinding('account-a', id);
+        const second = { ...first, session: 'second', sandbox: 'second' };
+        const third = { ...first, session: 'third', sandbox: 'third' };
+        await control.attach(first, second);
+        assert.equal(await control.release(first), 'released');
+        await assert.rejects(
+            control.attach({ ...second, sandbox: 'wrong' }, third),
+            /source binding denied/,
+        );
+        assert.equal((await control.attach(second, third)).state, 'READY');
+        assert.equal(control.inspect(third.session).volume, first.volume);
+    } finally {
+        await service.close();
     }
 });

@@ -1682,12 +1682,14 @@ export async function serveExecution(options: Options) {
             sharedSessions: sharedVolume && {
                 projectBinding: (owner: string, project: string) =>
                     db.sharedProjectBinding(owner, project),
-                attach: (source: Binding, target: Binding) =>
-                    execution.attach(
-                        db.sharedProjectBinding(source.tenant, source.project),
-                        target,
-                        sharedVolume,
-                    ),
+                attach(source: Binding, target: Binding) {
+                    const project = db.sharedProjectBinding(
+                        source.tenant,
+                        source.project,
+                    );
+                    if (project.volume !== source.volume) throw missing();
+                    return execution.attach(source, target, sharedVolume);
+                },
                 rebuild(binding: Binding) {
                     ensureProjectRunIdle(binding.project);
                     return execution.rebuild(binding, sharedVolume);
