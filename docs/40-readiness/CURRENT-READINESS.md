@@ -12,11 +12,11 @@
 | **`APP-01`** | [独立应用入口](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#app-01-独立应用入口) | **需求汇总** | **已实现** | 已通过 TS 基线及 Go 权威路径的双端独占 Docker 复验。[证据](evidence/APP-01.md#go-权威路径复验) |
 | `APP-01-01` | 独立应用入口 | 双端独立入口与共享编排 | 已实现 | 独立 Realm、双端真实 Worker Run 与权威状态回读通过。[证据](evidence/APP-01.md#go-权威路径复验) |
 | `APP-01-02` | 独立应用入口 | 跨端或越权调用 | 已实现 | 调用方、操作、Workspace 三类拒绝通过，业务与授权账本无变更。[证据](evidence/APP-01.md#go-权威路径复验) |
-| **`A1`** | [身份与绑定](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a1-身份与绑定) | **需求汇总** | **部分实现** | 已有组织准入、账号绑定与执行授权。完整登录到 Run、沙盒和卷的链路待验。 |
+| **`A1`** | [身份与绑定](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a1-身份与绑定) | **需求汇总** | **已实现** | 五项场景均已通过。个人端到 Run、沙盒和卷的绑定已交叉核对，活跃 Worker 的凭据隔离已在独占实栈验收。 |
 | `A1-01` | 身份与绑定 | 服务端绑定与当次授权 | 已实现 | 个人端、内部 owner、Task、Workspace、Run、Session、沙盒、卷和当次授权绑定已交叉核对。 [证据](evidence/SINGLE-HOST.md) |
 | `A1-02` | 身份与绑定 | 伪造资源绑定 | 已实现 | 本地 HTTP、持久历史及官方 SDK mTLS 绑定隔离 12/12（`b845c09`）。[证据](evidence/A1.md#a1-02-伪造资源绑定本地验收) |
 | `A1-03` | 身份与绑定 | 旧执行授权 | 已实现 | 单宿主验证旧授权拒绝新流、重连、持久化写入及官方 Provider 操作。[证据](evidence/A1.md#a1-03-旧执行授权本地验收) |
-| `A1-04` | 身份与绑定 | 绕过受信入口 | 部分实现 | 独立 Worker 的管理入口、Gateway 和 MySQL 直连均不可达。SDK 认证拒绝及活跃 Worker 的凭据可读范围待验。 [证据](evidence/SINGLE-HOST.md) |
+| `A1-04` | 身份与绑定 | 绕过受信入口 | 已实现 | 管理入口、Gateway 和 MySQL 直连均不可达，官方 SDK 匿名调用返回 gRPC 16。真实 Run 的活跃 Worker 环境、只读挂载及结案后同实例日志均通过凭据隔离检查。[证据](evidence/SINGLE-HOST.md#a1-04-活跃-worker-凭据隔离复验) |
 | `A1-05` | 身份与绑定 | 共享卷上的单 Session 撤权 | 已实现 | 真实 Docker/OpenShell 共享卷上，目标旧授权和新申请均拒绝，另一个合法 Session 继续写入。[证据](evidence/A4.md) |
 | **`A2`** | [持久会话](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a2-持久会话) | **需求汇总** | **已实现** | 五项持久会话场景已完成本地验收。[正常链路](evidence/A2.md#a2-官方-provider-本地验收) · [崩溃恢复](evidence/A2.md#a2-崩溃恢复本地验收) |
 | `A2-01` | 持久会话 | 持久批次与恢复 | 已实现 | 官方 Provider 经 HTTP/SQLite 持久化并恢复续轮（`3ac9d36`）。[证据](evidence/A2.md#a2-官方-provider-本地验收) |
