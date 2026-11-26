@@ -6,7 +6,8 @@ import { lstat, open, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, basename } from 'node:path';
 import { promisify } from 'node:util';
 import type { Binding } from '@/apps/worker/protocol.ts';
-import { verifyBackup, type BackupMember } from './backup.ts';
+import { requireRecoveryOwner } from '@/apps/orchestrator/src/execution-service/recovery-gate.ts';
+import { restoreSqlite, verifyBackup, type BackupMember } from './backup.ts';
 
 export type A7Config = {
     schema: 1;
@@ -388,14 +389,14 @@ async function verifiedDatabaseManifest(config: A7Config) {
         'database_manifest_incomplete',
     );
     await verifyBackup(root, manifest.members);
-    return sha(bytes);
+    return { sha256: sha(bytes), members: manifest.members };
 }
 export async function backupWorkspace(
     config: A7Config,
     binding: Binding,
     run: Command = execute,
 ): Promise<void> {
-    const databaseManifestSha256 = await verifiedDatabaseManifest(config);
+    const databaseManifest = await verifiedDatabaseManifest(config);
     const archive = join(config.root, 'backup', 'workspace.tar');
     const before = await inventoryVolume(config, binding, run);
     await assert.rejects(lstat(archive), { code: 'ENOENT' });
@@ -420,7 +421,7 @@ export async function backupWorkspace(
         caseId: config.caseId,
         binding,
         archiveSha256,
-        databaseManifestSha256,
+        databaseManifestSha256: databaseManifest.sha256,
         entries: before,
     };
     await writeFile(archive + '.proof.json', JSON.stringify(proof) + '\n', {
@@ -459,23 +460,21 @@ async function boundSandbox(config: A7Config, binding: Binding, run: Command) {
     assert.deepEqual(observed, expected, 'resource_official_ref_mismatch');
     return [...args, 'delete', JSON.stringify(expected)];
 }
-export async function restoreWorkspace(
+async function readWorkspaceProof(
     config: A7Config,
     binding: Binding,
     archive: string,
-    run: Command = execute,
-): Promise<void> {
+) {
     validateConfig(config);
     validBinding(binding);
-    const databaseManifestSha256 = await verifiedDatabaseManifest(config);
+    const databaseManifest = await verifiedDatabaseManifest(config);
     assert.equal(
         archive,
         join(config.root, 'backup', 'workspace.tar'),
         'archive_path_invalid',
     );
-    const proof: Proof = JSON.parse(
-        await readFile(archive + '.proof.json', 'utf8'),
-    );
+    const bytes = await archiveBytes(archive + '.proof.json');
+    const proof: Proof = JSON.parse(bytes.toString());
     assert(
         proof.schema === 1 &&
             proof.caseId === config.caseId &&
@@ -483,7 +482,7 @@ export async function restoreWorkspace(
         'archive_proof_invalid',
     );
     assert.equal(
-        databaseManifestSha256,
+        databaseManifest.sha256,
         proof.databaseManifestSha256,
         'database_manifest_identity_mismatch',
     );
@@ -492,6 +491,51 @@ export async function restoreWorkspace(
         proof.archiveSha256,
         'archive_digest_mismatch',
     );
+    return { proof, checkpoint: sha(bytes), members: databaseManifest.members };
+}
+
+// Stage the same checkpoint's four databases and workspace without opening the execution service.
+export async function stageRecoveryOnBackupHost(
+    config: A7Config,
+    binding: Binding,
+    checkpoint: string,
+    databaseTarget: string,
+    run: Command = execute,
+): Promise<void> {
+    const archive = join(config.root, 'backup', 'workspace.tar');
+    const verified = await readWorkspaceProof(config, binding, archive);
+    assert.equal(verified.checkpoint, checkpoint, 'checkpoint_digest_mismatch');
+    await identity(config, run);
+    await absent(binding.volume, run);
+    assert.equal(
+        (await attachments(binding.volume, run)).length,
+        0,
+        'resource_attachment_remains',
+    );
+    await restoreSqlite(
+        join(config.root, 'backup'),
+        databaseTarget,
+        verified.members,
+    );
+    await createVolume(config, binding, binding.volume, run);
+    assert(
+        (await inventoryVolume(config, binding, run)).length === 1,
+        'resource_target_not_empty',
+    );
+    await tar(config, binding, binding.volume, archive, true, run);
+    assertSameInventory(
+        verified.proof.entries,
+        await inventoryVolume(config, binding, run),
+    );
+}
+
+export async function restoreWorkspace(
+    config: A7Config,
+    binding: Binding,
+    archive: string,
+    run: Command = execute,
+): Promise<void> {
+    const { proof } = await readWorkspaceProof(config, binding, archive);
     assertSameInventory(
         proof.entries,
         await inventoryVolume(config, binding, run),
@@ -505,14 +549,7 @@ export async function restoreWorkspace(
             run,
         ),
     );
-    const deleteArgs = await boundSandbox(config, binding, run);
-    // The child re-reads the same official ref immediately before issuing delete.
-    await run(process.execPath, deleteArgs);
-    assert.equal(
-        (await attachments(binding.volume, run)).length,
-        0,
-        'resource_attachment_remains',
-    );
+    await retireSourceSandbox(config, binding, run);
     await volume(config, binding, binding.volume, run);
     await run('docker', ['volume', 'rm', binding.volume]);
     await absent(binding.volume, run);
@@ -526,6 +563,54 @@ export async function restoreWorkspace(
         proof.entries,
         await inventoryVolume(config, binding, run),
     );
+    await createRestoredSandbox(config, binding, run);
+}
+
+// Requires a stopped sandbox with matching official and Docker identities.
+export async function retireSourceSandbox(
+    config: A7Config,
+    binding: Binding,
+    run: Command = execute,
+) {
+    const deleteArgs = await boundSandbox(config, binding, run);
+    // The child re-reads the same official ref immediately before issuing delete.
+    await run(process.execPath, deleteArgs);
+    assert.equal(
+        (await attachments(binding.volume, run)).length,
+        0,
+        'resource_attachment_remains',
+    );
+}
+
+// Recheck the staged volume immediately before requesting a sandbox on the target.
+export async function startStagedSandbox(
+    config: A7Config,
+    binding: Binding,
+    checkpoint: string,
+    ownerGate: string,
+    run: Command = execute,
+) {
+    const archive = join(config.root, 'backup', 'workspace.tar');
+    const verified = await readWorkspaceProof(config, binding, archive);
+    assert.equal(verified.checkpoint, checkpoint, 'checkpoint_digest_mismatch');
+    assert.equal(
+        (await attachments(binding.volume, run)).length,
+        0,
+        'resource_attachment_remains',
+    );
+    assertSameInventory(
+        verified.proof.entries,
+        await inventoryVolume(config, binding, run),
+    );
+    await requireRecoveryOwner(ownerGate, verified.checkpoint);
+    await createRestoredSandbox(config, binding, run);
+}
+
+async function createRestoredSandbox(
+    config: A7Config,
+    binding: Binding,
+    run: Command,
+) {
     await run(
         config.cli,
         [

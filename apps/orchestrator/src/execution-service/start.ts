@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { commandHost } from './command-host.ts';
 import { localHost } from './local.ts';
+import { requireRecoveryOwner } from './recovery-gate.ts';
 import { serveExecution } from './service.ts';
 import type { ExecutionHost } from './types.ts';
 
@@ -29,6 +30,7 @@ async function main() {
         BENTO_HOST_MODULE,
         BENTO_HOST_CONFIG,
         BENTO_REVIEW_MODULE,
+        BENTO_RECOVERY_GATE,
         BENTO_PORT,
         BENTO_BIND_HOST = '127.0.0.1',
         BENTO_TENANT_QUEUE_LIMIT,
@@ -54,6 +56,9 @@ async function main() {
         throw new Error('Invalid port');
     if (BENTO_BIND_HOST !== '127.0.0.1' && BENTO_BIND_HOST !== '0.0.0.0')
         throw new Error('Invalid execution API bind host');
+
+    if (BENTO_RECOVERY_GATE !== undefined)
+        await requireRecoveryOwner(resolve(BENTO_RECOVERY_GATE));
 
     let host: ExecutionHost;
     const [mode, extra] = process.argv.slice(2);
