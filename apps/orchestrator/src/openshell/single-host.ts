@@ -305,6 +305,24 @@ export class SingleHostExecution {
         }
     }
 
+    drainAttempt(session: string, generation: number, run: string) {
+        const current = this.inspect(session);
+        if (
+            current.generation !== generation ||
+            current.run !== run ||
+            current.state !== 'RUNNING'
+        )
+            return;
+        this.authority.beginDrain(session, generation);
+        this.revokeAccess(session, generation, run);
+    }
+
+    private revokeAccess(session: string, generation: number, run: string) {
+        this.fence.revoke(session, generation, run);
+        this.gate.revokeChannels(session, generation);
+        this.history.releaseReaders(session, generation);
+    }
+
     private async reconcile(
         session: string,
         generation: number,
@@ -321,9 +339,7 @@ export class SingleHostExecution {
             current = this.inspect(session);
         }
         if (current.state === 'DRAINING') {
-            this.fence.revoke(session, generation, run);
-            this.gate.revokeChannels(session, generation);
-            this.history.releaseReaders(session, generation);
+            this.revokeAccess(session, generation, run);
             const dispatch = this.management.prepareStop(
                 session,
                 generation,
