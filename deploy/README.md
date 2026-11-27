@@ -47,7 +47,7 @@ Web 和 Orchestrator 的 Go 构建使用 BuildKit 持久缓存：`bento-go-mod-1
 从仓库根目录使用已安装锁定依赖的 Node.js 22 和 pnpm 12.15.0。确认当前 Node 22 提供 `node:sqlite.backup`。命令使用测试进程的动态回环端口和私有临时目录。
 
 ```bash
-node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='^restores the completed Run business ledger from an isolated backup$' apps/orchestrator/tests/execution-service/restore.test.ts
+node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='^restores the completed Run business ledger from an isolated backup$' apps/orchestrator/orchestrator-execution-host/tests/execution-service/restore.test.ts
 ```
 
 演练生成合成项目及成功 Run，等执行服务关闭后，以 SQLite backup API 读取 `business.sqlite` 并生成单库备份。备份通过完整性、外键和已提交回执检查，才复制到一个全新目录。启动前核对备份与还原文件的 SHA-256，再用同一个执行服务入口启动还原实例。SQLite 使用 WAL，运行中直接复制主库文件可能遗漏已提交事务。其他数据库、WAL/SHM、锁文件和本地 fixture 卷均不随该备份复制。
@@ -61,7 +61,7 @@ Compose 当前的 TS 执行服务持有该业务账本。演练覆盖其中已�
 从仓库根目录使用 Node.js 22、`node:sqlite.backup` 和已安装的锁定依赖。命令通过动态回环端口在私有临时目录运行单库与三库演练。
 
 ```bash
-node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='^restores (the completed Run business ledger from an isolated backup|stopped execution state and continues fenced session history)$' apps/orchestrator/tests/execution-service/restore.test.ts
+node --import ./register-paths.mjs --experimental-strip-types --test --test-name-pattern='^restores (the completed Run business ledger from an isolated backup|stopped execution state and continues fenced session history)$' apps/orchestrator/orchestrator-execution-host/tests/execution-service/restore.test.ts
 ```
 
 三库演练等待源执行服务关闭。在源服务持续关闭且无写者的同一窗口，使用 SQLite backup API 依次备份 `business.sqlite`、`authority.sqlite`、`history.sqlite`。逐库核对完整性、外键和 SHA-256，在全新隔离目录还原。还原侧以同一项目绑定路径排他创建经字节校验的合成 `README.md`，供后续 Run 读取基线。演练产物仅包含合成状态，禁止覆盖已运行或曾运行的状态目录。
@@ -77,8 +77,8 @@ PASS 时两项测试通过，零失败、零跳过。三库演练报告三个备
 在独立 Linux/amd64、Node.js 22 环境准备 Docker CLI、Git、官方 SDK/CLI、受控 bootstrap 和私有配置。配置包含独立资源归属、精确镜像 ID、源码提交、Gateway 身份及通过的能力门禁；不接受缺失证明或其他 owner 的资源。DSH 和官方文件/DeepSeek 插件固定 `0.2.1-rc.4`，Cordis 固定 `4.0.5`，按 frozen lockfile 安装。私有配置、凭据、数据库、备份和报告放在仓库外受限目录。T0 在核实 `sourceCommit` 对应的干净源码及受控适配器后，用 `executionSourceDigest(runtimeRoot)` 记录实际执行树的 `sourceTreeSha256`，同时记录宿主配置的 `hostConfigSha256`，适配器清单与 bootstrap 必须位于该执行源码树根目录，随后冻结运行目录。执行入口重新核对实际源码、lockfile、Dockerfile、宿主配置、适配器输出/base/relay 摘要；旧证明不能授权变化后的文件，不能为绕过拒绝而只重算摘要。
 
 ```sh
-BENTO_A7_CONFIG=/absolute/private/case-restart.json node apps/orchestrator/acceptance/single-node-restore/run.mjs --case restart
-BENTO_A7_CONFIG=/absolute/private/case-restore.json node apps/orchestrator/acceptance/single-node-restore/run.mjs --case restore
+BENTO_A7_CONFIG=/absolute/private/case-restart.json node apps/orchestrator/orchestrator-execution-host/acceptance/single-node-restore/run.mjs --case restart
+BENTO_A7_CONFIG=/absolute/private/case-restore.json node apps/orchestrator/orchestrator-execution-host/acceptance/single-node-restore/run.mjs --case restore
 ```
 
 两个用例分别使用全新业务状态和独立归属。恢复用例停止服务并备份执行账本、授权账本、Session 历史和 Temporal 四个 SQLite 数据库，校验 integrity、外键和 SHA-256，同时归档真实工作区卷并建立独立保全副本。独立数据库快照固定为 DELETE journal mode；校验拒绝未纳入清单的 WAL、SHM 和 journal 文件。恢复前校验绑定和完整清单，仅写入空目标。归档 helper 断网并只读挂载源卷；解包使用受控 root 恢复新卷的文件所有权。无法证明停写、归属冲突、非空目标和损坏备份均拒绝继续。
@@ -145,8 +145,8 @@ node -e 'const {createHash}=require("node:crypto"); const imageDigest=process.en
 
 在 `debug-workspace/execution.env` 选择一种受信适配器。私有文件放在 `debug-workspace/execution/`，在容器内以只读方式挂载到 `/app/private`。Orchestrator 镜像包含 Go Temporal 控制面、执行服务和 DSH Worker 源码及运行依赖。容器以 UID 1000 运行，私有文件须允许该身份读取。
 
-- `BENTO_HOST_CONFIG=/app/private/host.json` 使用命令适配器。JSON 包含 Gateway、workspace scope、mTLS 文件、固定 SDK 的 `raw.js`，以及可信的 `control` 和 `worker` 命令。命令与文件路径以容器内路径为准，二进制须匹配容器平台。控制命令负责项目导入、独立读卷、沙盒停启及观察。Worker 命令由受信启动器执行，启动器隔离 Worker 与宿主管理凭据，并向 Worker 提供 `BENTO_DSH_BOOTSTRAP`。协议见[命令宿主适配器](../apps/orchestrator/src/execution-service/command-host.ts)。
-- `BENTO_HOST_MODULE=/app/private/host.mjs` 使用可信模块。模块默认导出工厂，实现 [ExecutionHost](../apps/orchestrator/src/execution-service/types.ts)，并提供 SDK ingress 配置。仅配置一种适配器。
+- `BENTO_HOST_CONFIG=/app/private/host.json` 使用命令适配器。JSON 包含 Gateway、workspace scope、mTLS 文件、固定 SDK 的 `raw.js`，以及可信的 `control` 和 `worker` 命令。命令与文件路径以容器内路径为准，二进制须匹配容器平台。控制命令负责项目导入、独立读卷、沙盒停启及观察。Worker 命令由受信启动器执行，启动器隔离 Worker 与宿主管理凭据，并向 Worker 提供 `BENTO_DSH_BOOTSTRAP`。协议见[命令宿主适配器](../apps/orchestrator/orchestrator-execution-host/src/execution-service/command-host.ts)。
+- `BENTO_HOST_MODULE=/app/private/host.mjs` 使用可信模块。模块默认导出工厂，实现 [ExecutionHost](../apps/orchestrator/orchestrator-execution-host/src/execution-service/types.ts)，并提供 SDK ingress 配置。仅配置一种适配器。
 
 执行 HTTP API 通过 Compose 网络提供给 Web，使用同一服务 bearer。Worker 的持久化、操作和 SDK 入口仍绑定容器回环。Compose 不向宿主发布执行 HTTP 端口。OpenShell Gateway、模型服务与私有对象存储由部署环境提供。Worker 由受信适配器按任务启动。容器化配置应验证所选适配器可以访问外部服务及独立持久卷。
 
@@ -164,7 +164,7 @@ docker compose -f deploy/compose.yaml --profile worker-image build bento-worker
 
 受信启动器负责隔离 Worker 及其子进程，并将终止信号传给整个容器或进程组。异常退出、租约超时或需要人工核对的回执会淘汰该 Worker。执行服务在旧进程关闭后补位。关闭服务时等待预热进程退出，随后释放控制器锁。停用预热时，排空后移除私有配置中的 `prewarmWorker` 和 `workerSlots`，移除 Worker 命令的 `--warm`，再重启执行服务。
 
-遇到 worker 失联时，执行服务撤销旧代授权并在原卷上恢复 Session。恢复 worker 只对账会话历史，原 prompt 不重发。Run 进入 `needs_review` 时，可信部署端先独立核对预期修改，再通过[进程内 `reviewRun`](../apps/orchestrator/src/execution-service/service.ts) 提供代次、稳定操作 ID 和预期整卷哈希。执行服务核对恢复回执、绑定、UNKNOWN 操作及卷快照，原子保存确认记录和 diff。核对失败时，Run 继续等待可信核对，diff 暂不可用。
+遇到 worker 失联时，执行服务撤销旧代授权并在原卷上恢复 Session。恢复 worker 只对账会话历史，原 prompt 不重发。Run 进入 `needs_review` 时，可信部署端先独立核对预期修改，再通过[进程内 `reviewRun`](../apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts) 提供代次、稳定操作 ID 和预期整卷哈希。执行服务核对恢复回执、绑定、UNKNOWN 操作及卷快照，原子保存确认记录和 diff。核对失败时，Run 继续等待可信核对，diff 暂不可用。
 
 仓库内的 TypeScript 启动命令使用 `node --import /app/register-paths.mjs` 解析 `@/` 路径。Compose 和 Worker 镜像已配置此参数。自定义启动器直接调用 Node 时也需加载该文件。
 
@@ -197,7 +197,7 @@ printf '%s\n' '{"run":"<run-id>","project":"<task-id>","owner":"<owner-id>"}' |
 
 SDK 宿主要提供安全重试，须具备 `sdk.decodeExecEvent`、独立的 `observeWorkerExit` 和 `taskRecovery.observeSdkRetrySafety(binding,runId,generation)`。最后一项由沙盒外的受信部署适配器生成，不能由 Worker、模型或 HTTP 调用者提交。服务核验同一 Run、绑定和代次的独立退出、SDK 停止与撤权、新代 READY/无 capability、UNKNOWN 为零及 History 静止后，才持久化停止证明；恢复仍须验证双检查点和独占写入。缺少任一能力或完整证据时保持待核对，不因 SDK 或回调存在而开放重试。字段与时间约束见 [Web 设计](../docs/30-designs/WEB-DESIGN.md)。
 
-项目删除和账号注销清理需要可信宿主实现幂等的工作区删除。命令宿主处理 `{action:"purge",binding}`，只删除该绑定独占的沙盒与卷，独立确认两者不存在后返回 `{sandbox,volume,absent:true}`。自定义宿主实现 `ExecutionHost.purge(binding)`。删除失败应报错，Bento 会保留清理请求以便重试。Docker 驱动的宿主可用 [dockerOpenShellPurge](../apps/orchestrator/src/execution-service/docker-openshell-purge.ts)，并提供与部署时一致的卷标签。
+项目删除和账号注销清理需要可信宿主实现幂等的工作区删除。命令宿主处理 `{action:"purge",binding}`，只删除该绑定独占的沙盒与卷，独立确认两者不存在后返回 `{sandbox,volume,absent:true}`。自定义宿主实现 `ExecutionHost.purge(binding)`。删除失败应报错，Bento 会保留清理请求以便重试。Docker 驱动的宿主可用 [dockerOpenShellPurge](../apps/orchestrator/orchestrator-execution-host/src/execution-service/docker-openshell-purge.ts)，并提供与部署时一致的卷标签。
 
 ### 共享卷宿主
 
@@ -217,7 +217,7 @@ SDK 宿主要提供安全重试，须具备 `sdk.decodeExecEvent`、独立的 `o
 
 ```sh
 node --import ./register-paths.mjs \
-  apps/orchestrator/acceptance/shared-volume/real.mjs \
+  apps/orchestrator/orchestrator-execution-host/acceptance/shared-volume/real.mjs \
   "$BENTO_A4_HOST_CONFIG" "$BENTO_A4_SDK_RAW" "$BENTO_A4_STATE"
 ```
 
@@ -257,10 +257,10 @@ Temporal UI 位于宿主回环 `18233`，Mailpit 位于 `18494`。Temporal 开�
 在仓库根运行固定入口；已安装工作树依赖，使用 Node 22、仓库 Go 版本，以及 curl/tar：
 
 ```sh
-pnpm --dir apps/orchestrator test:temporal-retry
+pnpm --filter @bento/orchestrator test:temporal-retry
 ```
 
-该入口校验官方 Temporal CLI 1.5.1 archive 并提取工具，运行独立真实 Server 1.29.1。支持平台固定为 Darwin arm64 和 Linux x64，其他平台直接失败。下载来自固定官方 release asset，大小/SHA-256 按[工具锁定](../apps/orchestrator/acceptance/temporal-retry/tool.ts)验证；HTTP/1.1 Range 最多 8 分钟/12 次请求，签名 URL 只在内存使用，网络/完整性或任一测试失败均返回非零，不静默 skip。
+该入口校验官方 Temporal CLI 1.5.1 archive 并提取工具，运行独立真实 Server 1.29.1。支持平台固定为 Darwin arm64 和 Linux x64，其他平台直接失败。下载来自固定官方 release asset，大小/SHA-256 按[工具锁定](../apps/orchestrator/orchestrator-execution-host/acceptance/temporal-retry/tool.ts)验证；HTTP/1.1 Range 最多 8 分钟/12 次请求，签名 URL 只在内存使用，网络/完整性或任一测试失败均返回非零，不静默 skip。
 
 本机默认复用仓库外 `../bento-sdk-cache/temporal/1.5.1/<平台架构>/release.tar.gz`，平台目录为 `darwin-arm64` 或 `linux-x64`。归档不存在时从锁定官方来源下载，完成大小、SHA、成员、二进制及版本校验后原子写入缓存；每次命中仍完整核验，损坏时明确失败，不静默换源。设置 `BENTO_A6_TEMPORAL_ARCHIVE` 可优先指定其他仓库外、本平台官方 archive 的绝对路径。CI 按固定版本、平台和 SHA-256 恢复归档缓存，未命中时获取官方资产，命中后仍校验；运行目录及 Temporal 数据库继续独立创建和清理，不删除共享归档。`BENTO_A6_EVIDENCE_DIR` 可指定仓库外私有目录保存脱敏 CaseReport、SQL/文件回执及真实 history；不设置时输出摘要并清理运行状态。
 
@@ -310,10 +310,10 @@ base每轮新Context/SessionStore/provider，回执前依次关闭Agent、root f
 ```sh
 pnpm --filter @bento/orchestrator test:worker-runtime
 pnpm --filter @bento/orchestrator test:worker-reuse
-node apps/orchestrator/acceptance/worker-reuse/check-package.mjs
+node apps/orchestrator/orchestrator-execution-host/acceptance/worker-reuse/check-package.mjs
 ```
 
-默认 `soak` 模式成功须五case无skip、64轮四项隔离全通过、跨度至少315秒、同一实际PID，以及撤权/清理失败换PID、同库重开与资源归零。PR CI 显式设置 `BENTO_A6_WORKER_REUSE_MODE=burst`，保留全部64轮与逐轮断言但不补足轮间5秒等待；main CI及本地默认使用 `soak`。本地可在上述命令前设置同名变量复现连续模式，其他值直接失败。诊断输出记录模式、间隔和实际跨度；连续模式通过不能作为长期驻留证据。测试失败按对应case和分项定位，保留失败结论；只清理本次准确拥有的临时资源，不删除其他服务状态。SDK默认走原[官方准备工具](../apps/orchestrator/tests/openshell/binding-grants/sdk.ts)及六项schema探针；固定源码revision为`ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47`，TLS/安装和构建预算不变。官方源码归档首次下载并通过固定SHA-256校验后，保存到仓库旁的`../bento-sdk-cache/openshell/<revision>/source.tar.gz`；后续准备逐次复验并复用，npm/Buf下载内容分别缓存在同级`npm/`和`buf/`。每次构建仍使用独立临时目录，清理测试不会删除缓存；源码缓存损坏时明确失败，应先核对原因再删除该版本缓存并重新获取。
+默认 `soak` 模式成功须五case无skip、64轮四项隔离全通过、跨度至少315秒、同一实际PID，以及撤权/清理失败换PID、同库重开与资源归零。PR CI 显式设置 `BENTO_A6_WORKER_REUSE_MODE=burst`，保留全部64轮与逐轮断言但不补足轮间5秒等待；main CI及本地默认使用 `soak`。本地可在上述命令前设置同名变量复现连续模式，其他值直接失败。诊断输出记录模式、间隔和实际跨度；连续模式通过不能作为长期驻留证据。测试失败按对应case和分项定位，保留失败结论；只清理本次准确拥有的临时资源，不删除其他服务状态。SDK默认走原[官方准备工具](../apps/orchestrator/orchestrator-execution-host/tests/openshell/binding-grants/sdk.ts)及六项schema探针；固定源码revision为`ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47`，TLS/安装和构建预算不变。官方源码归档首次下载并通过固定SHA-256校验后，保存到仓库旁的`../bento-sdk-cache/openshell/<revision>/source.tar.gz`；后续准备逐次复验并复用，npm/Buf下载内容分别缓存在同级`npm/`和`buf/`。每次构建仍使用独立临时目录，清理测试不会删除缓存；源码缓存损坏时明确失败，应先核对原因再删除该版本缓存并重新获取。
 
 本轮本地可显式指定`BENTO_A6_WORKER_REUSE_SDK_BUNDLE`为仓库外、已经审核身份的受控输入；wrapper逐项核验固定历史清单/完整SHA，隔离复制并执行相同六探针，错误不回退来源。该本地输入绑定本轮已核SDK，不能自行重签manifest或将任意SDK路径当成受控输入；CI不设置该变量，按官方来源真实构建。验收模式必须与[Readiness](../docs/40-readiness/evidence/A6.md#a6-05-worker-长期池复用)证据对应，受控来源通过不表示默认网络准备已恢复。临时SDK、mTLS材料、config、数据库和trace均在仓库外，不进入npm包；完整门禁保留真实Temporal九项。
 

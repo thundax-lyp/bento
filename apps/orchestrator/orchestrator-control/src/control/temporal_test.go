@@ -1,0 +1,339 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/client"
+	sdklog "go.temporal.io/sdk/log"
+	"go.temporal.io/sdk/temporal"
+	"go.temporal.io/sdk/testsuite"
+)
+
+func TestRunWorkflowRetriesOnlyAdvancement(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	// The Activity only receives the stable Run ID. Prompt and execution grants
+	// remain inside the fenced execution host when Temporal retries.
+	var attempts atomic.Int32
+	env.RegisterActivityWithOptions(func(_ context.Context, id string) error {
+		if id != "run-1" {
+			return errors.New("unexpected Run ID")
+		}
+		if attempts.Add(1) == 1 {
+			return errors.New("host unavailable")
+		}
+		return nil
+	}, activity.RegisterOptions{Name: "advanceRun"})
+	env.SetTestTimeout(5 * time.Second)
+	env.ExecuteWorkflow(bentoRun, "run-1")
+	if err := env.GetWorkflowError(); err != nil {
+		t.Fatal(err)
+	}
+	if got := attempts.Load(); got != 2 {
+		t.Fatalf("received %d Activity attempts, want 2", got)
+	}
+}
+
+func TestTemporalRetryAfterCompletedRun(t *testing.T) {
+	binary, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	const name = "Temporal Activity retries a completed Run without repeating its effect"
+	cmd := exec.CommandContext(ctx, "node", "--import", "../../../register-paths.mjs",
+		"--experimental-strip-types", "--test", "--test-reporter=tap",
+		"--test-name-pattern=^"+name+"$", "tests/execution-service/reconciliation.test.ts")
+	cmd.Dir = "../../../orchestrator-execution-host"
+	cmd.Env = append(os.Environ(), "BENTO_TEST_TEMPORAL_BINARY="+binary)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Node test failed: %v\n%s", err, output)
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		if line == "ok 1 - "+name {
+			return
+		}
+	}
+	t.Fatalf("expected a passing TAP result for %q\n%s", name, output)
+}
+
+func TestTemporalRetryControlProcess(t *testing.T) {
+	if os.Getenv("BENTO_TEST_TEMPORAL_REPORT") == "" {
+		return
+	}
+	if err := runTemporalRetryControlFixture(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+type fixturePublisher func(string) error
+
+func (publish fixturePublisher) ExecuteWorkflow(_ context.Context, options client.StartWorkflowOptions, workflow interface{}, args ...interface{}) (client.WorkflowRun, error) {
+	if workflow != "bentoRun" || len(args) != 1 {
+		return nil, errors.New("unexpected Workflow")
+	}
+	id, ok := args[0].(string)
+	if !ok || id == "" || options.ID != workflowID(id) {
+		return nil, errors.New("invalid Workflow ID")
+	}
+	return nil, publish(id)
+}
+
+func startFixtureDispatch(cfg temporalConfig, publish fixturePublisher) (func(), error) {
+	db, conn, err := openDispatchLedger(context.Background(), cfg.BusinessPath)
+	if err != nil {
+		return nil, err
+	}
+	dispatch := runDispatcher{db: conn, publisher: publish, queue: cfg.TaskQueue, slots: cfg.Slots}
+	stop := dispatch.start()
+	return func() {
+		stop()
+		_ = conn.Close()
+		_ = db.Close()
+	}, nil
+}
+
+func runTemporalRetryControlFixture() error {
+	b := &bridge{pending: make(map[string]chan message)}
+	replies := make(chan string, 2)
+	done := make(chan error, 1)
+	received := make(map[string]bool, 2)
+	reportPath := os.Getenv("BENTO_TEST_TEMPORAL_REPORT")
+	enqueued := false
+	var stopDispatch func()
+	defer func() {
+		if stopDispatch != nil {
+			stopDispatch()
+		}
+	}()
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		var m message
+		if err := json.Unmarshal(scanner.Bytes(), &m); err != nil {
+			return err
+		}
+		reply := message{ID: m.ID, Value: json.RawMessage("null")}
+		switch m.Method {
+		case "start":
+			var cfg temporalConfig
+			if stopDispatch != nil || json.Unmarshal(m.Value, &cfg) != nil || cfg.Slots != 1 {
+				return errors.New("invalid start")
+			}
+			if err := b.send(reply); err != nil {
+				return err
+			}
+			var err error
+			stopDispatch, err = startFixtureDispatch(cfg, func(runID string) error {
+				if enqueued {
+					return errors.New("duplicate enqueue")
+				}
+				enqueued = true
+				go func() {
+					var suite testsuite.WorkflowTestSuite
+					suite.SetLogger(sdklog.NewStructuredLogger(slog.New(slog.NewTextHandler(os.Stderr, nil))))
+					env := suite.NewTestWorkflowEnvironment()
+					env.RegisterActivityWithOptions(b.advance, activity.RegisterOptions{Name: "advanceRun"})
+					env.SetTestTimeout(10 * time.Second)
+					env.ExecuteWorkflow(bentoRun, runID)
+					if err := env.GetWorkflowError(); err != nil {
+						fmt.Fprintln(os.Stderr, err)
+						done <- err
+						return
+					}
+					if len(replies) != 2 {
+						err := errors.New("expected two successful host replies")
+						fmt.Fprintln(os.Stderr, err)
+						done <- err
+						return
+					}
+					report := struct {
+						RunID    string   `json:"runId"`
+						ReplyIDs []string `json:"replyIds"`
+					}{runID, []string{<-replies, <-replies}}
+					data, err := json.Marshal(report)
+					if err == nil {
+						err = os.WriteFile(reportPath+".tmp", data, 0o600)
+					}
+					if err == nil {
+						err = os.Rename(reportPath+".tmp", reportPath)
+					}
+					if err != nil {
+						fmt.Fprintln(os.Stderr, err)
+					}
+					done <- err
+				}()
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+			continue
+		case "":
+			b.mu.Lock()
+			pending := b.pending[m.ID]
+			b.mu.Unlock()
+			if pending == nil || received[m.ID] || len(received) == 2 || m.Error != "" || !bytes.Equal(m.Value, []byte("null")) {
+				return fmt.Errorf("unexpected Activity reply %q", m.ID)
+			}
+			received[m.ID] = true
+			replies <- m.ID
+			if len(received) == 1 {
+				m.Value = nil
+				m.Error = "injected loss of success acknowledgment"
+			}
+			pending <- m
+			continue
+		case "close":
+			stopDispatch()
+			stopDispatch = nil
+			if !enqueued {
+				return errors.New("closed before enqueue")
+			}
+			if err := <-done; err != nil {
+				return err
+			}
+			return b.send(reply)
+		default:
+			return fmt.Errorf("unexpected control request %q", m.Method)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return errors.New("control input closed before shutdown")
+}
+
+func TestTemporalFairDispatchControlProcess(t *testing.T) {
+	dir := os.Getenv("BENTO_TEST_FAIR_DIR")
+	if dir == "" {
+		t.Skip("only run by the execution entry test")
+	}
+	if err := runTemporalFairDispatchControl(dir); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	os.Exit(0)
+}
+
+func runTemporalFairDispatchControl(dir string) error {
+	b := &bridge{pending: make(map[string]chan message)}
+	published := make(map[string]bool)
+	replied := make(map[string]bool)
+	var workflows sync.WaitGroup
+	var stopDispatch func()
+	defer func() {
+		if stopDispatch != nil {
+			stopDispatch()
+		}
+	}()
+	scanner := bufio.NewScanner(os.Stdin)
+	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
+	for scanner.Scan() {
+		var m message
+		if err := json.Unmarshal(scanner.Bytes(), &m); err != nil {
+			return err
+		}
+		if stopDispatch == nil && m.Method != "start" {
+			return errors.New("expected start")
+		}
+		reply := message{ID: m.ID, Value: json.RawMessage("null")}
+		switch m.Method {
+		case "start":
+			var cfg temporalConfig
+			if stopDispatch != nil || json.Unmarshal(m.Value, &cfg) != nil ||
+				cfg.Address != "fixture" || cfg.Namespace != "default" ||
+				cfg.TaskQueue != "fair-dispatch" || cfg.Slots != 2 {
+				return errors.New("invalid fair dispatch configuration")
+			}
+			if err := b.send(reply); err != nil {
+				return err
+			}
+			var err error
+			stopDispatch, err = startFixtureDispatch(cfg, func(runID string) error {
+				if published[runID] {
+					return errors.New("duplicate fair dispatch enqueue")
+				}
+				published[runID] = true
+				workflows.Add(1)
+				go func(runID string) {
+					defer workflows.Done()
+					if err := runFairDispatchWorkflow(b, dir, runID); err != nil {
+						fmt.Fprintf(os.Stderr, "Run %s: %v\n", runID, err)
+						os.Exit(1)
+					}
+				}(runID)
+				return nil
+			})
+			if err != nil {
+				return err
+			}
+			continue
+		case "":
+			b.mu.Lock()
+			pending := b.pending[m.ID]
+			b.mu.Unlock()
+			if pending == nil || replied[m.ID] || m.Error != "" || !bytes.Equal(m.Value, []byte("null")) {
+				return fmt.Errorf("invalid fair dispatch Activity reply %q", m.ID)
+			}
+			replied[m.ID] = true
+			pending <- m
+			continue
+		case "close":
+			stopDispatch()
+			stopDispatch = nil
+			workflows.Wait()
+			return b.send(reply)
+		default:
+			return fmt.Errorf("unexpected fair dispatch request %q", m.Method)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return err
+	}
+	return errors.New("fair dispatch input closed before shutdown")
+}
+
+func runFairDispatchWorkflow(b *bridge, dir, runID string) error {
+	var suite testsuite.WorkflowTestSuite
+	suite.SetLogger(sdklog.NewStructuredLogger(slog.New(slog.NewTextHandler(os.Stderr, nil))))
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetTestTimeout(40 * time.Second)
+	var attempts atomic.Int32
+	env.RegisterActivityWithOptions(func(ctx context.Context, id string) error {
+		if attempts.Add(1) != 1 || id != runID {
+			return temporal.NewNonRetryableApplicationError("unexpected Activity attempt or Run ID", "FairDispatchFixture", nil)
+		}
+		return b.advance(ctx, id)
+	}, activity.RegisterOptions{Name: "advanceRun"})
+	env.ExecuteWorkflow(bentoRun, runID)
+	if err := env.GetWorkflowError(); err != nil {
+		return err
+	}
+	if attempts.Load() != 1 {
+		return fmt.Errorf("received %d Activity attempts, want 1", attempts.Load())
+	}
+	marker := filepath.Join(dir, "done-"+runID)
+	if err := os.WriteFile(marker+".tmp", nil, 0600); err != nil {
+		return err
+	}
+	return os.Rename(marker+".tmp", marker)
+}

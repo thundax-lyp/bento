@@ -72,7 +72,7 @@ jobs:
                                   space=true
                                   queue=true
                                   ;;
-                              apps/orchestrator/tests/execution-service/*|apps/orchestrator/src/control/temporal_test.go|apps/orchestrator/src/control/temporal_fair_entry_test.go)
+                              apps/orchestrator/orchestrator-execution-host/tests/execution-service/*|apps/orchestrator/orchestrator-control/src/control/temporal_test.go|apps/orchestrator/orchestrator-control/src/control/temporal_fair_entry_test.go)
                                   workspace=true
                                   orchestrator=true
                                   queue=true
@@ -351,7 +351,7 @@ jobs:
             - run: pnpm --filter @bento/orchestrator test:temporal-retry
               env:
                   BENTO_A6_TEMPORAL_ARCHIVE: ${{ steps.temporal-archive.outputs.archive }}
-            - run: node apps/orchestrator/acceptance/temporal-retry/check-package.mjs
+            - run: node apps/orchestrator/orchestrator-execution-host/acceptance/temporal-retry/check-package.mjs
             - name: Remove owned Temporal archive
               if: ${{ always() }}
               shell: bash

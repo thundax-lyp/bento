@@ -7,8 +7,8 @@ import { join } from 'node:path';
 import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { executionHttp } from '@/apps/orchestrator/src/execution-service/http.ts';
-import { Store } from '@/apps/orchestrator/src/execution-service/store/index.ts';
+import { executionHttp } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/http.ts';
+import { Store } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/store/index.ts';
 import { httpBackend } from '../src/execution-service-http.ts';
 import {
     openSpaceIntegrityFixture,
