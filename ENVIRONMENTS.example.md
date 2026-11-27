@@ -31,7 +31,7 @@
 
 - **用途与工具**：`<测试入口及用途>`；`<操作系统/架构>`、`<Node 版本>`、`<包管理器版本>`。
 - **固定依赖身份**：`<官方依赖及版本或 revision>`、`<源码归档摘要>`。注明版本与摘要的真相源；OpenShell SDK 以 [SDK 准备器](apps/orchestrator/orchestrator-execution-host/tests/openshell/binding-grants/sdk.ts) 为准。
-- **仓库外位置**：记录缓存的实际绝对路径及其与工作树的关系。OpenShell SDK 默认使用仓库旁的 `../bento-sdk-cache/`；源码归档为 `openshell/<revision>/source.tar.gz`，npm、Buf 下载缓存分别为 `npm/`、`buf/`。Temporal CLI 默认归档位于 `temporal/1.5.1/<平台架构>/release.tar.gz`，版本和摘要以 [工具锁定](apps/orchestrator/orchestrator-execution-host/acceptance/temporal-retry/tool.ts) 为准；`BENTO_A6_TEMPORAL_ARCHIVE` 可显式覆盖默认归档。换机或移动工作树后重新核对路径、权限及共享范围。
+- **仓库外位置**：记录缓存的实际绝对路径及其与工作树的关系。OpenShell SDK 默认使用仓库旁的 `../bento-sdk-cache/`；源码归档为 `openshell/<revision>/source.tar.gz`，npm、Buf 下载缓存分别为 `npm/`、`buf/`。Temporal CLI 默认归档位于 `temporal/1.5.1/<平台架构>/release.tar.gz`，版本和摘要以 [工具锁定](apps/orchestrator/orchestrator-execution-host/tests/acceptance/temporal-retry/tool.ts) 为准；`BENTO_A6_TEMPORAL_ARCHIVE` 可显式覆盖默认归档。换机或移动工作树后重新核对路径、权限及共享范围。
 - **首次准备与网络**：`<首次下载、依赖预热和完整性校验方式>`；`<命令级代理配置或其本机记录位置>`；`<已验证路径及仍受阻环节>`。不得把某台机器的代理地址或凭据复制到本示例。缓存命中时复用已校验内容；冷缓存仍需准备所需下载。
 - **构建与清理边界**：下载缓存持续保留，每次测试使用独立临时构建及运行目录。列出本机额外保留的预热归档；清理本次测试时保留其他工作树共享的内容。摘要不匹配时明确失败，重新获取受影响版本后再次校验。
 - **验证记录**：`<日期及代码/工作树边界>`、`<实际执行命令>`、`<通过/失败/跳过结果>`、`<未覆盖范围>`。OpenShell SDK 检查入口为 `pnpm --filter @bento/orchestrator check:core:fast`；按实际结果填写，详细证据引用 [Readiness](docs/40-readiness/CURRENT-READINESS.md)。

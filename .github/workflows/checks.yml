@@ -351,7 +351,7 @@ jobs:
             - run: pnpm --filter @bento/orchestrator test:temporal-retry
               env:
                   BENTO_A6_TEMPORAL_ARCHIVE: ${{ steps.temporal-archive.outputs.archive }}
-            - run: node apps/orchestrator/orchestrator-execution-host/acceptance/temporal-retry/check-package.mjs
+            - run: node apps/orchestrator/orchestrator-execution-host/tests/acceptance/temporal-retry/check-package.mjs
             - name: Remove owned Temporal archive
               if: ${{ always() }}
               shell: bash

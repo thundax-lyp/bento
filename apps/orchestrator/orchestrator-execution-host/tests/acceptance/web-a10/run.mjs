@@ -18,7 +18,7 @@ import process from 'node:process';
 import { fileURLToPath, pathToFileURL, URL } from 'node:url';
 
 const root = fileURLToPath(
-    new URL('../../../../../../bento-debug/web-a10', import.meta.url),
+    new URL('../../../../../../../bento-debug/web-a10', import.meta.url),
 );
 const leasePath = join(root, 'lease.json');
 const project = 'bento-worker-a-web-a10';
@@ -27,8 +27,8 @@ const candidates = [
     'apps/workspace/workspace-web/playwright.web-a10.config.ts',
     'apps/workspace/workspace-web/acceptance/web-a10.spec.ts',
     'apps/workspace/workspace-web/acceptance/web-a10-hook.ts',
-    'apps/orchestrator/orchestrator-execution-host/acceptance/web-a10/run.mjs',
-    'apps/orchestrator/orchestrator-execution-host/acceptance/web-a10/run.test.mjs',
+    'apps/orchestrator/orchestrator-execution-host/tests/acceptance/web-a10/run.mjs',
+    'apps/orchestrator/orchestrator-execution-host/tests/acceptance/web-a10/run.test.mjs',
 ];
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex');
 

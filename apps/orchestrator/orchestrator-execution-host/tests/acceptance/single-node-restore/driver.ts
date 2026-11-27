@@ -13,12 +13,12 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import { commandHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/command-host.ts';
-import { acquireTemporal } from '@/apps/orchestrator/orchestrator-execution-host/acceptance/temporal-retry/tool.ts';
+import { acquireTemporal } from '@/apps/orchestrator/orchestrator-execution-host/tests/acceptance/temporal-retry/tool.ts';
 import {
     freePort,
     startServer,
     type TemporalServer,
-} from '@/apps/orchestrator/orchestrator-execution-host/acceptance/temporal-retry/process.ts';
+} from '@/apps/orchestrator/orchestrator-execution-host/tests/acceptance/temporal-retry/process.ts';
 import type { Binding } from '@/apps/worker/protocol.ts';
 import { startAcceptanceHost } from './host.ts';
 import {
@@ -187,7 +187,7 @@ async function privateJson(path: string) {
     return JSON.parse(await readFile(path, 'utf8'));
 }
 const executionRoot = fileURLToPath(
-    new URL('../../../../../', import.meta.url),
+    new URL('../../../../../../', import.meta.url),
 );
 /** Capture at T0 from the approved clean commit, then freeze that runtime tree. */
 export async function executionSourceDigest(root: string): Promise<string> {
