@@ -16,7 +16,7 @@ if docker network inspect "$prefix" >/dev/null 2>&1; then
     echo "Auth smoke network already exists" >&2
     exit 1
 fi
-for name in "$mysql_container" "$prefix-web" "$prefix-missing"; do
+for name in "$mysql_container" "$prefix-web" "$prefix-space" "$prefix-missing"; do
     if docker container inspect "$name" >/dev/null 2>&1; then
         echo "Auth smoke container already exists" >&2
         exit 1
@@ -51,4 +51,5 @@ run_smoke() {
 }
 
 run_smoke "$prefix-web" --normal
+run_smoke "$prefix-space" --space-reads
 run_smoke "$prefix-missing" --missing-artifacts --tmpfs /app/apps/workspace/workspace-auth/dist

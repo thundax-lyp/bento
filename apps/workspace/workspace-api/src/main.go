@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -58,7 +60,17 @@ func run() error {
 			return errors.New("could not initialize MySQL accounts; check connectivity, schema and invitation file")
 		}
 		internalMux := http.NewServeMux()
-		accounts{db: db}.register(internalMux)
+		store := accounts{db: db}
+		store.register(internalMux)
+		if os.Getenv("BENTO_GO_AUTH") == "1" {
+			space, err := registerGoAuth(ctx, mux, internalMux, store, proxy)
+			if err != nil {
+				return err
+			}
+			if space != nil {
+				defer space.db.Close()
+			}
+		}
 		internal := &http.Server{Handler: internalMux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second}
 		listener, err := net.Listen("tcp", "127.0.0.1:4103")
 		if err != nil {
@@ -94,6 +106,112 @@ func run() error {
 		defer cancel()
 		return server.Shutdown(shutdown)
 	}
+}
+
+func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store accounts, legacy http.Handler) (*spaceReader, error) {
+	var space *spaceReader
+	origin := strings.TrimSuffix(os.Getenv("BENTO_ONE_ORIGIN"), "/")
+	if origin == "" {
+		origin = "http://127.0.0.1:4101"
+	}
+	publicURL, err := secureOIDCURL(origin, true)
+	if err != nil || publicURL.Path != "" || publicURL.RawQuery != "" {
+		return nil, errors.New("invalid Workspace origin")
+	}
+	issuer := os.Getenv("BENTO_OIDC_ISSUER")
+	if issuer == "" && os.Getenv("BENTO_AUTH_MODE") == "keycloak" {
+		return nil, errors.New("Keycloak issuer is required")
+	}
+	spaceRequired := os.Getenv("BENTO_SPACE_S3_ENDPOINT") != ""
+	sessions := newWebSessions(store, publicURL.Scheme == "https", issuer != "")
+	password := newPasswordAuth(store, sessions, origin, spaceRequired)
+	if issuer == "" {
+		password.routes(public)
+	} else {
+		identity, err := newKeycloak(ctx, oidcOptions{
+			origin: origin, issuer: issuer, clientID: os.Getenv("BENTO_OIDC_CLIENT_ID"),
+			clientSecret: os.Getenv("BENTO_OIDC_CLIENT_SECRET"), organization: os.Getenv("BENTO_OIDC_ORGANIZATION"),
+			spaceRequired: spaceRequired, assetsDir: "/app/apps/workspace/workspace-auth/dist",
+			spaceOrigin: strings.TrimSuffix(os.Getenv("BENTO_SPACE_S3_ENDPOINT"), "/"),
+		}, store, sessions)
+		if err != nil {
+			if errors.Is(err, errAuthArtifacts) {
+				return nil, errAuthArtifacts
+			}
+			return nil, errors.New("could not initialize Workspace OIDC")
+		}
+		identity.routes(public)
+		password.sessionRoutes(public)
+		for _, path := range []string{"/api/login", "/api/register", "/api/account/close", "/api/oidc/"} {
+			public.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "POST" && (len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != origin) {
+					authFailure(w, &requestFailure{400, "invalid_origin", "请从任务入口提交请求。"})
+					return
+				}
+				authFailure(w, notFound)
+			})
+		}
+	}
+	if os.Getenv("BENTO_ONE_MODE") == "http" {
+		backend, err := workspaceProjectBackend()
+		if err != nil {
+			return nil, err
+		}
+		backend.routes(public, sessions, origin)
+		backend.taskRoutes(public, sessions, origin, legacy)
+		database, endpoint, bucket := os.Getenv("BENTO_SPACE_DB"), os.Getenv("BENTO_SPACE_S3_ENDPOINT"), os.Getenv("BENTO_SPACE_S3_BUCKET")
+		if database != "" || endpoint != "" || bucket != "" {
+			if database == "" || database == ":memory:" || endpoint == "" || bucket == "" {
+				return nil, errors.New("incomplete space configuration")
+			}
+			storage, err := newSpaceStorage(ctx, strings.TrimSuffix(endpoint, "/"), bucket, os.Getenv("AWS_REGION"))
+			if err != nil {
+				return nil, errors.New("could not initialize Workspace object storage")
+			}
+			space, err = openSpaceReader(database, storage)
+			if err != nil {
+				return nil, errors.New("could not initialize Workspace space reader")
+			}
+			space.routes(public, sessions, backend)
+		}
+	}
+	internal.HandleFunc("GET /internal/session", func(w http.ResponseWriter, r *http.Request) {
+		session, err := sessions.current(r)
+		if err != nil {
+			authFailure(w, err)
+			return
+		}
+		authJSON(w, 200, map[string]string{"ownerId": session.Owner, "account": session.Name})
+	})
+	return space, nil
+}
+
+func workspaceProjectBackend() (projectService, error) {
+	origin := strings.TrimSuffix(os.Getenv("BENTO_ONE_TWO_URL"), "/")
+	upstream, err := url.Parse(origin)
+	bearer := os.Getenv("BENTO_ONE_TWO_BEARER")
+	if err != nil || upstream.Hostname() == "" || upstream.User != nil ||
+		(upstream.Scheme != "http" && upstream.Scheme != "https") || upstream.Path != "" ||
+		upstream.RawQuery != "" || upstream.ForceQuery || upstream.Fragment != "" ||
+		bearer == "" || strings.ContainsFunc(bearer, func(r rune) bool {
+		return (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') && !strings.ContainsRune("._~+/=-", r)
+	}) {
+		return projectService{}, errors.New("missing or invalid execution service configuration")
+	}
+	timeout := 10000
+	if raw := os.Getenv("BENTO_ONE_TWO_TIMEOUT_MS"); raw != "" {
+		timeout, err = strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil || timeout < 1 || timeout > 30000 {
+			return projectService{}, errors.New("invalid BENTO_ONE_TWO_TIMEOUT_MS")
+		}
+	}
+	return projectService{
+		origin: origin, bearer: bearer,
+		spaceOrigin: strings.TrimSuffix(os.Getenv("BENTO_SPACE_S3_ENDPOINT"), "/"),
+		client: &http.Client{Timeout: time.Duration(timeout) * time.Millisecond, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		}},
+	}, nil
 }
 
 func main() {

@@ -35,7 +35,7 @@ type oidcAccounts interface {
 type oidcOptions struct {
 	origin, issuer, clientID, clientSecret, organization string
 	spaceRequired                                        bool
-	assetsDir                                            string
+	assetsDir, spaceOrigin                               string
 }
 
 type loginTransaction struct {
@@ -59,13 +59,15 @@ type keycloak struct {
 	transactions map[[32]byte]loginTransaction
 }
 
+var errAuthArtifacts = errors.New("Workspace auth build artifacts are unavailable")
+
 type authArtifacts struct {
 	login, account, style []byte
 }
 
 func loadAuthArtifacts(directory string) (authArtifacts, error) {
 	if directory == "" {
-		return authArtifacts{}, errors.New("Workspace auth build artifacts are unavailable")
+		return authArtifacts{}, errAuthArtifacts
 	}
 	var assets authArtifacts
 	for name, target := range map[string]*[]byte{
@@ -73,7 +75,7 @@ func loadAuthArtifacts(directory string) (authArtifacts, error) {
 	} {
 		content, err := os.ReadFile(filepath.Join(directory, name))
 		if err != nil {
-			return authArtifacts{}, errors.New("Workspace auth build artifacts are unavailable")
+			return authArtifacts{}, errAuthArtifacts
 		}
 		*target = content
 	}
@@ -338,6 +340,11 @@ func (k *keycloak) routes(mux *http.ServeMux) {
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("Referrer-Policy", "no-referrer")
 			w.Header().Set("X-Content-Type-Options", "nosniff")
+			connect := "'self'"
+			if k.options.spaceOrigin != "" {
+				connect += " " + k.options.spaceOrigin
+			}
+			w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src "+connect+"; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 			if r.Method == "POST" && (len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != k.options.origin) {
 				authFailure(w, &requestFailure{400, "invalid_origin", "请从任务入口提交请求。"})
 				return

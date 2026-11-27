@@ -66,7 +66,7 @@ services:
                 EXPOSE 8080
                 STOPSIGNAL SIGTERM
                 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-                    CMD ["node", "-e", "Promise.all(['http://127.0.0.1:8080/', 'http://127.0.0.1:8080/api/session', 'http://127.0.0.1:4102/healthz'].map(url => fetch(url, {signal: AbortSignal.timeout(3000)}).then(async response => { await response.body?.cancel(); return response.status; }))).then(([web, api, database]) => { if (web !== 200 || api !== 401 || database !== 204) process.exitCode = 1; }).catch(() => { process.exitCode = 1; })"]
+                    CMD ["node", "-e", "Promise.all(['http://127.0.0.1:8080/', 'http://127.0.0.1:8080/api/session', 'http://127.0.0.1:4102/healthz', 'http://127.0.0.1:4101/api/space'].map(url => fetch(url, {signal: AbortSignal.timeout(3000)}).then(async response => { await response.body?.cancel(); return response.status; }))).then(([web, api, database, legacy]) => { if (web !== 200 || api !== 401 || database !== 204 || legacy !== 401) process.exitCode = 1; }).catch(() => { process.exitCode = 1; })"]
                 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/bento-web"]
         image: bento-web:local
         ports:

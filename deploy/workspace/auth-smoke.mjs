@@ -1,10 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import console from 'node:console';
 import { access, mkdtemp, open, readFile, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
+import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
     oidcFixtureClient,
@@ -16,12 +20,92 @@ const origin = 'http://127.0.0.1:8080';
 const accounts = 'http://127.0.0.1:4103/internal/accounts';
 const assets = '/app/apps/workspace/workspace-auth/';
 const missing = process.argv[2] === '--missing-artifacts';
-const subject = 'fixture-subject';
+const spaceConfigured = process.argv[2] === '--space-reads';
+const subject = spaceConfigured ? 'fixture-space-subject' : 'fixture-subject';
 const fixture = await startOidcFixture();
+const execution = createServer(async (req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (
+        req.headers.authorization !== 'Bearer fixture-execution' ||
+        !/^[a-f0-9]{48}$/.test(req.headers['x-bento-owner-id'] ?? '')
+    ) {
+        res.writeHead(401).end('{}');
+        return;
+    }
+    if (
+        req.method === 'GET' &&
+        ['/v1/projects', '/v1/tasks'].includes(req.url)
+    ) {
+        if (!req.headers['user-agent']?.startsWith('Go-http-client/')) {
+            res.writeHead(500).end('{}');
+            return;
+        }
+        res.end(
+            JSON.stringify(
+                req.url === '/v1/projects' ? { projects: [] } : { items: [] },
+            ),
+        );
+        return;
+    }
+    if (req.method === 'POST' && req.url === '/v1/tasks') {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        const payload = JSON.parse(chunks.join(''));
+        const { name, inputDigest } = payload;
+        if (
+            !req.headers['user-agent']?.startsWith('Go-http-client/') ||
+            req.headers['idempotency-key'] !==
+                '00000000-0000-4000-8000-000000000010' ||
+            name !== 'Smoke Task' ||
+            inputDigest !== createHash('sha256').update('[]').digest('hex') ||
+            payload.id !== null ||
+            payload.sourceSpaceId !== null ||
+            !Array.isArray(payload.inputFiles) ||
+            payload.inputFiles.length !== 0 ||
+            !Array.isArray(payload.inputManifest) ||
+            payload.inputManifest.length !== 0
+        ) {
+            res.writeHead(500).end('{}');
+            return;
+        }
+        res.writeHead(202).end(
+            JSON.stringify({
+                task: {
+                    id: '00000000-0000-4000-8000-000000000011',
+                    name,
+                    inputDigest,
+                    sourceSpaceId: null,
+                    environmentVersion: 'sha256:' + '0'.repeat(64),
+                    status: 'preparing',
+                    prepareError: null,
+                    closedReason: null,
+                    reconciliation: null,
+                    createdAt: '2026-11-27T00:00:00Z',
+                    updatedAt: '2026-11-27T00:00:00Z',
+                    inputs: [],
+                },
+            }),
+        );
+        return;
+    }
+    if (req.method === 'POST' && req.url === '/v1/account/drain') {
+        res.writeHead(204).end();
+        return;
+    }
+    if (req.method === 'POST' && req.url === '/v1/account/purge') {
+        res.end(JSON.stringify({ complete: true }));
+        return;
+    }
+    res.writeHead(404).end('{}');
+});
+execution.listen(0, '127.0.0.1');
+await once(execution, 'listening');
+const executionOrigin = 'http://127.0.0.1:' + execution.address().port;
 let entry;
 
 async function startEntry() {
     const directory = await mkdtemp(join(tmpdir(), 'bento-auth-entry-'));
+    const spaceDb = join(directory, 'space.sqlite');
     const stdoutPath = join(directory, 'stdout.log');
     const stderrPath = join(directory, 'stderr.log');
     let stdoutFile;
@@ -35,7 +119,19 @@ async function startEntry() {
             {
                 env: {
                     ...process.env,
-                    BENTO_ONE_MODE: 'mock',
+                    BENTO_ONE_MODE: 'http',
+                    BENTO_ONE_TWO_URL: executionOrigin,
+                    BENTO_ONE_TWO_BEARER: 'fixture-execution',
+                    ...(spaceConfigured
+                        ? {
+                              BENTO_SPACE_DB: spaceDb,
+                              BENTO_SPACE_S3_ENDPOINT: 'http://127.0.0.1:9199',
+                              BENTO_SPACE_S3_BUCKET: 'fixture-bucket',
+                              AWS_ACCESS_KEY_ID: 'fixture-access-key',
+                              AWS_SECRET_ACCESS_KEY: 'fixture-secret-key',
+                              AWS_EC2_METADATA_DISABLED: 'true',
+                          }
+                        : {}),
                     BENTO_AUTH_MODE: 'keycloak',
                     BENTO_ONE_ORIGIN: origin,
                     BENTO_OIDC_ISSUER: fixture.issuer,
@@ -60,7 +156,7 @@ async function startEntry() {
             .finally(() => rm(directory, { recursive: true, force: true }));
         // The readiness or shutdown path consumes the settled result.
         void result.catch(() => {});
-        return { child, result };
+        return { child, result, spaceDb };
     } catch (error) {
         await rm(directory, { recursive: true, force: true });
         throw error;
@@ -107,7 +203,7 @@ function startupDiagnostics({ code, signal, stdout, stderr }) {
             /Invalid Bento task entry configuration or listener unavailable\./,
             'task-entry-startup-failed',
         ],
-        [/Bento task entry \(mock\) listening on/, 'task-entry-listening'],
+        [/Bento task entry \(http\) listening on/, 'task-entry-listening'],
         [/ERR_MODULE_NOT_FOUND/, 'node-module-not-found'],
         [
             /Bento local OIDC discovery did not become ready\./,
@@ -145,7 +241,15 @@ async function waitReady() {
                     return response.status;
                 }),
             );
-            if (statuses.join(',') === '200,401,200') return;
+            const legacy = await globalThis.fetch(
+                'http://127.0.0.1:4101/api/space',
+                {
+                    signal: globalThis.AbortSignal.timeout(1000),
+                },
+            );
+            await legacy.body?.cancel();
+            if (statuses.join(',') === '200,401,200' && legacy.status === 401)
+                return;
         } catch {
             // The loopback listeners may still be starting.
         }
@@ -232,6 +336,57 @@ async function login(grant) {
         'Authenticated API session',
     );
     assert.deepEqual(await current.json(), { account: oidcFixtureEmail });
+    const projects = await status(
+        request('/api/projects', { headers: { Cookie: value } }),
+        200,
+        'Go session accepted by the Workspace business API',
+    );
+    assert.ok(Array.isArray((await projects.json()).projects));
+    const tasks = await status(
+        request('/api/tasks', { headers: { Cookie: value } }),
+        200,
+        'Go session accepted by the Task API',
+    );
+    assert.deepEqual(await tasks.json(), { items: [] });
+    const blank = await status(
+        request('/api/tasks', {
+            method: 'POST',
+            headers: {
+                Origin: origin,
+                Cookie: value,
+                'Content-Type': 'application/json',
+                'Idempotency-Key': '00000000-0000-4000-8000-000000000010',
+            },
+            body: JSON.stringify({
+                name: ' Smoke Task ',
+                source: { kind: 'blank' },
+            }),
+        }),
+        202,
+        'Go forwards a blank Task',
+    );
+    assert.equal((await blank.json()).task.name, 'Smoke Task');
+    await status(
+        request('/api/tasks', {
+            method: 'POST',
+            headers: {
+                Origin: origin,
+                Cookie: value,
+                'Content-Type': 'application/json',
+                'Idempotency-Key': '00000000-0000-4000-8000-000000000012',
+            },
+            body: JSON.stringify({
+                name: 'Snapshot',
+                source: {
+                    kind: 'space_snapshot',
+                    spaceId: 'fixture-space',
+                    fileIds: ['fixture-file'],
+                },
+            }),
+        }),
+        spaceConfigured ? 404 : 503,
+        'Snapshot bridge retains the existing unavailable-source response',
+    );
     return value;
 }
 
@@ -387,18 +542,92 @@ async function checkRuntime() {
     await checkOwner(ownerId, true);
 }
 
+async function checkSpaceReads() {
+    await waitReady();
+    const value = await login(
+        await authorize(request('/api/oidc/start'), 'space-reads'),
+    );
+    const owner = await binding();
+    const project = '00000000-0000-4000-8000-000000000020';
+    const file = '00000000-0000-4000-8000-000000000021';
+    const db = new DatabaseSync(entry.spaceDb);
+    try {
+        db.prepare(
+            'INSERT INTO space_projects (id,owner,name) VALUES (?,?,?)',
+        ).run(project, owner, 'Smoke Space');
+        db.prepare(
+            'INSERT INTO space_uploads (id,project,owner,path,size,manifest,state,expires) VALUES (?,?,?,?,?,?,?,?)',
+        ).run(
+            file,
+            project,
+            owner,
+            'readme.txt',
+            100,
+            '[]',
+            'saved',
+            Date.now() + 60_000,
+        );
+        const headers = { Cookie: value };
+        const overview = await status(
+            request('/api/space', { headers }),
+            200,
+            'Go SQLite space overview',
+        );
+        const result = await overview.json();
+        assert.equal(result.saved, 100);
+        assert.deepEqual(result.projects, [
+            { id: project, name: 'Smoke Space' },
+        ]);
+        assert.equal(result.uploads[0].id, file);
+        for (const action of ['preview', 'download']) {
+            const response = await status(
+                request('/api/space/files/' + file + '/' + action, { headers }),
+                302,
+                'Signed file redirect',
+            );
+            const target = location(response);
+            assert.equal(target.pathname, '/fixture-bucket/space/' + file);
+            assert.equal(target.searchParams.get('X-Amz-Expires'), '300');
+            if (action === 'preview')
+                assert.equal(
+                    target.searchParams.get('response-cache-control'),
+                    'no-store',
+                );
+            else
+                assert.equal(
+                    target.searchParams.get('response-content-disposition'),
+                    "attachment; filename*=UTF-8''readme.txt",
+                );
+        }
+        db.prepare(
+            'INSERT INTO space_project_deletions (spaceId,owner,operationId,phase) VALUES (?,?,?,?)',
+        ).run(project, owner, 'fixture-deletion', 'holding');
+        await status(
+            request('/api/space/files/' + file + '/preview', { headers }),
+            404,
+            'Deleting space hides file',
+        );
+    } finally {
+        db.close();
+    }
+}
+
 try {
     entry = await startEntry();
     if (missing) {
         const result = await waitExit();
         assert.ok(Number.isInteger(result.code) && result.code !== 0);
         assert.equal(result.signal, null);
-        assert.ok(
-            result.stderr
-                .split('\n')
-                .includes('Workspace auth build artifacts are unavailable'),
+        assert.match(
+            result.stderr,
+            /^(?:\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2} )?Workspace auth build artifacts are unavailable$/m,
         );
         console.log('Missing auth artifacts rejected at image startup');
+    } else if (spaceConfigured) {
+        await checkSpaceReads();
+        console.log(
+            'SQLite space overview, signed read redirects and deletion protection passed',
+        );
     } else {
         await checkRuntime();
         console.log(
@@ -409,6 +638,7 @@ try {
     try {
         await stopEntry();
     } finally {
+        execution.close();
         await fixture.close();
     }
 }

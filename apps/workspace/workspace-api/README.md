@@ -1,6 +1,6 @@
 # Bento 任务入口
 
-任务入口处理 Bento Web 的业务 HTTP API 与会话认证。Docker 部署由 Go 提供 API 入口和 MySQL 账号仓储。浏览器使用 [独立 Web 前端](../workspace-web/README.md)完成登录、项目导入、任务提交和 diff 下载。开发时由 Vite 转发 `/api`。[Compose 中的 Web 服务](../../../deploy/README.md#启动与检查)由 NGINX 同域提供前端静态文件，并将 `/api/*` 转发到容器内 `127.0.0.1:4102` 的 Go 入口，再转发至 `4101` 的 task-entry。
+任务入口处理 Bento Web 的业务 HTTP API。配置 MySQL 的 Docker 部署由 Go 提供会话认证和账号仓储，HTTP 模式的项目与项目 Run 路由也由 Go 处理。Go 处理空白 Task 创建和已有 Task 的查询及操作。Go 还读取文件空间概览、预览和下载。TypeScript 文件空间的剩余路由及文件快照 Task 创建通过容器回环接口读取 Go 会话。独立 mock 启动使用现有 TypeScript 会话实现。浏览器使用 [独立 Web 前端](../workspace-web/README.md)完成登录、项目导入、任务提交和 diff 下载。开发时由 Vite 转发 `/api`。[Compose 中的 Web 服务](../../../deploy/README.md#启动与检查)由 NGINX 同域提供前端静态文件，并将 `/api/*` 转发到容器内 `127.0.0.1:4102` 的 Go 入口，再转发至 `4101` 的 task-entry。
 
 模拟模式的启动命令、测试账号及端口见前端说明。模拟后端提供普通任务和 `mock:empty`、`mock:failed`、`mock:review`。重启模拟进程会清空记录。
 
