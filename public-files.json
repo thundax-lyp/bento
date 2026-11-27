@@ -214,6 +214,8 @@
         "apps/orchestrator/tests/execution-service/fixtures/task-retry.ts",
         "apps/orchestrator/tests/execution-service/project-deletion.test.ts",
         "apps/orchestrator/tests/execution-service/reconciliation.test.ts",
+        "apps/orchestrator/tests/execution-service/reconciliation-takeover.test.ts",
+        "apps/orchestrator/tests/execution-service/reconciliation-recovery.test.ts",
         "apps/orchestrator/tests/execution-service/restore.test.ts",
         "apps/orchestrator/tests/execution-service/scheduling.test.ts",
         "apps/orchestrator/tests/execution-service/startup.test.ts",
