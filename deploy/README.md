@@ -2,6 +2,15 @@
 
 [Bento Compose](compose.yaml) 是整体部署入口，包含个人端、MySQL、Keycloak、PostgreSQL 和 Orchestrator。同一份文件提供开发用 Temporal、Mailpit 和可选的 Worker 镜像构建目标。组件职责见[整体架构](../docs/00-governance/ARCHITECTURE.md)。在仓库根目录运行以下命令，使用 Docker Compose 2.24.4 或更新版本。
 
+## 镜像源码入口
+
+| Compose 构建目标 | 源码入口                                                                                                                                                            |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bento-web`      | [Workspace API 的 Go 命令](../apps/workspace/workspace-api/cmd/workspace-api/main.go)与 [Vite 前端](../apps/workspace/workspace-web/README.md)，由 Compose 内联构建 |
+| `bento-admin`    | [Admin API 的 Go 命令](../apps/admin/admin-api/cmd/admin-api/main.go)与管理端静态页面                                                                               |
+| `orchestrator`   | [Go 控制端](../apps/orchestrator/orchestrator-control/cmd/control/main.go)与 [TypeScript 执行宿主](../apps/orchestrator/orchestrator-execution-host/src/index.ts)   |
+| `bento-worker`   | [DSH Worker 启动入口](../apps/worker/src/run-worker.ts)                                                                                                             |
+
 ## 准备配置
 
 ```sh
@@ -166,7 +175,7 @@ docker compose -f deploy/compose.yaml --profile worker-image build bento-worker
 
 遇到 worker 失联时，执行服务撤销旧代授权并在原卷上恢复 Session。恢复 worker 只对账会话历史，原 prompt 不重发。Run 进入 `needs_review` 时，可信部署端先独立核对预期修改，再通过[进程内 `reviewRun`](../apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts) 提供代次、稳定操作 ID 和预期整卷哈希。执行服务核对恢复回执、绑定、UNKNOWN 操作及卷快照，原子保存确认记录和 diff。核对失败时，Run 继续等待可信核对，diff 暂不可用。
 
-仓库内的 TypeScript 启动命令使用 `node --import /app/register-paths.mjs` 解析 `@/` 路径。Compose 和 Worker 镜像已配置此参数。自定义启动器直接调用 Node 时也需加载该文件。
+仓库内的 TypeScript 启动命令通过 `node --import /app/register-paths.mjs` 解析根目录 `tsconfig.json` 中的源码别名。Orchestrator 和 Worker 镜像已配置此参数。自定义启动器直接调用 Node 时，保留同目录下的 `register-paths.mjs`、`source-aliases.mjs` 和 `tsconfig.json`，并在 Node 启动时加载 `register-paths.mjs`。
 
 Compose 通过 `BENTO_GO_AUTHORITY` 指定镜像内的 Go 权威入口。自定义启动器使用 Go 权威链时同样配置该变量，指向与执行宿主配套构建的 `bento-orchestrator`。进程共用该部署的数据目录。执行代次与授权继续使用原权威 SQLite 文件，派发、Run 状态推进、槽位租约与升级排空在原业务 SQLite 文件中提交。
 

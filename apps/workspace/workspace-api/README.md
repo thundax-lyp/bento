@@ -16,7 +16,7 @@ Go 模块提供 Workspace 的认证、项目及 Run、Task 和文件空间 API�
 
 ```sh
 pnpm --filter @bento/workspace-auth build
-go -C apps/workspace/workspace-api build -o /tmp/bento-web-api ./src
+go -C apps/workspace/workspace-api build -o /tmp/bento-web-api ./cmd/workspace-api
 /tmp/bento-web-api
 ```
 
@@ -63,4 +63,4 @@ Compose 设置 `BENTO_MYSQL_HOST=mysql:3306`、`BENTO_MYSQL_USER=bento`、`BENTO
 
 ## 测试
 
-运行 `pnpm check:workspace-api` 执行 Go 测试和 `go vet`。容器回归由 `deploy/workspace/auth-smoke.sh` 执行，覆盖 OIDC 生命周期、项目空间、上传与删除、快照 Task、账号清理和进程拓扑。浏览器模拟服务和相关测试位于 [Workspace Web 验收目录](../workspace-web/tests/acceptance/fixtures/workspace-api/)。
+从仓库根目录运行 `pnpm check:workspace-api` 执行 Go 测试和 `go vet`。Go 格式由仓库级 `pnpm format:go:check` 检查。容器回归由 `deploy/workspace/auth-smoke.sh` 执行，覆盖 OIDC 生命周期、项目空间、上传与删除、快照 Task、账号清理和进程拓扑。浏览器模拟服务和相关测试位于 [Workspace Web 验收目录](../workspace-web/tests/acceptance/fixtures/workspace-api/)。

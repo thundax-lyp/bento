@@ -24,11 +24,15 @@ Vite 默认将 `/api` 代理到 `http://127.0.0.1:4186`。连接其他后端时�
 pnpm --filter @bento/workspace-web check
 pnpm --filter @bento/workspace-web exec playwright install chromium
 pnpm --filter @bento/workspace-web test:e2e
+pnpm --filter @bento/workspace-web test:space-integrity
+pnpm --filter @bento/workspace-web test:queue-isolation
 ```
 
-Vitest 单元与组件测试统一放在 `tests/`，与 `src/` 分离；测试通过显式路径导入源码，仍由 TypeScript 和 ESLint 检查。`pnpm test` 发现 `tests/**/*.test.{ts,tsx}`，并排除 `tests/acceptance/`。Playwright 验收与 Node 模拟 API 测试从 `tests/acceptance/` 各自的入口执行。
+`check` 执行类型检查、Vitest 和 Vite 构建。从仓库根目录运行 `pnpm lint` 和 `pnpm format:check` 执行仓库级检查，Web 的 ESLint 配置同时检查 React Hooks。
 
-浏览器测试位于 `tests/e2e/`，自动启动 Vite 和 Bento 的模拟任务入口，使用独立的 4320 和 4319 端口。
+- `tests/` 保存 Vitest 单元和组件测试。
+- `tests/e2e/` 保存常规浏览器回归。Playwright 自动启动 Vite 和模拟 API，使用 4320 和 4319 端口。
+- `tests/acceptance/` 保存空间完整性、队列隔离等专项验收。模拟 API 及其测试位于 [Workspace API 夹具](tests/acceptance/fixtures/workspace-api/)，可通过 `pnpm --filter @bento/workspace-web test:api-fixtures` 单独运行。
 
 页面组件统一置于 `src/pages/`，每个页面组件使用独立目录及显式 `index.tsx` 入口，路由从 `src/pages/index.ts` 导入。
 
@@ -54,6 +58,8 @@ src/pages/
 └── index.ts
 ```
 
-页面专属子组件放在所属页面目录；同业务共享内容放在对应业务目录，跨业务共享的页面辅助逻辑放在 `pages/shared/`。仓库内部导入必须显式写出 `.ts` 或 `.tsx` 等实际扩展名，跨两级及以上父目录使用仓库根别名 `@/`。根 ESLint 配置检查静态导入、重导出、动态导入及类型导入。
+页面专属子组件放在所属页面目录；同业务共享内容放在对应业务目录，跨业务共享的页面辅助逻辑放在 `pages/shared/`。仓库内部导入必须显式写出 `.ts` 或 `.tsx` 等实际扩展名，跨两级及以上父目录使用已配置的别名，例如 `@workspace-web/`。跨工程使用包的公共入口，生产源码不能引用测试或夹具。根 ESLint 配置检查静态导入、重导出、可静态解析的动态导入及类型导入。
+
+云端空间代码放在 [`src/space/`](src/space/)。`space-list.tsx` 提供空间列表，`cloud-project-route.tsx` 组装项目页，`project-uploads.ts` 和 `project-deletion.ts` 分别维护上传和项目删除状态。
 
 Playwright 配置集中在 `tests/playwright/`。使用 `pnpm test:e2e` 运行默认 Chromium 测试。直接调用 Playwright 时，通过 `--config tests/playwright/<配置文件>` 选择验收入口。
