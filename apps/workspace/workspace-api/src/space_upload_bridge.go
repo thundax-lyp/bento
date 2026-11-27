@@ -18,15 +18,6 @@ func registerSpaceUploadBridge(mux *http.ServeMux, db *sql.DB, storage *spaceSto
 		if err := service.uploadBridge(w, r, spaceFileDeletion{db: db, storage: storage, hold: backend.fileHold},
 			spaceSnapshots{db: db, read: storage.read, backend: backend},
 			spaceProjectDeletion{db: db, storage: storage, backend: backend}, locks); err != nil {
-			var failure *snapshotFailure
-			if errors.As(err, &failure) {
-				body := map[string]any{"code": failure.code, "message": failure.message}
-				if len(failure.Issues) != 0 {
-					body["issues"] = failure.Issues
-				}
-				authJSON(w, failure.status, map[string]any{"error": body})
-				return
-			}
 			authFailure(w, err)
 		}
 	})

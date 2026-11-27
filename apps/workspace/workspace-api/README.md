@@ -1,6 +1,6 @@
 # Bento 任务入口
 
-任务入口处理 Bento Web 的业务 HTTP API。配置 MySQL 的 Docker 部署由 Go 提供会话认证和账号仓储，HTTP 模式的项目与项目 Run 路由也由 Go 处理。Go 处理空白 Task 创建和已有 Task 的查询及操作。Go 还读取文件空间概览、预览和下载。上传和单文件删除的 HTTP 入口、文件锁及后台重试由 Go 处理。过渡期 TypeScript 的账号清理会通过现有回环接口请求同一文件锁。账号清理的逐对象删除、上传编号退役和剩余文件空间元数据清理由 Go 处理。文件快照由 Go 读取、校验并冻结。Go 负责快照登记、文件 pin、Orchestrator 提交和正常回执确认。Go 调度账号清理，仍通过回环获取过渡期 TypeScript 路由的在途请求和快照排空状态。TypeScript 仍负责文件空间的部分路由、快照后台推进与账号关闭时的快照对账。独立 mock 启动使用现有 TypeScript 会话实现。浏览器使用 [独立 Web 前端](../workspace-web/README.md)完成登录、项目导入、任务提交和 diff 下载。开发时由 Vite 转发 `/api`。[Compose 中的 Web 服务](../../../deploy/README.md#启动与检查)由 NGINX 同域提供前端静态文件，并将 `/api/*` 转发到容器内 `127.0.0.1:4102` 的 Go 入口，再转发至 `4101` 的 task-entry。
+任务入口处理 Bento Web 的业务 HTTP API。配置 MySQL 的 Docker 部署由 Go 提供会话认证和账号仓储，HTTP 模式的项目与项目 Run 路由也由 Go 处理。Go 处理空白及文件快照 Task 创建和已有 Task 的查询及操作。Go 还读取文件空间概览、预览和下载。上传和单文件删除的 HTTP 入口、文件锁及后台重试由 Go 处理。过渡期 TypeScript 的账号清理会通过现有回环接口请求同一文件锁。账号清理的逐对象删除、上传编号退役和剩余文件空间元数据清理由 Go 处理。文件快照由 Go 读取、校验并冻结。Go 负责快照登记、文件 pin、Orchestrator 提交、正常回执确认与后台补交。Go 调度账号清理，仍通过回环获取过渡期 TypeScript 路由的在途请求和快照排空状态。TypeScript 仍负责文件空间的部分路由与账号关闭时的快照对账。独立 mock 启动使用现有 TypeScript 会话实现。浏览器使用 [独立 Web 前端](../workspace-web/README.md)完成登录、项目导入、任务提交和 diff 下载。开发时由 Vite 转发 `/api`。[Compose 中的 Web 服务](../../../deploy/README.md#启动与检查)由 NGINX 同域提供前端静态文件，并将 `/api/*` 转发到容器内 `127.0.0.1:4102` 的 Go 入口，再转发至 `4101` 的 task-entry。
 
 模拟模式的启动命令、测试账号及端口见前端说明。模拟后端提供普通任务和 `mock:empty`、`mock:failed`、`mock:review`。重启模拟进程会清空记录。
 

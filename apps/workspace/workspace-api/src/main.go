@@ -63,7 +63,7 @@ func run() error {
 		store := accounts{db: db}
 		store.register(internalMux)
 		if os.Getenv("BENTO_GO_AUTH") == "1" {
-			space, err := registerGoAuth(ctx, mux, internalMux, store, proxy)
+			space, err := registerGoAuth(ctx, mux, internalMux, store)
 			if err != nil {
 				return err
 			}
@@ -119,7 +119,7 @@ func run() error {
 	}
 }
 
-func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store accounts, legacy http.Handler) (*spaceReader, error) {
+func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store accounts) (*spaceReader, error) {
 	var space *spaceReader
 	origin := strings.TrimSuffix(os.Getenv("BENTO_ONE_ORIGIN"), "/")
 	if origin == "" {
@@ -169,7 +169,7 @@ func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store 
 			return nil, err
 		}
 		backend.routes(public, sessions, origin)
-		backend.taskRoutes(public, sessions, origin, legacy)
+		var snapshots *spaceSnapshots
 		database, endpoint, bucket := os.Getenv("BENTO_SPACE_DB"), os.Getenv("BENTO_SPACE_S3_ENDPOINT"), os.Getenv("BENTO_SPACE_S3_BUCKET")
 		if database != "" || endpoint != "" || bucket != "" {
 			if database == "" || database == ":memory:" || endpoint == "" || bucket == "" {
@@ -185,13 +185,20 @@ func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store 
 			}
 			space = &spaceReader{db: db, storage: storage}
 			space.routes(public, sessions, backend)
+			snapshots = &spaceSnapshots{db: db, read: storage.read, backend: backend}
 			locks := &spaceLocks{}
 			space.locks = locks
 			uploads := spaceUploads{db: db, storage: storage, now: time.Now}
 			uploads.routes(public, sessions, backend, origin, locks)
-			space.stopReconciliation = uploads.startReconciliation(ctx, locks, backend)
+			stopUploads := uploads.startReconciliation(ctx, locks, backend)
+			stopSnapshots := snapshots.startReconciliation(ctx)
+			space.stopReconciliation = func() {
+				stopSnapshots()
+				stopUploads()
+			}
 			registerSpaceUploadBridge(internal, db, storage, backend, locks)
 		}
+		backend.taskRoutes(public, sessions, origin, snapshots)
 	}
 	internal.HandleFunc("GET /internal/session", func(w http.ResponseWriter, r *http.Request) {
 		session, err := sessions.current(r)

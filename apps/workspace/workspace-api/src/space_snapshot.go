@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -316,6 +317,100 @@ func (s spaceSnapshots) enroll(ctx context.Context, owner, key, name string, sou
 	})
 }
 
+func (s spaceSnapshots) create(w http.ResponseWriter, r *http.Request, owner, key, name string, source snapshotSelection) error {
+	ctx := r.Context()
+	if err := s.enroll(ctx, owner, key, name, source); err != nil {
+		return err
+	}
+	var id string
+	if err := s.db.QueryRowContext(ctx, "SELECT id FROM space_tasks WHERE owner=? AND key=?", owner, key).Scan(&id); err != nil {
+		return err
+	}
+	return s.advance(w, r, owner, id)
+}
+
+func (s spaceSnapshots) advance(w http.ResponseWriter, r *http.Request, owner, id string) error {
+	ctx := r.Context()
+	if err := s.freeze(ctx, owner, id); err != nil {
+		var failure *requestFailure
+		var snapshot *snapshotFailure
+		if errors.As(err, &snapshot) {
+			failure = &snapshot.requestFailure
+		} else {
+			errors.As(err, &failure)
+		}
+		if failure != nil && (failure.status == 400 || failure.status == 404 || failure.status == 413) {
+			stateErr := spaceImmediate(ctx, s.db, func(conn *sql.Conn) error {
+				result, err := conn.ExecContext(ctx, "UPDATE space_tasks SET state='failed',lastError=? WHERE id=? AND state='pinned'", failure.code, id)
+				if err != nil {
+					return err
+				}
+				changed, err := result.RowsAffected()
+				if err == nil && changed == 1 {
+					_, err = conn.ExecContext(ctx, "UPDATE space_task_inputs SET readPinned=0 WHERE taskId=?", id)
+				}
+				return err
+			})
+			if stateErr != nil {
+				return stateErr
+			}
+		}
+		return err
+	}
+	return s.submit(w, r, owner, id)
+}
+
+func (s spaceSnapshots) startReconciliation(ctx context.Context) func() {
+	ctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for ctx.Err() == nil {
+			s.reconcile(ctx)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
+	return func() { cancel(); <-done }
+}
+
+func (s spaceSnapshots) reconcile(ctx context.Context) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT owner,id FROM space_tasks t
+		WHERE NOT EXISTS(SELECT 1 FROM space_draining_owners d WHERE d.owner=t.owner)
+		  AND ((state IN ('pinned','frozen','submitted') AND lastError IS NOT 'owner_closed')
+		       OR (state='failed' AND canonicalBody IS NOT NULL))`)
+	if err != nil {
+		return
+	}
+	type intent struct{ owner, id string }
+	var pending []intent
+	for rows.Next() {
+		var row intent
+		if err := rows.Scan(&row.owner, &row.id); err != nil {
+			rows.Close()
+			return
+		}
+		pending = append(pending, row)
+	}
+	rows.Close()
+	if rows.Err() != nil {
+		return
+	}
+	request := (&http.Request{Method: http.MethodPost}).WithContext(ctx)
+	for _, row := range pending {
+		if ctx.Err() != nil {
+			return
+		}
+		_ = s.advance(nil, request, row.owner, row.id)
+	}
+}
+
 func (s spaceSnapshots) submit(w http.ResponseWriter, r *http.Request, owner, id string) error {
 	ctx := r.Context()
 	var space, key, state string
@@ -337,7 +432,11 @@ func (s spaceSnapshots) submit(w http.ResponseWriter, r *http.Request, owner, id
 		return &requestFailure{409, code, "原任务提交无法继续。"}
 	}
 	if !body.Valid {
-		return backendUnavailable
+		code := lastError.String
+		if code == "" {
+			code = "invalid_input"
+		}
+		return &requestFailure{400, code, "所选文件无法用于任务。"}
 	}
 	var input struct {
 		Digest string `json:"inputDigest"`
@@ -347,12 +446,38 @@ func (s spaceSnapshots) submit(w http.ResponseWriter, r *http.Request, owner, id
 	}
 	if state == "frozen" {
 		result, err := s.db.ExecContext(ctx, `
-			UPDATE space_tasks SET state='submitted' WHERE id=? AND owner=? AND state='frozen'`, id, owner)
-		if err := requireOneSpaceUpdate(result, err); err != nil {
+			UPDATE space_tasks SET state='submitted' WHERE id=? AND owner=? AND state='frozen'
+			AND NOT EXISTS(SELECT 1 FROM space_draining_owners WHERE owner=?)`, id, owner, owner)
+		if err != nil {
 			return err
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if changed == 0 {
+			err := s.db.QueryRowContext(ctx, "SELECT state FROM space_tasks WHERE id=? AND owner=?", id, owner).Scan(&state)
+			if errors.Is(err, sql.ErrNoRows) || state == "abandoned" || state == "frozen" {
+				return &requestFailure{409, "owner_closed", "账号已注销。"}
+			}
+			if err != nil {
+				return err
+			}
 		}
 	}
 	op := taskRequest{action: "create", key: key, path: "/v1/tasks", input: json.RawMessage(body.String)}
+	op.reject = func(code string) error {
+		if code != "owner_closed" && code != "idempotency_conflict" {
+			return nil
+		}
+		return spaceImmediate(ctx, s.db, func(conn *sql.Conn) error {
+			_, err := conn.ExecContext(ctx, "UPDATE space_tasks SET state='abandoned',lastError=? WHERE id=? AND owner=?", code, id, owner)
+			if err == nil {
+				_, err = conn.ExecContext(ctx, "UPDATE space_task_inputs SET readPinned=0 WHERE taskId=?", id)
+			}
+			return err
+		})
+	}
 	op.accept = func(value any) error {
 		task := value.(map[string]any)["task"].(map[string]any)
 		if task["id"] != id || task["sourceSpaceId"] != space || task["inputDigest"] != input.Digest {

@@ -436,7 +436,8 @@ export function spaceTaskInputs({
             .all() as TaskIntent[];
         for (const row of tasks) {
             if (isClosing()) return;
-            if (row.state === 'failed' && draining.has(row.owner)) continue;
+            if (draining.has(row.owner) ? row.state === 'failed' : goUpload)
+                continue;
             await reconcileTask(row).catch(() => undefined);
         }
     }

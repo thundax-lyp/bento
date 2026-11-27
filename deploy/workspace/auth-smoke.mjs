@@ -23,6 +23,7 @@ const missing = process.argv[2] === '--missing-artifacts';
 const spaceConfigured = process.argv[2] === '--space-reads';
 const subject = spaceConfigured ? 'fixture-space-subject' : 'fixture-subject';
 const fixture = await startOidcFixture();
+let snapshotSubmissions = 0;
 let fileDeleteHeld = false;
 let fileDeleteReleased = false;
 const execution = createServer(async (req, res) => {
@@ -69,6 +70,7 @@ const execution = createServer(async (req, res) => {
             payload.inputManifest.length === 0;
         const frozen =
             snapshot &&
+            req.headers['user-agent']?.startsWith('Go-http-client/') &&
             req.headers['idempotency-key'] ===
                 '00000000-0000-4000-8000-000000000023' &&
             name === 'Smoke Snapshot' &&
@@ -86,6 +88,7 @@ const execution = createServer(async (req, res) => {
             res.writeHead(500).end('{}');
             return;
         }
+        if (frozen) snapshotSubmissions++;
         res.writeHead(202).end(
             JSON.stringify({
                 task: {
@@ -96,7 +99,10 @@ const execution = createServer(async (req, res) => {
                     inputDigest,
                     sourceSpaceId: payload.sourceSpaceId,
                     environmentVersion: 'sha256:' + '0'.repeat(64),
-                    status: snapshot ? 'ready' : 'preparing',
+                    status:
+                        snapshot && snapshotSubmissions > 1
+                            ? 'ready'
+                            : 'preparing',
                     prepareError: null,
                     closedReason: null,
                     reconciliation: null,
@@ -765,7 +771,18 @@ async function checkSpaceReads() {
             202,
             'Go freezes the uploaded file snapshot',
         );
-        assert.equal((await frozen.json()).task.sourceSpaceId, project);
+        const submitted = (await frozen.json()).task;
+        assert.equal(submitted.sourceSpaceId, project);
+        assert.equal(submitted.status, 'preparing');
+        const snapshotCutoff = Date.now() + 10_000;
+        while (snapshotSubmissions < 2 && Date.now() < snapshotCutoff)
+            await delay(250);
+        assert.ok(
+            snapshotSubmissions >= 2,
+            'Go retries the submitted snapshot',
+        );
+        // Give the API time to persist the ready receipt and release the pin.
+        await delay(250);
         const deleteRequest = () =>
             request('/api/space/files/' + emptyFile, {
                 method: 'DELETE',

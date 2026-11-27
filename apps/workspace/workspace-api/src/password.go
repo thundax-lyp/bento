@@ -69,6 +69,15 @@ var (
 func (f *requestFailure) Error() string { return f.code }
 
 func authFailure(w http.ResponseWriter, err error) {
+	var snapshot *snapshotFailure
+	if errors.As(err, &snapshot) {
+		body := map[string]any{"code": snapshot.code, "message": snapshot.message}
+		if len(snapshot.Issues) != 0 {
+			body["issues"] = snapshot.Issues
+		}
+		authJSON(w, snapshot.status, map[string]any{"error": body})
+		return
+	}
 	failure := &requestFailure{500, "server_error", "任务入口暂不可用，请稍后重试。"}
 	switch {
 	case errors.Is(err, errLoginRequired):
