@@ -33,40 +33,26 @@ services:
                 COPY apps/workspace/workspace-auth/package.json apps/workspace/workspace-auth/build.mjs apps/workspace/workspace-auth/login.html apps/workspace/workspace-auth/account.html apps/workspace/workspace-auth/style.css ./apps/workspace/workspace-auth/
                 RUN pnpm --filter @bento/workspace-auth build
 
-                FROM dependencies AS api-dependencies
-                COPY apps/workspace/workspace-api/package.json ./apps/workspace/workspace-api/
-                RUN pnpm --filter @bento/workspace-api install --prod --frozen-lockfile
-
                 FROM $${NODE_IMAGE} AS runtime
                 RUN apt-get update \
-                    && apt-get install -y --no-install-recommends nginx tini \
+                    && apt-get install -y --no-install-recommends curl nginx tini \
                     && rm -rf /var/lib/apt/lists/* \
                     && install -d -o node -g node -m 0700 /data
                 WORKDIR /app
                 COPY --from=go-build /out/bento-web-api /usr/local/bin/bento-web-api
-                COPY --from=api-dependencies /app/package.json ./package.json
-                COPY --from=api-dependencies /app/node_modules ./node_modules
-                COPY --from=api-dependencies /app/apps/workspace/workspace-api/package.json ./apps/workspace/workspace-api/
-                COPY --from=api-dependencies /app/apps/workspace/workspace-api/node_modules ./apps/workspace/workspace-api/node_modules
-                COPY apps/workspace/workspace-api/src/*.ts ./apps/workspace/workspace-api/src/
-                COPY apps/workspace/workspace-api/src/space/*.ts ./apps/workspace/workspace-api/src/space/
                 COPY --from=auth-build /app/apps/workspace/workspace-auth/dist/ ./apps/workspace/workspace-auth/dist/
-                COPY register-paths.mjs ./
-                COPY shared/text-snapshot.ts ./shared/
                 COPY --from=web-build /app/apps/workspace/workspace-web/dist/ /srv/bento/
                 COPY deploy/workspace/nginx.conf /etc/nginx/bento.conf
                 COPY deploy/workspace/start.sh /usr/local/bin/bento-web
                 RUN chmod 755 /usr/local/bin/bento-web
 
-                ENV NODE_ENV=production \
-                    BENTO_ONE_MODE=http \
-                    BENTO_ONE_PORT=4101
-
                 USER node
                 EXPOSE 8080
                 STOPSIGNAL SIGTERM
                 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-                    CMD ["node", "-e", "Promise.all(['http://127.0.0.1:8080/', 'http://127.0.0.1:8080/api/session', 'http://127.0.0.1:4102/healthz', 'http://127.0.0.1:4101/api/space'].map(url => fetch(url, {signal: AbortSignal.timeout(3000)}).then(async response => { await response.body?.cancel(); return response.status; }))).then(([web, api, database, legacy]) => { if (web !== 200 || api !== 401 || database !== 204 || legacy !== 401) process.exitCode = 1; }).catch(() => { process.exitCode = 1; })"]
+                    CMD curl -fsS --max-time 3 -o /dev/null http://127.0.0.1:8080/ \
+                        && curl -sS --max-time 3 -D - -o /dev/null http://127.0.0.1:8080/api/session | grep -q '^HTTP/1\.[01] 401 ' \
+                        && curl -sS --max-time 3 -D - -o /dev/null http://127.0.0.1:4102/healthz | grep -q '^HTTP/1\.[01] 204 '
                 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/bento-web"]
         image: bento-web:local
         ports:

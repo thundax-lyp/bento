@@ -1,42 +1,28 @@
-# Bento 任务入口
+# Bento Workspace API
 
-任务入口处理 Bento Web 的业务 HTTP API。配置 MySQL 的 Docker 部署由 Go 提供会话认证和账号仓储，HTTP 模式的项目与项目 Run 路由也由 Go 处理。Go 处理空白 Task 创建和已有 Task 的查询及操作。Go 还读取文件空间概览、预览和下载。TypeScript 文件空间的剩余路由及文件快照 Task 创建通过容器回环接口读取 Go 会话。独立 mock 启动使用现有 TypeScript 会话实现。浏览器使用 [独立 Web 前端](../workspace-web/README.md)完成登录、项目导入、任务提交和 diff 下载。开发时由 Vite 转发 `/api`。[Compose 中的 Web 服务](../../../deploy/README.md#启动与检查)由 NGINX 同域提供前端静态文件，并将 `/api/*` 转发到容器内 `127.0.0.1:4102` 的 Go 入口，再转发至 `4101` 的 task-entry。
-
-模拟模式的启动命令、测试账号及端口见前端说明。模拟后端提供普通任务和 `mock:empty`、`mock:failed`、`mock:review`。重启模拟进程会清空记录。
-
-真实模式需要兼容 v1 接口的执行服务。真实模式要求 Go 的 MySQL 账号仓储。任务入口监听回环地址，在服务端使用独立 bearer 和登录会话绑定的 ownerId 调用执行服务。反向代理保留浏览器 Origin 请求头，`BENTO_ONE_ORIGIN` 配置为浏览器访问前端的完整 origin。登录会话有效期 24 小时，重启任务入口后需要重新登录。
+Go 模块提供 Workspace 的认证、项目及 Run、Task 和文件空间 API。Compose 运行一个 `bento-web-api` 进程，NGINX 将 `/auth` 和 `/api/*` 转发到容器内 `127.0.0.1:4102`。Go 直接访问 MySQL 账号仓储，通过既有 v1 协议调用 Orchestrator，并使用 SQLite 和 S3 持久化文件空间状态。浏览器直传 S3。
 
 在 Git 忽略的本地目录配置任务入口，限制账号配置和环境文件仅供部署用户读取。账号文件是 JSON 数组，每个成员包含 `account`、固定且唯一的不透明 `ownerId`，以及小写十六进制 `inviteSha256`。为每个账号生成独立的 32 字节随机邀请码，以 base64url 编码后发给受邀用户，文件内只存该字符串的 SHA-256。保留原 ownerId 才能继续访问执行服务上的历史记录。
 
 | 环境变量                   | 用途                                                                    |
 | -------------------------- | ----------------------------------------------------------------------- |
-| `BENTO_ONE_MODE=http`      | 启用执行服务的真实 HTTP 接口                                            |
-| `BENTO_ONE_PORT`           | 任务入口的本地监听端口，默认 4101                                       |
 | `BENTO_ONE_ORIGIN`         | 浏览器访问前端的完整 origin。独立前端开发示例为 `http://127.0.0.1:4185` |
 | `BENTO_ONE_ACCOUNTS_FILE`  | Go 首次导入受邀账号使用的 JSON 文件路径                                 |
-| `BENTO_ONE_TWO_URL`        | 执行服务的 origin，真实模式必填                                         |
-| `BENTO_ONE_TWO_BEARER`     | 执行服务的独立服务 bearer，真实模式必填                                 |
-| `BENTO_ONE_TWO_TIMEOUT_MS` | 任务入口调用执行服务的超时，默认 10000 毫秒                             |
+| `BENTO_ONE_TWO_URL`        | 执行服务的 origin，必填                                                 |
+| `BENTO_ONE_TWO_BEARER`     | 执行服务的独立服务 bearer，必填                                         |
+| `BENTO_ONE_TWO_TIMEOUT_MS` | Workspace API 调用执行服务的超时，默认 10000 毫秒                       |
 
-本地直接启动任务入口时，可以用环境文件配置。真实模式需同时启动 Go 入口与 MySQL。启用 OIDC 时，task-entry 启动前需要构建 `apps/workspace/workspace-auth/dist/` 下的 `login.html`、`account.html` 和 `style.css`。
+本地开发可按[前端说明](../workspace-web/README.md)启动浏览器模拟服务。连接真实 MySQL 和 Orchestrator 时，在仓库根目录配置环境后启动 Go API。OIDC 模式先构建认证静态文件。
 
 ```sh
-mkdir -p debug-workspace
 pnpm --filter @bento/workspace-auth build
-node --import ./register-paths.mjs --env-file=debug-workspace/task-entry.env apps/workspace/workspace-api/src/main.ts
+go -C apps/workspace/workspace-api build -o /tmp/bento-web-api ./src
+/tmp/bento-web-api
 ```
-
-关闭页面再打开时，任务列表会从服务端重新加载。提交结果暂未确认时，浏览器只存账号及项目范围内的提交键与描述摘要。用原任务描述重试会沿用该键。空 diff 可以预览状态并下载为空文件。
-
-Go 入口位于 `src/main.go`。从本工程根目录执行 `go build ./src`，运行 `go test ./... && go vet ./...` 检查 Go 实现。
 
 ## HTTP 服务生命周期
 
-任务入口由 `src/http-listener.ts` 使用 Node 公开的 `node:http` API 监听回环地址，继续使用上文的反向代理和 Web API 配置。请求头和完整请求的接收期限均为 30 秒，在创建 Server 时配置。接收期限独立于处理器耗时；是否收完请求以 Node 的 `IncomingMessage.complete` 为准，不依赖处理器消费请求流或触发 `end`。完整请求的后端处理不会因该期限中断。监听器不读取 DSH 私有字段，不调用 Node 内部连接扫描函数。
-
-收到 `SIGINT` 或 `SIGTERM` 后，任务入口停止接收新连接，关闭空闲连接，等待已进入处理器的请求结束后释放空间资源。监听器保留独立接收期限，保证停止监听后未发完的请求头和请求体仍会结束。`tests/http-listener.test.ts` 使用短期限验证接收和关闭行为。
-
-空间 API 由 `src/space/index.ts` 接入。文件删除和项目删除分别位于 `src/space/file-deletion.ts` 和 `src/space/project-deletion.ts`，共用入口提供的 SQLite 连接和事务函数。`src/space/execution.ts` 协调项目初始化，`src/space/task-inputs.ts` 管理 Task 输入冻结、重投与 pin。
+`src/main.go` 管理 HTTP 监听、优雅关闭及后台任务。项目登记、详情和工作区初始化由 `src/space_execution.go` 处理。上传、文件删除、项目删除、快照 Task 和账号清理由各自的 Go 状态机推进。SQLite 在 Go 启动时初始化，文件写入和清理共享同一进程的文件锁，远端操作凭持久化提交键重试。
 
 ## 账号和云端空间
 
@@ -58,16 +44,14 @@ Go 入口位于 `src/main.go`。从本工程根目录执行 `go build ./src`，�
 
 ## Go 账号仓储配置
 
-Compose 同步设置 `BENTO_MYSQL_HOST=mysql:3306`、`BENTO_MYSQL_USER=bento`、`BENTO_MYSQL_DATABASE=bento` 与 `BENTO_MYSQL_PASSWORD`。Go 使用这些变量连接 MySQL，task-entry 在设置了 `BENTO_MYSQL_HOST` 时通过 `127.0.0.1:4103/internal/*` 访问 Go 账号仓储。此接口与对外 API 使用不同监听端口。MySQL 不可用时认证与账号清理请求失败并保留持久清理记录。
-
-生产 Web 容器需要同时运行 Go 与 task-entry。直接运行 Node 的模拟开发使用进程内模拟账号。项目、Run 和执行授权继续通过既有执行服务协议访问。
+Compose 设置 `BENTO_MYSQL_HOST=mysql:3306`、`BENTO_MYSQL_USER=bento`、`BENTO_MYSQL_DATABASE=bento` 和 `BENTO_MYSQL_PASSWORD`。Go 读取这些变量并直接连接 MySQL。注销先停止接收该账号的新写入，再对账快照提交回执并协调 Orchestrator 清理，最后清理账号的空间对象和元数据。未完成的清理记录持久保留并由后台重试。
 
 ## Keycloak 登录
 
 设置 `BENTO_OIDC_ISSUER` 后，任务入口用 OIDC 授权码与 S256 PKCE 接受 Keycloak 身份。服务器验证 state、nonce、签名及 Token 声明。只有邮箱已验证且属于配置组织的身份才能取得 Bento 会话。Go 账号仓储在 MySQL 以 `(oidc_issuer, oidc_subject)` 唯一绑定 `owner_id`，并发回调读取同一个绑定。邮箱用于展示。
 
-`/auth` 独立提供认证界面，OIDC 回调使用 `/api/oidc/callback`。此模式关闭任务入口的密码登录、注册和密码确认注销端点。普通退出使用 OIDC RP-Initiated Logout。业务注销要求用原身份重新认证，随后按现有机制关闭账号并清理资源。登录会话及未完成的 OIDC 事务随 task-entry 重启失效，身份绑定和关闭状态保留。部署配置见 [部署配置](../../../deploy/README.md#准备配置)。
+`/auth` 独立提供认证界面，OIDC 回调使用 `/api/oidc/callback`。此模式关闭任务入口的密码登录、注册和密码确认注销端点。普通退出使用 OIDC RP-Initiated Logout。业务注销要求用原身份重新认证，随后按现有机制关闭账号并清理资源。登录会话及未完成的 OIDC 事务随 Go API 重启失效，身份绑定和关闭状态保留。部署配置见 [部署配置](../../../deploy/README.md#准备配置)。
 
 ## 测试
 
-TypeScript 测试位于 [`tests/`](tests/)，公共 fixture 位于 [`tests/fixtures/`](tests/fixtures/)。运行 `pnpm --filter @bento/workspace-api check` 可执行 API 类型检查、Node 测试及 Go 检查。
+运行 `pnpm check:workspace-api` 执行 Go 测试和 `go vet`。容器回归由 `deploy/workspace/auth-smoke.sh` 执行，覆盖 OIDC 生命周期、项目空间、上传与删除、快照 Task、账号清理和进程拓扑。浏览器模拟服务和相关测试位于 [Workspace Web 验收目录](../workspace-web/acceptance/fixtures/workspace-api/)。

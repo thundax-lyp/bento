@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { openSpaceIntegrityFixture } from '@/apps/workspace/workspace-api/tests/fixtures/space-integrity-fixture.ts';
+import { openSpaceIntegrityFixture } from '@/apps/workspace/workspace-web/acceptance/fixtures/workspace-api/tests/fixtures/space-integrity-fixture.ts';
 
 export async function startSpaceIntegrityFixture() {
     const space = await openSpaceIntegrityFixture({

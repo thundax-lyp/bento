@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -31,6 +32,9 @@ type taskRequest struct {
 	query                  url.Values
 	prompt                 string
 	name                   string
+	input                  json.RawMessage
+	accept                 func(any) error
+	reject                 func(string) error
 }
 
 func parseGoTask(w http.ResponseWriter, r *http.Request) (taskRequest, error) {
@@ -310,7 +314,7 @@ func (op taskRequest) projectResponse(raw json.RawMessage) (any, error) {
 	return nil, backendUnavailable
 }
 
-func (s projectService) taskRoutes(mux *http.ServeMux, sessions *webSessions, origin string, legacy http.Handler) {
+func (s projectService) taskRoutes(mux *http.ServeMux, sessions *webSessions, origin string, snapshots *spaceSnapshots) {
 	handle := func(w http.ResponseWriter, r *http.Request) {
 		s.responseHeaders(w)
 		if r.Method == http.MethodPost && (len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != origin) {
@@ -320,7 +324,7 @@ func (s projectService) taskRoutes(mux *http.ServeMux, sessions *webSessions, or
 		session, err := sessions.current(r)
 		if err == nil {
 			if r.Method == http.MethodPost && r.URL.EscapedPath() == "/api/tasks" {
-				err = s.createTask(w, r, session.Owner, legacy)
+				err = s.createTask(w, r, session.Owner, snapshots)
 			} else {
 				err = s.serveTask(w, r, session.Owner)
 			}
@@ -335,7 +339,7 @@ func (s projectService) taskRoutes(mux *http.ServeMux, sessions *webSessions, or
 	mux.HandleFunc("POST /api/tasks/", handle)
 }
 
-func (s projectService) createTask(w http.ResponseWriter, r *http.Request, owner string, legacy http.Handler) error {
+func (s projectService) createTask(w http.ResponseWriter, r *http.Request, owner string, snapshots *spaceSnapshots) error {
 	query, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil || len(query) != 0 {
 		return badTask
@@ -376,10 +380,36 @@ func (s projectService) createTask(w http.ResponseWriter, r *http.Request, owner
 	}
 	kind, _ := projectString(source["kind"])
 	if kind == "space_snapshot" {
-		// Snapshot selection and retention still share the existing file-space transaction.
-		r.Body = io.NopCloser(bytes.NewReader(raw))
-		legacy.ServeHTTP(w, r)
-		return nil
+		var selection snapshotSelection
+		var fileIDs []json.RawMessage
+		if len(source) != 3 || json.Unmarshal(source["fileIds"], &fileIDs) != nil || len(fileIDs) == 0 {
+			return badTask
+		}
+		if len(fileIDs) > 100 {
+			return &requestFailure{413, "too_large", "任务快照最多 100 个文件。"}
+		}
+		selection.Kind = kind
+		selection.SpaceID, ok = wellFormedProjectString(source["spaceId"])
+		if !ok || !projectResourceID(selection.SpaceID) {
+			return notFound
+		}
+		for _, rawID := range fileIDs {
+			id, ok := wellFormedProjectString(rawID)
+			if !ok || !projectResourceID(id) {
+				return notFound
+			}
+			selection.FileIDs = append(selection.FileIDs, id)
+		}
+		slices.Sort(selection.FileIDs)
+		for i := 1; i < len(selection.FileIDs); i++ {
+			if selection.FileIDs[i-1] == selection.FileIDs[i] {
+				return badTask
+			}
+		}
+		if snapshots == nil {
+			return &requestFailure{503, "source_unavailable", "空间文件入口暂不可用。"}
+		}
+		return snapshots.create(w, r, owner, keys[0], name, selection)
 	}
 	if kind != "blank" || len(source) != 1 {
 		return badTask
@@ -401,7 +431,7 @@ func (s projectService) forwardTask(w http.ResponseWriter, r *http.Request, owne
 		upstream += "?" + op.query.Encode()
 	}
 	var input map[string]any
-	if op.action == "create" {
+	if op.action == "create" && op.input == nil {
 		hash := sha256.Sum256([]byte("[]"))
 		input = map[string]any{
 			"id": nil, "name": op.name, "sourceSpaceId": nil, "inputFiles": []any{},
@@ -411,7 +441,9 @@ func (s projectService) forwardTask(w http.ResponseWriter, r *http.Request, owne
 		input = map[string]any{"prompt": op.prompt}
 	}
 	var body io.Reader
-	if input != nil {
+	if op.input != nil {
+		body = bytes.NewReader(op.input)
+	} else if input != nil {
 		raw, err := json.Marshal(input)
 		if err != nil {
 			return err
@@ -459,6 +491,11 @@ func (s projectService) forwardTask(w http.ResponseWriter, r *http.Request, owne
 			if _, err := allowed(encoded); err != nil {
 				return backendUnavailable
 			}
+			if op.reject != nil {
+				if err := op.reject(code); err != nil {
+					return err
+				}
+			}
 			body := map[string]string{"code": code, "message": "当前请求无法执行。"}
 			if code == "run_not_retryable" {
 				reason := failure.Error.Reason
@@ -468,6 +505,9 @@ func (s projectService) forwardTask(w http.ResponseWriter, r *http.Request, owne
 				if _, err := known(encoded); err == nil {
 					body["reason"] = reason
 				}
+			}
+			if w == nil {
+				return &requestFailure{status, code, body["message"]}
 			}
 			authJSON(w, status, map[string]any{"error": body})
 			return nil
@@ -497,6 +537,13 @@ func (s projectService) forwardTask(w http.ResponseWriter, r *http.Request, owne
 	if err != nil {
 		return err
 	}
-	authJSON(w, status, value)
+	if op.accept != nil {
+		if err := op.accept(value); err != nil {
+			return err
+		}
+	}
+	if w != nil {
+		authJSON(w, status, value)
+	}
 	return nil
 }

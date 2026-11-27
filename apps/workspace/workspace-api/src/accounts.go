@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"net/http"
 	"os"
 	"regexp"
 )
@@ -87,16 +86,6 @@ type purge struct {
 	Space bool   `json:"spaceRequired"`
 }
 
-func (s accounts) register(mux *http.ServeMux) {
-	mux.HandleFunc("GET /internal/accounts/by-name/{name}", s.lookup)
-	mux.HandleFunc("POST /internal/accounts/oidc", s.bindOIDC)
-	mux.HandleFunc("GET /internal/accounts/by-owner/{owner}", s.lookup)
-	mux.HandleFunc("POST /internal/accounts/{owner}/register", s.activate)
-	mux.HandleFunc("POST /internal/accounts/{owner}/close", s.closeAccount)
-	mux.HandleFunc("GET /internal/account-purges", s.pending)
-	mux.HandleFunc("DELETE /internal/account-purges/{owner}", s.finish)
-}
-
 func (s accounts) accountByName(ctx context.Context, name string) (account, error) {
 	return scanAccount(s.db.QueryRowContext(ctx, accountSelect+"account = ?", name))
 }
@@ -112,21 +101,6 @@ func scanAccount(row *sql.Row) (account, error) {
 	var a account
 	err := row.Scan(&a.Name, &a.Owner, &a.InviteHash, &a.Salt, &a.Hash, &a.Closed)
 	return a, err
-}
-
-func (s accounts) lookup(w http.ResponseWriter, r *http.Request) {
-	var a account
-	var err error
-	if owner := r.PathValue("owner"); owner != "" {
-		a, err = s.accountByOwner(r.Context(), owner)
-	} else {
-		a, err = s.accountByName(r.Context(), r.PathValue("name"))
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		w.WriteHeader(http.StatusNotFound)
-		return
-	}
-	reply(w, a, err)
 }
 
 type oidcIdentity struct{ Issuer, Subject, Account string }
@@ -157,49 +131,14 @@ func (s accounts) linkIdentity(ctx context.Context, identity oidcIdentity) (acco
 	return result, err
 }
 
-func (s accounts) bindOIDC(w http.ResponseWriter, r *http.Request) {
-	var input oidcIdentity
-	if !decode(w, r, &input) {
-		return
-	}
-	if !input.valid() {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	a, err := s.linkIdentity(r.Context(), input)
-	reply(w, a, err)
-}
-
 func (s accounts) registerPassword(ctx context.Context, owner string, salt, hash []byte) (bool, error) {
 	return changed(s.db.ExecContext(ctx, `UPDATE web_accounts SET salt = ?, password_hash = ?
 		WHERE owner_id = ? AND closed = FALSE AND password_hash IS NULL`, salt, hash, owner))
 }
 
-func (s accounts) activate(w http.ResponseWriter, r *http.Request) {
-	var input struct{ Salt, Hash []byte }
-	if !decode(w, r, &input) {
-		return
-	}
-	if len(input.Salt) != 16 || len(input.Hash) != 32 {
-		w.WriteHeader(http.StatusBadRequest)
-		return
-	}
-	ok, err := s.registerPassword(r.Context(), r.PathValue("owner"), input.Salt, input.Hash)
-	reply(w, ok, err)
-}
-
 func (s accounts) deactivate(ctx context.Context, owner string, spaceRequired bool) (bool, error) {
 	return changed(s.db.ExecContext(ctx, `UPDATE web_accounts SET closed = TRUE, salt = NULL,
 		password_hash = NULL, purge_space = ? WHERE owner_id = ? AND closed = FALSE`, spaceRequired, owner))
-}
-
-func (s accounts) closeAccount(w http.ResponseWriter, r *http.Request) {
-	var input struct{ SpaceRequired bool }
-	if !decode(w, r, &input) {
-		return
-	}
-	ok, err := s.deactivate(r.Context(), r.PathValue("owner"), input.SpaceRequired)
-	reply(w, ok, err)
 }
 
 func (s accounts) pendingPurges(ctx context.Context) ([]purge, error) {
@@ -219,41 +158,14 @@ func (s accounts) pendingPurges(ctx context.Context) ([]purge, error) {
 	return result, rows.Err()
 }
 
-func (s accounts) pending(w http.ResponseWriter, r *http.Request) {
-	purges, err := s.pendingPurges(r.Context())
-	reply(w, purges, err)
-}
-
 func (s accounts) finishPurge(ctx context.Context, owner string) error {
 	_, err := s.db.ExecContext(ctx, "UPDATE web_accounts SET purge_space = NULL WHERE owner_id = ?", owner)
 	return err
 }
-
-func (s accounts) finish(w http.ResponseWriter, r *http.Request) {
-	reply(w, nil, s.finishPurge(r.Context(), r.PathValue("owner")))
-}
-
-func decode(w http.ResponseWriter, r *http.Request, value any) bool {
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(value); err != nil {
-		w.WriteHeader(http.StatusBadRequest)
-		return false
-	}
-	return true
-}
-
 func changed(result sql.Result, err error) (bool, error) {
 	if err != nil {
 		return false, err
 	}
 	count, err := result.RowsAffected()
 	return count == 1, err
-}
-
-func reply(w http.ResponseWriter, value any, err error) {
-	if err != nil {
-		w.WriteHeader(http.StatusServiceUnavailable)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(value)
 }

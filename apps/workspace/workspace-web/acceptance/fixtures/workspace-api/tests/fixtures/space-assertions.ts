@@ -1,4 +1,4 @@
-import { RequestError } from '@/apps/workspace/workspace-api/src/protocol.ts';
+import { RequestError } from '@/apps/workspace/workspace-web/acceptance/fixtures/workspace-api/src/protocol.ts';
 
 export const noBody = () =>
     Promise.reject(new Error('Unexpected request body'));

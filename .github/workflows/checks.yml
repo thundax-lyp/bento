@@ -177,6 +177,17 @@ jobs:
             - run: pnpm check:workspace
             - run: pnpm check:admin
 
+            - name: Verify the Workspace Go API container
+              env:
+                  BENTO_MYSQL_PASSWORD: fixture-only
+                  BENTO_EXECUTION_BEARER: fixture-only
+                  BENTO_EXECUTION_ENVIRONMENT_VERSION: workspace-go-validation
+                  KEYCLOAK_ADMIN_PASSWORD: fixture-only
+                  KEYCLOAK_DB_PASSWORD: fixture-only
+              run: |
+                  docker compose -f deploy/compose.yaml build bento-web
+                  bash deploy/workspace/auth-smoke.sh
+
     orchestrator:
         name: Orchestrator core checks
         needs: changes
