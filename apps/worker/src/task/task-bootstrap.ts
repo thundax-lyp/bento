@@ -1,7 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import type { DshWorkerBootstrap } from './dsh-worker.ts';
+import type { DshWorkerBootstrap } from '../runtime/dsh-worker.ts';
 import { projectTaskChecks, type TrustedTaskCheck } from './task-projection.ts';
 
 type Runtime = Awaited<ReturnType<DshWorkerBootstrap>>;

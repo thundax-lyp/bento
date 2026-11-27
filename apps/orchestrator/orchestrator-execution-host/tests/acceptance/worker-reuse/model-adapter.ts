@@ -6,7 +6,7 @@ import {
 import { appendFileSync, existsSync, unlinkSync } from 'node:fs';
 import { request as httpRequest, type ClientRequest } from 'node:http';
 import { randomUUID } from 'node:crypto';
-import type { ModelAdapterFactory } from '@/apps/worker/src/base-bootstrap.ts';
+import type { ModelAdapterFactory } from '@/apps/worker/src/runtime/base-bootstrap.ts';
 
 function trace(value: object) {
     const path = process.env.BENTO_REUSE_TRACE;

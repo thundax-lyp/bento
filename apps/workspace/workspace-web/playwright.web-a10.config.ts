@@ -22,7 +22,7 @@ if (
 }
 
 export default defineConfig({
-    testDir: './acceptance',
+    testDir: './tests/acceptance',
     testMatch: '**/web-a10.spec.ts',
     projects: [{ name: 'chromium', use: devices['Desktop Chrome'] }],
     workers: 1,

@@ -54,7 +54,7 @@ CI 按完整变更范围选择检查：Web 常规回归、空间完整性和队�
 
 CI 的 `Repository quality`、`Workspace checks`、`Orchestrator core checks` 和 `Worker reuse acceptance` 按既有路径判定并行执行，长时 Worker 验收不再等待常规检查。`Repository checks` 保留为聚合门禁：路径检测与质量检查必须成功，所有应执行的分支必须成功，失败、取消或意外跳过均不能通过。Orchestrator 常规分支仍使用 `pnpm --filter @bento/orchestrator check:core:fast`，本地检查命令与验收范围不变。Temporal 重投与 package 契约继续在独立的 `Temporal retry acceptance` job 执行。CI 以仅下载步骤可见的只读 GitHub token 预取官方固定 Temporal CLI 1.5.1 Linux amd64 归档，120秒上限，核对大小/SHA后通过既有 `BENTO_A6_TEMPORAL_ARCHIVE` 入口再次校验成员、binary和版本并执行九项真实验收；测试进程不接收该token，私有归档在job结束时清理。这条路径不覆盖工具默认无输入下载分支。上述拆分不改变本地 `pnpm check` 的完整验收范围。
 
-Worker正式运行时可选用[base-bootstrap.ts](apps/worker/src/base-bootstrap.ts)，每轮新建官方DSH与SDK资源，清理后才返回回执。可信配置、模型factory及Task投影边界见[Worker运行时部署](deploy/README.md#worker-正式运行时与复用验证)。
+Worker正式运行时可选用[base-bootstrap.ts](apps/worker/src/runtime/base-bootstrap.ts)，每轮新建官方DSH与SDK资源，清理后才返回回执。可信配置、模型factory及Task投影边界见[Worker运行时部署](deploy/README.md#worker-正式运行时与复用验证)。
 
 `pnpm --filter @bento/orchestrator test:worker-runtime`运行bootstrap/transport单测，`test:worker-reuse`运行SDK准备、生产ingress和64轮常驻Worker验收（默认长时模式最少315秒）；两者均纳入本地 `check:core`。PR CI 使用 `BENTO_A6_WORKER_REUSE_MODE=burst` 连续执行相同64轮及隔离断言，不主动补足轮间5秒间隔；main CI和本地默认 `soak` 保留至少315秒跨度。连续模式不代表长时间驻留验证通过。GitHub CI 对仅涉及执行服务测试目录和两个 Go Temporal 测试文件的变更运行常规检查。Orchestrator 或 Worker 的运行代码、部署、验收及未知范围变更仍触发常驻 Worker 验收。SDK默认按固定官方来源真实构建，本地受控输入范围见部署手册。
 

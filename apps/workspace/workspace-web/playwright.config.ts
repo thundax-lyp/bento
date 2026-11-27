@@ -12,7 +12,7 @@ export default defineConfig({
     webServer: [
         {
             command:
-                'node --import ./register-paths.mjs apps/workspace/workspace-web/acceptance/fixtures/workspace-api/start-mock.ts',
+                'node --import ./register-paths.mjs apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/start-mock.ts',
             cwd: root,
             url: apiOrigin + '/api/session',
             env: {

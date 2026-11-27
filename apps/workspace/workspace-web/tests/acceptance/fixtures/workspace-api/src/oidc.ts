@@ -58,21 +58,21 @@ export async function keycloakAuth({
     const [loginHtml, accountHtml, styleCss] = await Promise.all([
         readFile(
             new URL(
-                '../../../../../workspace-auth/dist/login.html',
+                '../../../../../../workspace-auth/dist/login.html',
                 import.meta.url,
             ),
             'utf8',
         ),
         readFile(
             new URL(
-                '../../../../../workspace-auth/dist/account.html',
+                '../../../../../../workspace-auth/dist/account.html',
                 import.meta.url,
             ),
             'utf8',
         ),
         readFile(
             new URL(
-                '../../../../../workspace-auth/dist/style.css',
+                '../../../../../../workspace-auth/dist/style.css',
                 import.meta.url,
             ),
             'utf8',

@@ -20,7 +20,7 @@ if (
     throw new Error('A12 requires its private HTTPS lease and invited account');
 }
 export default defineConfig({
-    testDir: './acceptance',
+    testDir: './tests/acceptance',
     testMatch: '**/web-a12.spec.ts',
     projects: [{ name: 'chromium', use: devices['Desktop Chrome'] }],
     workers: 1,

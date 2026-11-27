@@ -11,7 +11,7 @@ import { Context } from '@deepseek-ai/cordis';
 import {
     reconcileSessionPersistence,
     remoteSessionPersistence,
-} from '@/apps/worker/src/remote-session.ts';
+} from '@/apps/worker/src/runtime/remote-session.ts';
 import {
     HistoryCheckpointUnavailable,
     SessionHistory,

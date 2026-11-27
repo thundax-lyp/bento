@@ -46,7 +46,7 @@ run_smoke() {
         --env BENTO_MYSQL_USER=bento --env BENTO_MYSQL_DATABASE=bento \
         --env BENTO_MYSQL_PASSWORD=fixture-only \
         --mount "type=bind,source=$PWD/deploy/workspace/auth-smoke.mjs,target=/tmp/bento-auth-smoke/auth-smoke.mjs,readonly" \
-        --mount "type=bind,source=$PWD/apps/workspace/workspace-web/acceptance/fixtures/workspace-api/tests/fixtures/oidc-fixture.ts,target=/tmp/bento-auth-smoke/oidc-fixture.ts,readonly" \
+        --mount "type=bind,source=$PWD/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/tests/fixtures/oidc-fixture.ts,target=/tmp/bento-auth-smoke/oidc-fixture.ts,readonly" \
         "$@" --entrypoint node bento-web:local /tmp/bento-auth-smoke/auth-smoke.mjs "$mode"
 }
 

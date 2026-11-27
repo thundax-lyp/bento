@@ -63,7 +63,7 @@ export async function callA10Hook<A extends Action>(
             else assert.match(value, uuid);
         }
         const checkout = resolve(
-            fileURLToPath(new URL('../../../..', import.meta.url)),
+            fileURLToPath(new URL('../../../../..', import.meta.url)),
         );
         // Playwright may run from the frozen candidate under the same lease.
         const frozenCheckout =

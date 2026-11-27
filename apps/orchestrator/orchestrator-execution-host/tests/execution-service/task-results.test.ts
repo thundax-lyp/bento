@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
-import { completedTurn } from '@/apps/worker/src/dsh-worker.ts';
+import { completedTurn } from '@/apps/worker/src/runtime/dsh-worker.ts';
 import { snapshotSha256 } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
 import {
     type ExecutionHost,

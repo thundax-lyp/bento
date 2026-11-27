@@ -7,7 +7,12 @@ import {
     type Response,
     type Browser,
 } from '@playwright/test';
-import type { Session, Task, TaskEvent, TaskRun } from '../src/api.ts';
+import type {
+    Session,
+    Task,
+    TaskEvent,
+    TaskRun,
+} from '@/apps/workspace/workspace-web/src/api.ts';
 import { callA10Hook } from './web-a10-hook.ts';
 
 type Login = { account: string; username: string; password: string };

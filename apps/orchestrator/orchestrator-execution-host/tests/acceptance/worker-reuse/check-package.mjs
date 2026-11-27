@@ -88,8 +88,8 @@ assert.equal(packages.length, 1);
 const packed = new Set(packages[0].files.map((row) => row.path));
 const publicFiles = new Set(read('public-files.json').files);
 const sources = [
-    'apps/worker/src/base-bootstrap.ts',
-    'apps/worker/src/sdk-transport.ts',
+    'apps/worker/src/runtime/base-bootstrap.ts',
+    'apps/worker/src/openshell/sdk-transport.ts',
     'apps/worker/tests/base-bootstrap.test.ts',
     'apps/worker/tests/sdk-transport.test.ts',
     ...[

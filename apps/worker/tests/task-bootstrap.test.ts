@@ -6,9 +6,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { runDshWorker, type DshWorkerBootstrap } from '../src/dsh-worker.ts';
+import {
+    runDshWorker,
+    type DshWorkerBootstrap,
+} from '../src/runtime/dsh-worker.ts';
 import type { WorkerRequest } from '../src/protocol.ts';
-import bootstrap from '../src/task-bootstrap.ts';
+import bootstrap from '../src/task/task-bootstrap.ts';
 
 const request: WorkerRequest = {
     mode: 'execute',
@@ -122,7 +125,7 @@ test('bootstrap resolves only a distinct absolute module and preserves the under
                 '',
                 'fixture.mjs',
                 fileURLToPath(
-                    new URL('../src/task-bootstrap.ts', import.meta.url),
+                    new URL('../src/task/task-bootstrap.ts', import.meta.url),
                 ),
                 invalid,
             ]) {

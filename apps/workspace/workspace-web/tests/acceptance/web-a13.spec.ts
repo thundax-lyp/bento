@@ -11,7 +11,7 @@ import type {
     TaskEvent,
     TaskResult,
     TaskRun,
-} from '../src/api.ts';
+} from '@/apps/workspace/workspace-web/src/api.ts';
 
 const continuation = process.env.BENTO_WEB_A11 === '1';
 const uuidV4 =

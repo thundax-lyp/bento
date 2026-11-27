@@ -1,4 +1,4 @@
-import { publicTaskEventBatch, type PublicWorkerEvent } from './protocol.ts';
+import { publicTaskEventBatch, type PublicWorkerEvent } from '../protocol.ts';
 
 export type TrustedTaskCheck = {
     version: 1;
