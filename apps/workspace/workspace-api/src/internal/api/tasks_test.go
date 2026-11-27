@@ -1,7 +1,6 @@
-package main
+package api
 
 import (
-	"encoding/json"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -44,40 +43,12 @@ func TestGoTaskRouteContract(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || op.action != tc.want {
-				t.Fatalf("action %s, error %v", op.action, err)
+			if err != nil || op.Action != tc.want {
+				t.Fatalf("action %s, error %v", op.Action, err)
 			}
-			if op.action == "createRun" && (op.prompt != "work" || op.key != key) {
+			if op.Action == "createRun" && (op.Prompt != "work" || op.Key != key) {
 				t.Fatalf("invalid submit request: %#v", op)
 			}
 		})
-	}
-}
-
-func TestGoTaskProjectsAndBindsUpstreamRun(t *testing.T) {
-	const task = "00000000-0000-4000-8000-000000000001"
-	const run = "00000000-0000-4000-8000-000000000002"
-	const timestamp = "2026-11-27T00:00:00Z"
-	body := map[string]any{
-		"id": run, "taskId": task, "sequence": 1, "prompt": "work", "status": "queued",
-		"retryOf": nil, "canContinue": false, "canCancel": true,
-		"retryReason": nil, "resultVersion": nil, "summary": nil, "createdAt": timestamp, "updatedAt": timestamp,
-		"privateWorkerData": "not public",
-	}
-	op := taskRequest{action: "run", task: task, run: run}
-	raw, err := json.Marshal(map[string]any{"run": body})
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := op.projectResponse(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if projected := result.(map[string]any)["run"].(map[string]any); len(projected) != len(body)-1 || projected["privateWorkerData"] != nil {
-		t.Fatalf("unexpected projection: %#v", projected)
-	}
-	op.task = "wrong-task"
-	if _, err := op.projectResponse(raw); err == nil {
-		t.Fatal("expected an owner route binding mismatch to be rejected")
 	}
 }

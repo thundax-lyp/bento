@@ -7,7 +7,6 @@ import (
 	"errors"
 	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -83,33 +82,14 @@ func loadAuthArtifacts(directory string) (authArtifacts, error) {
 	return assets, nil
 }
 
-func SecureURL(raw string, local bool) (*url.URL, error) {
-	u, err := url.Parse(raw)
-	if err != nil || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
-		return nil, errors.New("invalid Keycloak URL")
-	}
-	if u.Scheme == "https" || (local && u.Scheme == "http" && Loopback(u.Hostname())) {
-		return u, nil
-	}
-	return nil, errors.New("Keycloak URLs require HTTPS")
-}
-
-func Loopback(host string) bool {
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
 func newKeycloak(ctx context.Context, options oidcOptions, store oidcAccounts, sessions *Sessions) (*keycloak, error) {
-	origin, err := SecureURL(options.origin, true)
+	origin, err := httpx.SecureURL(options.origin, true)
 	if err != nil || origin.Path != "" || origin.RawQuery != "" ||
 		options.clientID == "" || options.clientSecret == "" || options.organization == "" {
 		return nil, errors.New("invalid Keycloak settings")
 	}
-	local := origin.Scheme == "http" && Loopback(origin.Hostname())
-	issuer, err := SecureURL(options.issuer, local)
+	local := origin.Scheme == "http" && httpx.Loopback(origin.Hostname())
+	issuer, err := httpx.SecureURL(options.issuer, local)
 	if err != nil || issuer.RawQuery != "" {
 		return nil, errors.New("invalid Keycloak issuer")
 	}
@@ -136,11 +116,11 @@ func newKeycloak(ctx context.Context, options oidcOptions, store oidcAccounts, s
 	endpoint := provider.Endpoint()
 	allowHTTP := local && issuer.Scheme == "http"
 	for _, raw := range []string{endpoint.AuthURL, endpoint.TokenURL, metadata.JWKS} {
-		if _, err := SecureURL(raw, allowHTTP); err != nil {
+		if _, err := httpx.SecureURL(raw, allowHTTP); err != nil {
 			return nil, err
 		}
 	}
-	logout, err := SecureURL(metadata.Logout, allowHTTP)
+	logout, err := httpx.SecureURL(metadata.Logout, allowHTTP)
 	if err != nil {
 		return nil, err
 	}

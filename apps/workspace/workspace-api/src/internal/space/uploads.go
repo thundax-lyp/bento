@@ -1,4 +1,4 @@
-package main
+package space
 
 import (
 	"context"
@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"sort"
 	"strings"
 	"time"
@@ -15,6 +14,9 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/orchestrator"
 )
 
 const (
@@ -65,11 +67,11 @@ func spaceConflict(message string) *httpx.Error {
 }
 
 func parseUploadReservation(fields map[string]json.RawMessage) (uploadReservation, error) {
-	id, _ := projectString(fields["id"])
-	if !taskUUID.MatchString(id) {
+	id, _ := httpx.String(fields["id"])
+	if !orchestrator.ValidTaskID(id) {
 		return uploadReservation{}, httpx.NotFound
 	}
-	path, ok := wellFormedProjectString(fields["path"])
+	path, ok := httpx.WellFormedString(fields["path"])
 	if !ok || len(utf16.Encode([]rune(path))) > 1024 ||
 		strings.ContainsRune(path, 92) || strings.ContainsFunc(path, unicode.IsControl) {
 		return uploadReservation{}, invalidSpace("文件路径无效。")
@@ -79,11 +81,11 @@ func parseUploadReservation(fields map[string]json.RawMessage) (uploadReservatio
 			return uploadReservation{}, invalidSpace("文件路径无效。")
 		}
 	}
-	number, err := taskInteger(0)(fields["size"])
-	if err != nil {
+	number, ok := httpx.Integer(fields["size"], 0)
+	if !ok {
 		return uploadReservation{}, invalidSpace("文件大小无效。")
 	}
-	size := number.(int64)
+	size := number
 	if size > spaceFileLimit {
 		return uploadReservation{}, httpx.NewError(413, "file_limit", "单文件最多 100 MB。")
 	}
@@ -94,7 +96,7 @@ func parseUploadReservation(fields map[string]json.RawMessage) (uploadReservatio
 	}
 	manifest := make([]string, 0, len(checksums))
 	for _, raw := range checksums {
-		value, ok := projectString(raw)
+		value, ok := httpx.String(raw)
 		digest, err := base64.StdEncoding.Strict().DecodeString(value)
 		if !ok || err != nil || len(digest) != 32 || base64.StdEncoding.EncodeToString(digest) != value {
 			return uploadReservation{}, invalidSpace("分块摘要清单无效。")

@@ -1,15 +1,17 @@
-package main
+package space
 
 import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"net/http"
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/orchestrator"
 )
 
 func (s spaceUploads) ownerUpload(ctx context.Context, owner, id string, writable bool) (spaceUpload, error) {
@@ -37,11 +39,11 @@ func (s spaceUploads) ownerUpload(ctx context.Context, owner, id string, writabl
 	return row, nil
 }
 
-func (s spaceUploads) routes(mux *http.ServeMux, current func(*http.Request) (*auth.Session, error), backend projectService, origin string, locks *spaceLocks) {
-	deletions := spaceFileDeletion{db: s.db, storage: s.storage, hold: backend.fileHold}
+func (s spaceUploads) routes(mux *http.ServeMux, current func(*http.Request) (*auth.Session, error), headers func(http.ResponseWriter), backend orchestrator.Client, origin string, locks *spaceLocks) {
+	deletions := spaceFileDeletion{db: s.db, storage: s.storage, hold: fileHold(backend)}
 	register := func(pattern string, handle func(http.ResponseWriter, *http.Request, string) error) {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-			backend.responseHeaders(w)
+			headers(w)
 			if r.Method != http.MethodGet && r.Method != http.MethodHead &&
 				(len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != origin) {
 				httpx.Fail(w, httpx.NewError(400, "invalid_origin", "请从任务入口提交请求。"))
@@ -73,10 +75,10 @@ func (s spaceUploads) routes(mux *http.ServeMux, current func(*http.Request) (*a
 	busy := spaceConflict("操作处理中，请稍后查看状态。")
 	register("POST /api/space/projects/{project}/uploads", func(w http.ResponseWriter, r *http.Request, owner string) error {
 		project := r.PathValue("project")
-		if !taskUUID.MatchString(project) {
+		if !orchestrator.ValidTaskID(project) {
 			return httpx.NotFound
 		}
-		fields, err := readProjectJSON(w, r, 32*1024)
+		fields, err := httpx.ReadJSON(w, r, 32*1024)
 		if err != nil {
 			return err
 		}
@@ -101,7 +103,7 @@ func (s spaceUploads) routes(mux *http.ServeMux, current func(*http.Request) (*a
 	})
 	register("GET /api/space/uploads/{id}", func(w http.ResponseWriter, r *http.Request, owner string) error {
 		id := r.PathValue("id")
-		if !taskUUID.MatchString(id) {
+		if !orchestrator.ValidTaskID(id) {
 			return httpx.NotFound
 		}
 		row, err := s.ownerUpload(r.Context(), owner, id, false)
@@ -127,7 +129,7 @@ func (s spaceUploads) routes(mux *http.ServeMux, current func(*http.Request) (*a
 	for _, action := range []string{"part", "complete", "cancel"} {
 		register("POST /api/space/uploads/{id}/"+action, func(w http.ResponseWriter, r *http.Request, owner string) error {
 			id := r.PathValue("id")
-			if !taskUUID.MatchString(id) {
+			if !orchestrator.ValidTaskID(id) {
 				return httpx.NotFound
 			}
 			return locked(id, busy, func() error {
@@ -152,15 +154,15 @@ func (s spaceUploads) routes(mux *http.ServeMux, current func(*http.Request) (*a
 					if row.State != "uploading" || !row.storageID.Valid || row.Expires <= s.now().UnixMilli() {
 						return spaceConflict("上传不可继续。")
 					}
-					fields, err := readProjectJSON(w, r, 32*1024)
+					fields, err := httpx.ReadJSON(w, r, 32*1024)
 					if err != nil {
 						return err
 					}
-					number, err := taskInteger(1)(fields["number"])
-					if err != nil || number.(int64) > 100 {
+					number, ok := httpx.Integer(fields["number"], 1)
+					if !ok || number > 100 {
 						return invalidSpace("分块编号无效。")
 					}
-					signed, checksum, err := s.signPart(r.Context(), &row, int32(number.(int64)))
+					signed, checksum, err := s.signPart(r.Context(), &row, int32(number))
 					if err == nil {
 						httpx.JSON(w, 200, map[string]string{"url": signed, "checksum": checksum})
 					}
@@ -175,7 +177,7 @@ func (s spaceUploads) routes(mux *http.ServeMux, current func(*http.Request) (*a
 	}
 	register("DELETE /api/space/files/{id}", func(w http.ResponseWriter, r *http.Request, owner string) error {
 		id := r.PathValue("id")
-		if !taskUUID.MatchString(id) {
+		if !orchestrator.ValidTaskID(id) {
 			return httpx.NotFound
 		}
 		row, err := s.ownerUpload(r.Context(), owner, id, true)
@@ -207,7 +209,7 @@ func (s spaceUploads) routes(mux *http.ServeMux, current func(*http.Request) (*a
 	})
 }
 
-func (s spaceUploads) startReconciliation(ctx context.Context, locks *spaceLocks, backend projectService, reconcileProjects func(context.Context)) func() {
+func (s spaceUploads) startReconciliation(ctx context.Context, locks *spaceLocks, backend orchestrator.Client, reconcileProjects func(context.Context)) func() {
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
@@ -227,7 +229,7 @@ func (s spaceUploads) startReconciliation(ctx context.Context, locks *spaceLocks
 	return func() { cancel(); <-done }
 }
 
-func (s spaceUploads) reconcile(ctx context.Context, locks *spaceLocks, backend projectService) {
+func (s spaceUploads) reconcile(ctx context.Context, locks *spaceLocks, backend orchestrator.Client) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id FROM space_uploads WHERE state='completing'
 		   OR (state='cleaning' AND signedUntil<=?)
@@ -250,7 +252,7 @@ func (s spaceUploads) reconcile(ctx context.Context, locks *spaceLocks, backend 
 	if rows.Err() != nil {
 		return
 	}
-	deletions := spaceFileDeletion{db: s.db, storage: s.storage, hold: backend.fileHold}
+	deletions := spaceFileDeletion{db: s.db, storage: s.storage, hold: fileHold(backend)}
 	for _, id := range ids {
 		if ctx.Err() != nil {
 			return

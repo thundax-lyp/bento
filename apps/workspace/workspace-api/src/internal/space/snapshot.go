@@ -1,4 +1,4 @@
-package main
+package space
 
 import (
 	"bytes"
@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"net/http"
 	"net/url"
 	"slices"
@@ -20,12 +19,15 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/orchestrator"
 )
 
 type spaceSnapshots struct {
 	db      *sql.DB
 	read    func(context.Context, string, int64) ([]byte, error)
-	backend projectService
+	backend orchestrator.Client
 }
 
 type snapshotIssue struct {
@@ -68,7 +70,7 @@ func validSnapshotPath(path string) bool {
 }
 
 // Match JSON.stringify for the ordered file snapshot used to compute inputDigest.
-func snapshotJSON(files []projectFile) []byte {
+func snapshotJSON(files []orchestrator.ProjectFile) []byte {
 	var result bytes.Buffer
 	result.WriteByte('[')
 	for i, file := range files {
@@ -163,7 +165,7 @@ func (s spaceSnapshots) freeze(ctx context.Context, owner, id string) error {
 	if size > 1024*1024 {
 		return &snapshotFailure{httpx.NewError(413, "too_large", "任务快照的文本总量不能超过 1 MiB。"), oversized}
 	}
-	files := make([]projectFile, 0, len(ids))
+	files := make([]orchestrator.ProjectFile, 0, len(ids))
 	manifest := make([]snapshotManifestEntry, 0, len(ids))
 	var issues []snapshotIssue
 	for _, row := range selected {
@@ -189,7 +191,7 @@ func (s spaceSnapshots) freeze(ctx context.Context, owner, id string) error {
 			issues = append(issues, snapshotIssue{row.ID, row.Path, "invalid_utf8"})
 			continue
 		}
-		files = append(files, projectFile{Path: row.Path, Text: string(data)})
+		files = append(files, orchestrator.ProjectFile{Path: row.Path, Text: string(data)})
 		manifest = append(manifest, snapshotManifestEntry{row.ID, row.Path, row.Size, hex.EncodeToString(digest[:])})
 	}
 	if len(issues) != 0 {
@@ -203,7 +205,7 @@ func (s spaceSnapshots) freeze(ctx context.Context, owner, id string) error {
 			}
 		}
 	}
-	slices.SortFunc(files, func(a, b projectFile) int {
+	slices.SortFunc(files, func(a, b orchestrator.ProjectFile) int {
 		return slices.Compare(utf16.Encode([]rune(a.Path)), utf16.Encode([]rune(b.Path)))
 	})
 	digest := sha256.Sum256(snapshotJSON(files))
@@ -219,27 +221,27 @@ func (s spaceSnapshots) freeze(ctx context.Context, owner, id string) error {
 	return err
 }
 
-type snapshotSelection struct {
+type Selection struct {
 	Kind    string   `json:"kind"`
 	SpaceID string   `json:"spaceId"`
 	FileIDs []string `json:"fileIds"`
 }
 
-func (s spaceSnapshots) enroll(ctx context.Context, owner, key, name string, source snapshotSelection) error {
-	if !taskUUID.MatchString(key) ||
+func (s spaceSnapshots) enroll(ctx context.Context, owner, key, name string, source Selection) error {
+	if !orchestrator.ValidTaskID(key) ||
 		source.Kind != "space_snapshot" || len(source.FileIDs) == 0 || len(source.FileIDs) > 100 ||
 		strings.TrimSpace(name) != name || name == "" || utf8.RuneCountInString(name) > 120 {
-		return badTask
+		return httpx.InvalidTask
 	}
-	if !taskUUID.MatchString(source.SpaceID) {
+	if !orchestrator.ValidTaskID(source.SpaceID) {
 		return httpx.NotFound
 	}
 	for i, id := range source.FileIDs {
-		if !taskUUID.MatchString(id) {
+		if !orchestrator.ValidTaskID(id) {
 			return httpx.NotFound
 		}
 		if i > 0 && source.FileIDs[i-1] >= id {
-			return badTask
+			return httpx.InvalidTask
 		}
 	}
 	fileIDs, err := json.Marshal(source.FileIDs)
@@ -328,7 +330,7 @@ func (s spaceSnapshots) enroll(ctx context.Context, owner, key, name string, sou
 	})
 }
 
-func (s spaceSnapshots) create(w http.ResponseWriter, r *http.Request, owner, key, name string, source snapshotSelection) error {
+func (s spaceSnapshots) create(w http.ResponseWriter, r *http.Request, owner, key, name string, source Selection) error {
 	ctx := r.Context()
 	if err := s.enroll(ctx, owner, key, name, source); err != nil {
 		return err
@@ -452,7 +454,7 @@ func (s spaceSnapshots) submit(w http.ResponseWriter, r *http.Request, owner, id
 	var input struct {
 		Digest string `json:"inputDigest"`
 	}
-	if json.Unmarshal([]byte(body.String), &input) != nil || !taskHex.MatchString(input.Digest) {
+	if json.Unmarshal([]byte(body.String), &input) != nil || !orchestrator.ValidDigest(input.Digest) {
 		return httpx.BackendUnavailable
 	}
 	if state == "frozen" {
@@ -476,8 +478,8 @@ func (s spaceSnapshots) submit(w http.ResponseWriter, r *http.Request, owner, id
 			}
 		}
 	}
-	op := taskRequest{action: "create", key: key, path: "/v1/tasks", input: json.RawMessage(body.String)}
-	op.reject = func(code string) error {
+	op := orchestrator.TaskRequest{Action: "create", Key: key, Path: "/v1/tasks", Input: json.RawMessage(body.String)}
+	op.Reject = func(code string) error {
 		if code != "owner_closed" && code != "idempotency_conflict" {
 			return nil
 		}
@@ -493,7 +495,7 @@ func (s spaceSnapshots) submit(w http.ResponseWriter, r *http.Request, owner, id
 			return err
 		})
 	}
-	op.accept = func(value any) error {
+	op.Accept = func(value any) error {
 		task := value.(map[string]any)["task"].(map[string]any)
 		if task["id"] != id || task["sourceSpaceId"] != space || task["inputDigest"] != input.Digest {
 			return httpx.BackendUnavailable
@@ -516,7 +518,7 @@ func (s spaceSnapshots) submit(w http.ResponseWriter, r *http.Request, owner, id
 			return err
 		})
 	}
-	return s.backend.forwardTask(w, r, owner, op)
+	return s.backend.ForwardTask(w, r, owner, op)
 }
 
 func (s spaceSnapshots) settleProject(ctx context.Context, owner, project string) error {
@@ -582,12 +584,12 @@ func (s spaceSnapshots) drainOwner(ctx context.Context, owner string) error {
 		var input struct {
 			Digest string `json:"inputDigest"`
 		}
-		if json.Unmarshal([]byte(row.body), &input) != nil || !taskHex.MatchString(input.Digest) {
+		if json.Unmarshal([]byte(row.body), &input) != nil || !orchestrator.ValidDigest(input.Digest) {
 			return httpx.BackendUnavailable
 		}
 		var accepted bool
-		op := taskRequest{action: "list", path: "/v1/tasks", query: url.Values{"creationKey": {row.key}}}
-		op.accept = func(value any) error {
+		op := orchestrator.TaskRequest{Action: "list", Path: "/v1/tasks", Query: url.Values{"creationKey": {row.key}}}
+		op.Accept = func(value any) error {
 			items := value.(map[string]any)["items"].([]any)
 			if len(items) > 1 {
 				return httpx.BackendUnavailable
@@ -619,7 +621,7 @@ func (s spaceSnapshots) drainOwner(ctx context.Context, owner string) error {
 			accepted = err == nil
 			return err
 		}
-		if err := s.backend.forwardTask(nil, request, owner, op); err != nil {
+		if err := s.backend.ForwardTask(nil, request, owner, op); err != nil {
 			return err
 		}
 		if !accepted {

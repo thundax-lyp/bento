@@ -1,12 +1,13 @@
-package main
+package space
 
 import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"testing"
 	"time"
+
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 )
 
 type purgeStorageFixture struct {

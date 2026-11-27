@@ -1,26 +1,24 @@
-package main
+package space
 
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
-	"io"
-	"mime"
 	"net/http"
-	"net/url"
 
 	"github.com/google/uuid"
+
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/orchestrator"
 )
 
-var projectDeleteUnconfirmed = httpx.NewError(503, "project_delete_unconfirmed", "暂无法确认项目删除进度，请重试。")
+var projectDeleteUnconfirmed = orchestrator.ProjectDeleteUnconfirmed
 
 type spaceProjectDeletion struct {
 	db      *sql.DB
 	storage uploadStorage
-	backend projectService
+	backend orchestrator.Client
 	locks   *spaceLocks
 }
 
@@ -89,48 +87,6 @@ func (s spaceProjectDeletion) enroll(ctx context.Context, owner, id string) erro
 	})
 }
 
-func (s spaceProjectDeletion) forward(ctx context.Context, owner, id string, intent projectDeleteIntent, phase string) (int, string, error) {
-	query := url.Values{"phase": {phase}}
-	if intent.execution.Valid {
-		query.Set("legacyProjectId", intent.execution.String)
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodDelete,
-		s.backend.origin+"/v1/task-sources/"+url.PathEscape(id)+"?"+query.Encode(), nil)
-	if err != nil {
-		return 0, "", err
-	}
-	request.Header.Set("Authorization", "Bearer "+s.backend.bearer)
-	request.Header.Set("X-Bento-Owner-Id", owner)
-	request.Header.Set("Idempotency-Key", intent.operation)
-	response, err := s.backend.client.Do(request)
-	if err != nil {
-		return 0, "", err
-	}
-	defer response.Body.Close()
-	if response.StatusCode == 204 {
-		return 204, "", nil
-	}
-	media, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if media != "application/json" {
-		return 0, "", projectDeleteUnconfirmed
-	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 64*1024+1))
-	var reply struct {
-		State string                `json:"state"`
-		Error struct{ Code string } `json:"error"`
-	}
-	if err != nil || len(raw) > 64*1024 || json.Unmarshal(raw, &reply) != nil {
-		return 0, "", projectDeleteUnconfirmed
-	}
-	if response.StatusCode == 409 {
-		return 409, reply.Error.Code, nil
-	}
-	if response.StatusCode == 202 {
-		return 202, reply.State, nil
-	}
-	return 0, "", projectDeleteUnconfirmed
-}
-
 func (s spaceProjectDeletion) advance(ctx context.Context, owner, id string) (int, error) {
 	var intent projectDeleteIntent
 	err := s.db.QueryRowContext(ctx, `
@@ -160,7 +116,7 @@ func (s spaceProjectDeletion) advance(ctx context.Context, owner, id string) (in
 		return 204, nil
 	}
 	if intent.phase == "holding" {
-		status, value, err := s.forward(ctx, owner, id, intent, "hold")
+		status, value, err := s.backend.DeleteSource(ctx, owner, id, intent.operation, intent.execution.String, "hold")
 		switch {
 		case err == nil && status == 204:
 			if err := beginCleaning(); err != nil {
@@ -187,7 +143,7 @@ func (s spaceProjectDeletion) advance(ctx context.Context, owner, id string) (in
 		}
 	}
 	if intent.phase == "releasing" {
-		status, value, err := s.forward(ctx, owner, id, intent, "release")
+		status, value, err := s.backend.DeleteSource(ctx, owner, id, intent.operation, intent.execution.String, "release")
 		if err == nil && status == 409 && value == "deletion_committed" {
 			return 202, record("committing", nil)
 		}
@@ -203,7 +159,7 @@ func (s spaceProjectDeletion) advance(ctx context.Context, owner, id string) (in
 		return 0, projectDeletionBlocked("project_busy")
 	}
 	if intent.phase == "committing" {
-		status, value, err := s.forward(ctx, owner, id, intent, "commit")
+		status, value, err := s.backend.DeleteSource(ctx, owner, id, intent.operation, intent.execution.String, "commit")
 		if err == nil && status == 202 && value == "deleting" {
 			return 202, nil
 		}
@@ -307,7 +263,7 @@ func (s spaceProjectDeletion) impact(ctx context.Context, owner, id string) (map
 	var runCount, diffCount int
 	blocked := map[string]bool{"upload_pending": uploadCount > 0, "project_importing": state == "validating" || state == "importing"}
 	if phase != "cleaning" {
-		runs, diffs, blockers, upstreamErr := s.upstreamImpact(ctx, owner, id, binding)
+		runs, diffs, blockers, upstreamErr := s.backend.SourceImpact(ctx, owner, id, binding.String)
 		var latest string
 		err := s.db.QueryRowContext(ctx, "SELECT phase FROM space_project_deletions WHERE owner=? AND spaceId=?", owner, id).Scan(&latest)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -335,41 +291,6 @@ func (s spaceProjectDeletion) impact(ctx context.Context, owner, id string) (map
 	return map[string]any{"fileCount": fileCount, "uploadCount": uploadCount, "runCount": runCount, "diffCount": diffCount, "blockers": blockers}, nil
 }
 
-func (s spaceProjectDeletion) upstreamImpact(ctx context.Context, owner, id string, binding sql.NullString) (int, int, []string, error) {
-	target := s.backend.origin + "/v1/task-sources/" + url.PathEscape(id) + "/deletion"
-	if binding.Valid {
-		target += "?" + url.Values{"legacyProjectId": {binding.String}}.Encode()
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
-	if err != nil {
-		return 0, 0, nil, err
-	}
-	req.Header.Set("Authorization", "Bearer "+s.backend.bearer)
-	req.Header.Set("X-Bento-Owner-Id", owner)
-	response, err := s.backend.client.Do(req)
-	if err != nil {
-		return 0, 0, nil, err
-	}
-	defer response.Body.Close()
-	media, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 65537))
-	var reply struct {
-		RunCount  *int
-		DiffCount *int
-		Blockers  []string
-	}
-	if err != nil || len(raw) > 65536 || media != "application/json" || response.StatusCode != 200 || json.Unmarshal(raw, &reply) != nil ||
-		reply.RunCount == nil || reply.DiffCount == nil || *reply.RunCount < 0 || *reply.DiffCount < 0 || reply.Blockers == nil {
-		return 0, 0, nil, projectDeleteUnconfirmed
-	}
-	for _, code := range reply.Blockers {
-		if code != "project_importing" && code != "project_busy" {
-			return 0, 0, nil, projectDeleteUnconfirmed
-		}
-	}
-	return *reply.RunCount, *reply.DiffCount, reply.Blockers, nil
-}
-
 func (s spaceProjectDeletion) advanceLocked(ctx context.Context, owner, id string, snapshots *spaceSnapshots) (int, error) {
 	token := uuid.NewString()
 	lock := "project:" + id
@@ -393,9 +314,9 @@ func (s spaceProjectDeletion) advanceLocked(ctx context.Context, owner, id strin
 	return s.advance(ctx, owner, id)
 }
 
-func (s spaceProjectDeletion) routes(mux *http.ServeMux, current func(*http.Request) (*auth.Session, error), origin string, snapshots *spaceSnapshots) {
+func (s spaceProjectDeletion) routes(mux *http.ServeMux, current func(*http.Request) (*auth.Session, error), headers func(http.ResponseWriter), origin string, snapshots *spaceSnapshots) {
 	handle := func(w http.ResponseWriter, r *http.Request) {
-		s.backend.responseHeaders(w)
+		headers(w)
 		if r.Method == http.MethodDelete && (len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != origin) {
 			httpx.Fail(w, httpx.NewError(400, "invalid_origin", "请从任务入口提交请求。"))
 			return
@@ -404,7 +325,7 @@ func (s spaceProjectDeletion) routes(mux *http.ServeMux, current func(*http.Requ
 		id := r.PathValue("project")
 		if err == nil {
 			switch {
-			case !taskUUID.MatchString(id) || r.Method == http.MethodHead:
+			case !orchestrator.ValidTaskID(id) || r.Method == http.MethodHead:
 				err = httpx.NotFound
 			case r.Method == http.MethodGet:
 				var result map[string]any

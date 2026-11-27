@@ -1,24 +1,27 @@
-package main
+package space
 
 import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"net/http"
 	"net/url"
 	"path"
 	"path/filepath"
 
 	_ "modernc.org/sqlite"
+
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/orchestrator"
 )
 
-type spaceReader struct {
+type Service struct {
 	db                 *sql.DB
 	storage            *spaceStorage
 	stopReconciliation func()
 	locks              *spaceLocks
+	snapshots          *spaceSnapshots
 }
 
 type spaceProjectView struct {
@@ -46,12 +49,12 @@ type spaceOverview struct {
 	Reserved  int64              `json:"reserved"`
 }
 
-func openSpaceReader(database string, storage *spaceStorage) (*spaceReader, error) {
+func openSpaceReader(database string, storage *spaceStorage) (*Service, error) {
 	db, err := openSpaceDB(database, "ro")
 	if err != nil {
 		return nil, err
 	}
-	return &spaceReader{db: db, storage: storage}, nil
+	return &Service{db: db, storage: storage}, nil
 }
 
 func openSpaceDB(database, mode string) (*sql.DB, error) {
@@ -117,7 +120,7 @@ func initializeSpace(ctx context.Context, db *sql.DB) error {
 	return err
 }
 
-func (s *spaceReader) overview(ctx context.Context, owner string) (spaceOverview, error) {
+func (s *Service) overview(ctx context.Context, owner string) (spaceOverview, error) {
 	result := spaceOverview{
 		Projects: []spaceProjectView{}, Uploads: []spaceUploadView{},
 		Quota: 200_000_000, FileLimit: 100_000_000, PartSize: 16 * 1024 * 1024,
@@ -172,7 +175,7 @@ func (s *spaceReader) overview(ctx context.Context, owner string) (spaceOverview
 	return result, tx.Commit()
 }
 
-func (s *spaceReader) readableFile(ctx context.Context, owner, id string) (spaceUploadView, error) {
+func (s *Service) readableFile(ctx context.Context, owner, id string) (spaceUploadView, error) {
 	var upload spaceUploadView
 	err := s.db.QueryRowContext(ctx, `
 		SELECT u.id, u.project, u.path, u.size, u.state, u.expires
@@ -187,10 +190,10 @@ func (s *spaceReader) readableFile(ctx context.Context, owner, id string) (space
 	return upload, err
 }
 
-func (s *spaceReader) routes(mux *http.ServeMux, current func(*http.Request) (*auth.Session, error), backend projectService) {
+func (s *Service) routes(mux *http.ServeMux, current func(*http.Request) (*auth.Session, error), headers func(http.ResponseWriter)) {
 	register := func(pattern string, handle func(http.ResponseWriter, *http.Request, string) error) {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-			backend.responseHeaders(w)
+			headers(w)
 			saved, err := current(r)
 			if err == nil && r.Method == http.MethodHead {
 				err = httpx.NotFound
@@ -213,7 +216,7 @@ func (s *spaceReader) routes(mux *http.ServeMux, current func(*http.Request) (*a
 	for _, action := range []string{"preview", "download"} {
 		register("GET /api/space/files/{file}/"+action, func(w http.ResponseWriter, r *http.Request, owner string) error {
 			id := r.PathValue("file")
-			if !taskUUID.MatchString(id) {
+			if !orchestrator.ValidTaskID(id) {
 				return httpx.NotFound
 			}
 			upload, err := s.readableFile(r.Context(), owner, id)

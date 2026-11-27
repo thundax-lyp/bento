@@ -1,12 +1,15 @@
-package main
+package api
 
 import (
 	"encoding/json"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/orchestrator"
 )
 
 func TestProjectCancellation(t *testing.T) {
@@ -37,7 +40,7 @@ func TestProjectCancellation(t *testing.T) {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(tc.upstream)
 				if tc.upstream == http.StatusOK {
-					_ = json.NewEncoder(w).Encode(runView{
+					_ = json.NewEncoder(w).Encode(orchestrator.RunView{
 						ID: "run", Project: "project", Session: "session", Status: tc.runStatus,
 						CreatedAt: timestamp, UpdatedAt: timestamp,
 					})
@@ -45,7 +48,7 @@ func TestProjectCancellation(t *testing.T) {
 			}))
 			defer backend.Close()
 			mux := http.NewServeMux()
-			projectService{origin: backend.URL, bearer: "fixture-only", client: backend.Client()}.routes(mux, current, origin)
+			projectRoutes{orchestrator.NewClient(backend.URL, "fixture-only", backend.Client()), func(w http.ResponseWriter) { httpx.SecurityHeaders(w, "") }}.registerProjects(mux, current, origin)
 			req := httptest.NewRequest(http.MethodPost, origin+route, nil)
 			req.Header.Set("Origin", origin)
 
@@ -86,7 +89,7 @@ func TestProjectInputContract(t *testing.T) {
 		t.Run(tc.body, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/api/projects", strings.NewReader(tc.body))
 			req.Header.Set("Content-Type", "application/json; charset=utf-8")
-			fields, err := readProjectJSON(httptest.NewRecorder(), req, maxProjectRequest)
+			fields, err := httpx.ReadJSON(httptest.NewRecorder(), req, orchestrator.MaxProjectRequest)
 			if err == nil {
 				_, err = parseProjectInput(fields)
 			}

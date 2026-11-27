@@ -1,15 +1,16 @@
-package main
+package space
 
 import (
 	"database/sql"
 	"errors"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"testing"
+
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 )
 
 func TestSpaceReadsScopeAndDeletion(t *testing.T) {
@@ -77,7 +78,7 @@ func TestSpaceReadsScopeAndDeletion(t *testing.T) {
 	identity := &auth.Session{Owner: "owner", Name: "fixture@example.test"}
 	current := func(*http.Request) (*auth.Session, error) { return identity, nil }
 	mux := http.NewServeMux()
-	reader.routes(mux, current, projectService{})
+	reader.routes(mux, current, func(w http.ResponseWriter) { httpx.SecurityHeaders(w, "") })
 	for _, tc := range []struct{ mode, parameter, value string }{
 		{"preview", "response-cache-control", "no-store"},
 		{"download", "response-content-disposition", "attachment; filename*=UTF-8''a.txt"},

@@ -1,4 +1,4 @@
-package main
+package space
 
 import (
 	"context"
@@ -7,8 +7,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"testing"
+
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/orchestrator"
 )
 
 func TestGoFreezeSnapshotPreservesCanonicalInput(t *testing.T) {
@@ -60,7 +62,7 @@ func TestGoFreezeSnapshotPreservesCanonicalInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	var body struct {
-		InputFiles  []projectFile
+		InputFiles  []orchestrator.ProjectFile
 		InputDigest string
 	}
 	// JSON.stringify keeps HTML, Unicode separators and a leading BOM in file text.
@@ -105,7 +107,7 @@ func TestGoEnrollSnapshotPinsAndPreservesIdempotency(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := spaceSnapshots{db: uploads.db}
-	selection := snapshotSelection{Kind: "space_snapshot", SpaceID: space, FileIDs: []string{row.ID}}
+	selection := Selection{Kind: "space_snapshot", SpaceID: space, FileIDs: []string{row.ID}}
 	if _, err := uploads.db.Exec("INSERT INTO space_file_deletions VALUES (?)", row.ID); err != nil {
 		t.Fatal(err)
 	}

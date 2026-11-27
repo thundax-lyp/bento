@@ -21,6 +21,7 @@ func (f *Error) Error() string { return f.Code }
 var (
 	ErrLoginRequired   = errors.New("login required")
 	NotFound           = NewError(404, "not_found", "找不到该资源。")
+	InvalidTask        = NewError(400, "invalid_input", "任务请求内容无效。")
 	BackendUnavailable = NewError(502, "backend_error", "任务服务暂不可用，请稍后重试。")
 )
 
@@ -53,4 +54,15 @@ func JSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+func SecurityHeaders(w http.ResponseWriter, spaceOrigin string) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	connect := "'self'"
+	if spaceOrigin != "" {
+		connect += " " + spaceOrigin
+	}
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src "+connect+"; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 }

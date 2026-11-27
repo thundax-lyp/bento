@@ -1,10 +1,9 @@
-package main
+package space
 
 import (
 	"bytes"
 	"context"
 	"errors"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
 	"io"
 	"net/url"
 	"strings"
@@ -16,6 +15,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 )
 
 const partURLLifetime = 10 * time.Minute
@@ -29,7 +30,7 @@ type spaceStorage struct {
 }
 
 func newSpaceStorage(ctx context.Context, endpoint, bucket, region string) (*spaceStorage, error) {
-	origin, err := auth.SecureURL(endpoint, true)
+	origin, err := httpx.SecureURL(endpoint, true)
 	if err != nil || origin.Path != "" || origin.RawQuery != "" || bucket == "" {
 		return nil, errors.New("invalid S3 endpoint or bucket")
 	}

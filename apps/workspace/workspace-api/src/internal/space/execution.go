@@ -1,4 +1,4 @@
-package main
+package space
 
 import (
 	"bytes"
@@ -9,8 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"net/http"
 	"slices"
 	"strings"
@@ -20,6 +18,10 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/orchestrator"
 )
 
 type executionInput struct {
@@ -50,7 +52,7 @@ func loadExecution(row *sql.Row) (executionIntent, error) {
 type spaceExecution struct {
 	db      *sql.DB
 	storage *spaceStorage
-	backend projectService
+	backend orchestrator.Client
 	wake    chan struct{}
 	locks   *spaceLocks
 }
@@ -243,7 +245,7 @@ func (s spaceExecution) enroll(ctx context.Context, owner, id, key string, ids [
 }
 
 func (s spaceExecution) validate(ctx context.Context, row executionIntent) error {
-	files := make([]projectFile, 0, len(row.inputs))
+	files := make([]orchestrator.ProjectFile, 0, len(row.inputs))
 	var issues []snapshotIssue
 	for _, input := range row.inputs {
 		if !validSnapshotPath(input.Path) {
@@ -265,7 +267,7 @@ func (s spaceExecution) validate(ctx context.Context, row executionIntent) error
 			issues = append(issues, snapshotIssue{input.ID, input.Path, "invalid_utf8"})
 			continue
 		}
-		files = append(files, projectFile{input.Path, string(data)})
+		files = append(files, orchestrator.ProjectFile{Path: input.Path, Text: string(data)})
 	}
 	if len(issues) != 0 {
 		raw, err := json.Marshal(issues)
@@ -275,7 +277,7 @@ func (s spaceExecution) validate(ctx context.Context, row executionIntent) error
 		_, err = s.db.ExecContext(ctx, "UPDATE space_execution SET state='failed',issues=? WHERE spaceId=? AND key=? AND state='validating'", string(raw), row.space, row.key)
 		return err
 	}
-	input := projectInput{Files: files}
+	input := orchestrator.ProjectInput{Files: files}
 	if err := s.db.QueryRowContext(ctx, "SELECT name FROM space_projects WHERE id=? AND owner=?", row.space, row.owner).Scan(&input.Name); err != nil {
 		return err
 	}
@@ -317,7 +319,7 @@ func (s spaceExecution) advance(ctx context.Context, space, key string) error {
 	if row.state != "importing" {
 		return nil
 	}
-	route := projectRoute{kind: "project", project: row.project.String}
+	route := orchestrator.ProjectRoute{Kind: "project", Project: row.project.String}
 	var input any
 	var submissionKey string
 	if !row.project.Valid {
@@ -329,14 +331,14 @@ func (s spaceExecution) advance(ctx context.Context, space, key string) error {
 		appendSnapshotString(&buffer, key)
 		buffer.WriteByte(']')
 		submissionKey = fmt.Sprintf("space-init-%x", sha256.Sum256(buffer.Bytes()))
-		route.kind = "createProject"
+		route.Kind = "createProject"
 		input = json.RawMessage(row.snapshot.String)
 	}
-	_, value, err := s.backend.invoke(ctx, row.owner, submissionKey, route, input)
+	_, value, err := s.backend.Invoke(ctx, row.owner, submissionKey, route, input)
 	if err != nil {
 		return err
 	}
-	project, ok := value.(projectView)
+	project, ok := value.(orchestrator.ProjectView)
 	if !ok {
 		return httpx.BackendUnavailable
 	}
@@ -390,17 +392,17 @@ func (s spaceExecution) reconcile(ctx context.Context) {
 	}
 }
 
-func (s spaceExecution) routes(mux *http.ServeMux, current func(*http.Request) (*auth.Session, error), origin string) {
+func (s spaceExecution) routes(mux *http.ServeMux, current func(*http.Request) (*auth.Session, error), headers func(http.ResponseWriter), origin string) {
 	register := func(pattern string, handle func(http.ResponseWriter, *http.Request, string) error) {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-			s.backend.responseHeaders(w)
+			headers(w)
 			if r.Method == http.MethodPost && (len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != origin) {
 				httpx.Fail(w, httpx.NewError(400, "invalid_origin", "请从任务入口提交请求。"))
 				return
 			}
 			session, err := current(r)
 			if err == nil {
-				if r.Method == http.MethodHead || r.PathValue("project") != "" && !taskUUID.MatchString(r.PathValue("project")) {
+				if r.Method == http.MethodHead || r.PathValue("project") != "" && !orchestrator.ValidTaskID(r.PathValue("project")) {
 					err = httpx.NotFound
 				} else {
 					err = handle(w, r, session.Owner)
@@ -412,15 +414,15 @@ func (s spaceExecution) routes(mux *http.ServeMux, current func(*http.Request) (
 		})
 	}
 	register("POST /api/space/projects", func(w http.ResponseWriter, r *http.Request, owner string) error {
-		data, err := readProjectJSON(w, r, 32*1024)
+		data, err := httpx.ReadJSON(w, r, 32*1024)
 		if err != nil {
 			return err
 		}
-		id, _ := projectString(data["id"])
-		if !taskUUID.MatchString(id) {
+		id, _ := httpx.String(data["id"])
+		if !orchestrator.ValidTaskID(id) {
 			return httpx.NotFound
 		}
-		name, _ := projectString(data["name"])
+		name, _ := httpx.String(data["name"])
 		name = strings.TrimSpace(name)
 		if name == "" || len(utf16.Encode([]rune(name))) > 120 || strings.ContainsFunc(name, unicode.IsControl) {
 			return invalidSpace("项目名称无效。")
@@ -443,7 +445,7 @@ func (s spaceExecution) routes(mux *http.ServeMux, current func(*http.Request) (
 		if len(keys) != 1 || len(keys[0]) < 1 || len(keys[0]) > 128 || strings.ContainsFunc(keys[0], func(r rune) bool { return r < 33 || r > 126 }) {
 			return httpx.NewError(400, "invalid_key", "请提供有效的 Idempotency-Key。")
 		}
-		data, err := readProjectJSON(w, r, 32*1024)
+		data, err := httpx.ReadJSON(w, r, 32*1024)
 		if err != nil {
 			return err
 		}
@@ -455,7 +457,7 @@ func (s spaceExecution) routes(mux *http.ServeMux, current func(*http.Request) (
 		ids := make([]string, 0, len(fileIDs))
 		seen := make(map[string]bool, len(fileIDs))
 		for _, raw := range fileIDs {
-			id, ok := projectString(raw)
+			id, ok := httpx.String(raw)
 			if !ok || seen[id] {
 				return invalid
 			}

@@ -1,17 +1,16 @@
-package main
+package space
 
 import (
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
-	"io"
-	"mime"
 	"net/http"
-	"net/url"
 
 	"github.com/google/uuid"
+
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/orchestrator"
 )
 
 type spaceFileDeletion struct {
@@ -26,7 +25,7 @@ type fileDeletionIntent struct {
 }
 
 var (
-	fileDeleteUnconfirmed = httpx.NewError(503, "file_delete_unconfirmed", "暂未确认删除结果，请刷新后重试。")
+	fileDeleteUnconfirmed = orchestrator.FileDeleteUnconfirmed
 	fileDeleteBusy        = httpx.NewError(409, "project_busy", "文件正在被未结束的任务使用。")
 )
 
@@ -249,56 +248,8 @@ func (s spaceFileDeletion) advance(ctx context.Context, row spaceUpload) error {
 	})
 }
 
-func (s projectService) fileHold(ctx context.Context, row spaceUpload, intent fileDeletionIntent, release bool) (string, error) {
-	method := http.MethodPost
-	if release {
-		method = http.MethodDelete
-	}
-	path := "/v1/task-sources/" + url.PathEscape(row.Project) + "/files/" + url.PathEscape(row.ID) +
-		"/deletion-holds/" + url.PathEscape(intent.operation)
-	if intent.project.Valid {
-		path += "?" + url.Values{"legacyProjectId": {intent.project.String}}.Encode()
-	}
-	request, err := http.NewRequestWithContext(ctx, method, s.origin+path, nil)
-	if err != nil {
-		return "", fileDeleteUnconfirmed
-	}
-	request.Header.Set("Authorization", "Bearer "+s.bearer)
-	request.Header.Set("X-Bento-Owner-Id", row.owner)
-	response, err := s.client.Do(request)
-	if err != nil {
-		return "", fileDeleteUnconfirmed
-	}
-	defer response.Body.Close()
-	if response.StatusCode == http.StatusNotFound {
-		return "", httpx.NotFound
-	}
-	media, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if media != "application/json" {
-		return "", fileDeleteUnconfirmed
-	}
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 64*1024+1))
-	if err != nil || len(raw) > 64*1024 {
-		return "", fileDeleteUnconfirmed
-	}
-	if response.StatusCode == http.StatusConflict {
-		var result struct {
-			Error struct{ Code string } `json:"error"`
-		}
-		if json.Unmarshal(raw, &result) == nil && result.Error.Code == "owner_closed" {
-			return "", httpx.NewError(409, "owner_closed", "当前请求无法执行。")
-		}
-	}
-	var result struct {
-		State string `json:"state"`
-	}
-	if response.StatusCode != http.StatusOK || json.Unmarshal(raw, &result) != nil {
-		return "", fileDeleteUnconfirmed
-	}
-	switch result.State {
-	case "held", "denied", "released":
-		return result.State, nil
-	default:
-		return "", fileDeleteUnconfirmed
+func fileHold(backend orchestrator.Client) func(context.Context, spaceUpload, fileDeletionIntent, bool) (string, error) {
+	return func(ctx context.Context, row spaceUpload, intent fileDeletionIntent, release bool) (string, error) {
+		return backend.FileHold(ctx, row.owner, row.Project, row.ID, intent.operation, intent.project.String, release)
 	}
 }

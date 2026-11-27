@@ -1,4 +1,4 @@
-package main
+package space
 
 import (
 	"context"
@@ -6,13 +6,14 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 )
 
 const uploadFixtureID = "00000000-0000-4000-8000-000000000031"

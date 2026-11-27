@@ -1,11 +1,13 @@
-package main
+package space
 
 import (
 	"errors"
-	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/orchestrator"
 )
 
 func TestGoProjectDeletionRetainsOperationThroughCommit(t *testing.T) {
@@ -41,7 +43,7 @@ func TestGoProjectDeletionRetainsOperationThroughCommit(t *testing.T) {
 		if operation == "" {
 			operation = key
 		}
-		if key != operation || !taskUUID.MatchString(key) {
+		if key != operation || !orchestrator.ValidTaskID(key) {
 			t.Error("project deletion operation id changed")
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -60,7 +62,7 @@ func TestGoProjectDeletionRetainsOperationThroughCommit(t *testing.T) {
 		}
 	}))
 	defer upstream.Close()
-	service := spaceProjectDeletion{db: uploads.db, storage: storage, locks: &spaceLocks{}, backend: projectService{origin: upstream.URL, client: upstream.Client()}}
+	service := spaceProjectDeletion{db: uploads.db, storage: storage, locks: &spaceLocks{}, backend: orchestrator.NewClient(upstream.URL, "", upstream.Client())}
 	if err := service.enroll(ctx, "other", "project"); !errors.Is(err, httpx.NotFound) {
 		t.Fatalf("foreign project: %v", err)
 	}
