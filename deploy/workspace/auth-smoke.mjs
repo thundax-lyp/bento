@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import console from 'node:console';
 import { access, mkdtemp, open, readFile, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -20,7 +21,7 @@ const assets = '/app/apps/workspace/workspace-auth/';
 const missing = process.argv[2] === '--missing-artifacts';
 const subject = 'fixture-subject';
 const fixture = await startOidcFixture();
-const execution = createServer((req, res) => {
+const execution = createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     if (
         req.headers.authorization !== 'Bearer fixture-execution' ||
@@ -29,12 +30,60 @@ const execution = createServer((req, res) => {
         res.writeHead(401).end('{}');
         return;
     }
-    if (req.method === 'GET' && req.url === '/v1/projects') {
+    if (
+        req.method === 'GET' &&
+        ['/v1/projects', '/v1/tasks'].includes(req.url)
+    ) {
         if (!req.headers['user-agent']?.startsWith('Go-http-client/')) {
             res.writeHead(500).end('{}');
             return;
         }
-        res.end(JSON.stringify({ projects: [] }));
+        res.end(
+            JSON.stringify(
+                req.url === '/v1/projects' ? { projects: [] } : { items: [] },
+            ),
+        );
+        return;
+    }
+    if (req.method === 'POST' && req.url === '/v1/tasks') {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        const payload = JSON.parse(chunks.join(''));
+        const { name, inputDigest } = payload;
+        if (
+            !req.headers['user-agent']?.startsWith('Go-http-client/') ||
+            req.headers['idempotency-key'] !==
+                '00000000-0000-4000-8000-000000000010' ||
+            name !== 'Smoke Task' ||
+            inputDigest !== createHash('sha256').update('[]').digest('hex') ||
+            payload.id !== null ||
+            payload.sourceSpaceId !== null ||
+            !Array.isArray(payload.inputFiles) ||
+            payload.inputFiles.length !== 0 ||
+            !Array.isArray(payload.inputManifest) ||
+            payload.inputManifest.length !== 0
+        ) {
+            res.writeHead(500).end('{}');
+            return;
+        }
+        res.writeHead(202).end(
+            JSON.stringify({
+                task: {
+                    id: '00000000-0000-4000-8000-000000000011',
+                    name,
+                    inputDigest,
+                    sourceSpaceId: null,
+                    environmentVersion: 'sha256:' + '0'.repeat(64),
+                    status: 'preparing',
+                    prepareError: null,
+                    closedReason: null,
+                    reconciliation: null,
+                    createdAt: '2026-11-27T00:00:00Z',
+                    updatedAt: '2026-11-27T00:00:00Z',
+                    inputs: [],
+                },
+            }),
+        );
         return;
     }
     if (req.method === 'POST' && req.url === '/v1/account/drain') {
@@ -272,6 +321,51 @@ async function login(grant) {
         'Go session accepted by the Workspace business API',
     );
     assert.ok(Array.isArray((await projects.json()).projects));
+    const tasks = await status(
+        request('/api/tasks', { headers: { Cookie: value } }),
+        200,
+        'Go session accepted by the Task API',
+    );
+    assert.deepEqual(await tasks.json(), { items: [] });
+    const blank = await status(
+        request('/api/tasks', {
+            method: 'POST',
+            headers: {
+                Origin: origin,
+                Cookie: value,
+                'Content-Type': 'application/json',
+                'Idempotency-Key': '00000000-0000-4000-8000-000000000010',
+            },
+            body: JSON.stringify({
+                name: ' Smoke Task ',
+                source: { kind: 'blank' },
+            }),
+        }),
+        202,
+        'Go forwards a blank Task',
+    );
+    assert.equal((await blank.json()).task.name, 'Smoke Task');
+    await status(
+        request('/api/tasks', {
+            method: 'POST',
+            headers: {
+                Origin: origin,
+                Cookie: value,
+                'Content-Type': 'application/json',
+                'Idempotency-Key': '00000000-0000-4000-8000-000000000012',
+            },
+            body: JSON.stringify({
+                name: 'Snapshot',
+                source: {
+                    kind: 'space_snapshot',
+                    spaceId: 'fixture-space',
+                    fileIds: ['fixture-file'],
+                },
+            }),
+        }),
+        503,
+        'Snapshot bridge retains the existing missing-space response',
+    );
     return value;
 }
 

@@ -63,7 +63,7 @@ func run() error {
 		store := accounts{db: db}
 		store.register(internalMux)
 		if os.Getenv("BENTO_GO_AUTH") == "1" {
-			if err := registerGoAuth(ctx, mux, internalMux, store); err != nil {
+			if err := registerGoAuth(ctx, mux, internalMux, store, proxy); err != nil {
 				return err
 			}
 		}
@@ -104,7 +104,7 @@ func run() error {
 	}
 }
 
-func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store accounts) error {
+func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store accounts, legacy http.Handler) error {
 	origin := strings.TrimSuffix(os.Getenv("BENTO_ONE_ORIGIN"), "/")
 	if origin == "" {
 		origin = "http://127.0.0.1:4101"
@@ -153,6 +153,7 @@ func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store 
 			return err
 		}
 		backend.routes(public, sessions, origin)
+		backend.taskRoutes(public, sessions, origin, legacy)
 	}
 	internal.HandleFunc("GET /internal/session", func(w http.ResponseWriter, r *http.Request) {
 		session, err := sessions.current(r)
