@@ -44,8 +44,11 @@ func (r projectRoute) path() string {
 	if r.run != "" {
 		path += "/" + url.PathEscape(r.run)
 	}
-	if r.kind == "diff" {
+	switch r.kind {
+	case "diff":
 		path += "/diff"
+	case "cancelRun":
+		path += "/cancel"
 	}
 	return path
 }
@@ -156,7 +159,7 @@ func (r *runView) valid(project, run string) bool {
 		r.Prompt = nil
 	}
 	switch r.Status {
-	case "pending_approval", "queued", "running", "recovering", "needs_review", "succeeded", "failed":
+	case "pending_approval", "queued", "running", "recovering", "needs_review", "cancelling", "cancelled", "succeeded", "failed":
 		return projectResourceID(r.ID) && (run == "" || run == r.ID) && r.Project == project &&
 			projectResourceID(r.Session) && validTimestamp(r.CreatedAt) && validTimestamp(r.UpdatedAt)
 	}
@@ -199,9 +202,12 @@ func (route projectRoute) decode(raw []byte) (any, error) {
 			}
 			return result, nil
 		}
-	case "run", "createRun":
+	case "run", "createRun", "cancelRun":
 		var result runView
 		if json.Unmarshal(raw, &result) == nil && result.valid(route.project, route.run) {
+			if route.kind == "cancelRun" && result.Status != "cancelling" && result.Status != "cancelled" && result.Status != "needs_review" {
+				return nil, backendUnavailable
+			}
 			return result, nil
 		}
 	case "diff":
@@ -220,8 +226,11 @@ func projectBackendError(status int, kind string) error {
 		return notFound
 	case 409:
 		message := "当前项目状态不允许提交，或此提交键已用于其他内容。"
-		if kind == "diff" {
+		switch kind {
+		case "diff":
 			message = "成果尚未可用。"
+		case "cancelRun":
+			message = "当前任务状态不能取消。"
 		}
 		return &requestFailure{409, "conflict", message}
 	case 413:
@@ -234,7 +243,10 @@ func projectBackendError(status int, kind string) error {
 }
 
 func (s projectService) invoke(ctx context.Context, owner, key string, route projectRoute, input any) (int, any, error) {
-	method := "GET"
+	method := http.MethodGet
+	if route.kind == "cancelRun" {
+		method = http.MethodPost
+	}
 	var body io.Reader
 	if input != nil {
 		method = "POST"
@@ -316,6 +328,7 @@ func (s projectService) routes(mux *http.ServeMux, sessions *webSessions, origin
 	register("POST /api/projects/{project}/runs", "createRun")
 	register("GET /api/projects/{project}/runs/{run}", "run")
 	register("GET /api/projects/{project}/runs/{run}/diff", "diff")
+	register("POST /api/projects/{project}/runs/{run}/cancel", "cancelRun")
 }
 
 func (s projectService) handle(w http.ResponseWriter, r *http.Request, owner, kind string) error {
@@ -351,7 +364,7 @@ func (s projectService) handle(w http.ResponseWriter, r *http.Request, owner, ki
 		}
 		run.Prompt = strings.TrimSpace(run.Prompt)
 		if run.Prompt == "" || utf8.RuneCountInString(run.Prompt) > 8000 {
-			return &requestFailure{400, "invalid_prompt", "请输入 1 至 8000 个字符的任务说明。"}
+			return &requestFailure{400, "invalid_prompt", "任务描述须为 1 至 8000 个字符。"}
 		}
 		input = run
 	}
