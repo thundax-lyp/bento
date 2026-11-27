@@ -4,7 +4,6 @@ import { notFound, RequestError, type Backend } from '../protocol.ts';
 import { spaceObjectKey, type spaceStorage } from './storage.ts';
 import type { spaceExecution } from './execution.ts';
 import type { Upload } from './upload.ts';
-import type { goSpaceUpload } from './index.ts';
 
 type FileDeletion = {
     operationId: string;
@@ -23,7 +22,6 @@ export function spaceFileDeletion({
     active,
     execution,
     commitDeletionChange,
-    goUpload,
 }: {
     db: DatabaseSync;
     backend: Backend;
@@ -34,7 +32,6 @@ export function spaceFileDeletion({
     locked: <T>(fileId: string, action: () => Promise<T>) => Promise<T>;
     active: ReadonlySet<string>;
     commitDeletionChange: (change: () => void) => void;
-    goUpload?: typeof goSpaceUpload;
     execution: Pick<
         ReturnType<typeof spaceExecution>,
         'hasTaskPin' | 'deletionProject'
@@ -114,10 +111,6 @@ export function spaceFileDeletion({
     }
 
     async function advanceFileDeletion(row: Upload): Promise<void> {
-        if (goUpload) {
-            await goUpload('advance-delete', { owner: row.owner, id: row.id });
-            return;
-        }
         const intent = fileDeletion(row.id);
         if (!intent) return;
         if (
@@ -156,11 +149,6 @@ export function spaceFileDeletion({
         if (row.state !== 'saved') throw notFound();
         if (active.has(fileId)) throw deletionUnconfirmed();
         return locked(fileId, async () => {
-            if (goUpload)
-                return goUpload<{ deleteStatus: 202 | 204 }>('delete', {
-                    owner,
-                    id: fileId,
-                });
             if (!fileDeletion(fileId)) {
                 commitDeletionChange(() => {
                     requireWritableProject(owner, row.project);

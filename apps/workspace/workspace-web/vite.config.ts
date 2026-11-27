@@ -14,7 +14,7 @@ export default defineConfig({
                 ? {
                       '^/auth(?:/|$|\\?)':
                           process.env.BENTO_API_TARGET ??
-                          'http://127.0.0.1:4101',
+                          'http://127.0.0.1:4102',
                   }
                 : {}),
             '/api': {

@@ -113,7 +113,10 @@ test('built auth pages retain the OIDC login, logout and account closure contrac
         assert.deepEqual(
             body,
             await readFile(
-                new URL('../../workspace-auth/dist/' + file, import.meta.url),
+                new URL(
+                    '../../../../../workspace-auth/dist/' + file,
+                    import.meta.url,
+                ),
             ),
         );
         return body.toString('utf8');
@@ -306,12 +309,12 @@ test(
         const origin = 'http://127.0.0.1:8080';
         const controllerPath = fileURLToPath(
             new URL(
-                '../../../orchestrator/orchestrator-execution-host/tests/execution-service/fixtures/controller.ts',
+                '../../../../../../orchestrator/orchestrator-execution-host/tests/execution-service/fixtures/controller.ts',
                 import.meta.url,
             ),
         );
         const registerPaths = fileURLToPath(
-            new URL('../../../../register-paths.mjs', import.meta.url),
+            new URL('../../../../../../../register-paths.mjs', import.meta.url),
         );
         const child = spawn(
             process.execPath,

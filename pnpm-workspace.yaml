@@ -1,6 +1,5 @@
 packages:
     - apps/orchestrator/orchestrator-execution-host
-    - apps/workspace/workspace-api
     - apps/workspace/workspace-auth
     - apps/workspace/workspace-web
     - apps/worker

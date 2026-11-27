@@ -1,4 +1,3 @@
-import type { goSpaceUpload } from './index.ts';
 import { spaceTaskInputs } from './task-inputs.ts';
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
@@ -33,7 +32,6 @@ export function spaceExecution(
     backend: Backend,
     readFile: (key: string, size: number) => Promise<Buffer>,
     requireWritableProject: (owner: string, spaceId: string) => void,
-    goUpload?: typeof goSpaceUpload,
 ) {
     db.exec(`
         CREATE TABLE IF NOT EXISTS space_execution (
@@ -323,7 +321,6 @@ export function spaceExecution(
         files,
         draining,
         confirmedDraining,
-        ...(goUpload ? { goUpload } : {}),
     });
 
     async function advance() {

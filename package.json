@@ -9,14 +9,15 @@
     },
     "scripts": {
         "check": "pnpm check:workspace && pnpm check:admin && pnpm check:orchestrator && pnpm check:worker && pnpm lint && pnpm format:check",
-        "check:workspace": "pnpm --filter @bento/workspace-auth build && pnpm --filter @bento/workspace-api check && pnpm --filter @bento/workspace-web check",
+        "check:workspace": "pnpm --filter @bento/workspace-auth build && pnpm check:workspace-api && pnpm --filter @bento/workspace-web test:api-fixtures && pnpm --filter @bento/workspace-web check",
         "check:admin": "cd apps/admin/admin-api && go test ./... && go vet ./...",
         "check:orchestrator": "pnpm --filter @bento/orchestrator check",
         "check:worker": "pnpm --filter @bento/worker typecheck",
         "lint": "eslint . && node --test scripts/import-extensions.test.mjs",
         "lint:fix": "eslint . --fix",
         "format": "prettier --write .",
-        "format:check": "prettier --check ."
+        "format:check": "prettier --check .",
+        "check:workspace-api": "cd apps/workspace/workspace-api && go test ./... && go vet ./..."
     },
     "devDependencies": {
         "@eslint/js": "^10.0.1",

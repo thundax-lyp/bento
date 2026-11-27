@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as oidc from 'openid-client';
-import type { mysqlAccounts } from './account-store.ts';
+import type { OidcAccountStore } from './account-store.ts';
 import type { sessionAuth } from './auth.ts';
 import { notFound, RequestError } from './protocol.ts';
 
@@ -27,7 +27,7 @@ type Options = {
     clientId: string;
     clientSecret: string;
     organization: string;
-    store: ReturnType<typeof mysqlAccounts>;
+    store: OidcAccountStore;
     auth: ReturnType<typeof sessionAuth>;
 };
 
@@ -57,15 +57,24 @@ export async function keycloakAuth({
     }
     const [loginHtml, accountHtml, styleCss] = await Promise.all([
         readFile(
-            new URL('../../workspace-auth/dist/login.html', import.meta.url),
+            new URL(
+                '../../../../../workspace-auth/dist/login.html',
+                import.meta.url,
+            ),
             'utf8',
         ),
         readFile(
-            new URL('../../workspace-auth/dist/account.html', import.meta.url),
+            new URL(
+                '../../../../../workspace-auth/dist/account.html',
+                import.meta.url,
+            ),
             'utf8',
         ),
         readFile(
-            new URL('../../workspace-auth/dist/style.css', import.meta.url),
+            new URL(
+                '../../../../../workspace-auth/dist/style.css',
+                import.meta.url,
+            ),
             'utf8',
         ),
     ]).catch((cause: unknown) => {

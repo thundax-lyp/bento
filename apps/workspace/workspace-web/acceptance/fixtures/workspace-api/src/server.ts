@@ -5,7 +5,6 @@ import type { keycloakAuth } from './oidc.ts';
 import type { sessionAuth } from './auth.ts';
 import {
     notFound,
-    object,
     parseTaskRequest,
     projectInput,
     RequestError,
@@ -19,7 +18,6 @@ type Options = {
     port: number;
     origin: string;
     auth: ReturnType<typeof sessionAuth>;
-    goAccountSweep?: boolean;
     account?: ReturnType<typeof sessionAuth>['account'];
     oidc?: Awaited<ReturnType<typeof keycloakAuth>>;
     backend: Backend;
@@ -152,7 +150,6 @@ export async function taskEntryServer({
     origin,
     auth,
     account: readAccount = auth.account,
-    goAccountSweep = false,
     oidc,
     backend,
     space,
@@ -161,7 +158,7 @@ export async function taskEntryServer({
     let cleaning: Promise<void> | undefined;
     let closing = false;
     function sweepAccounts() {
-        if (goAccountSweep || closing || cleaning) return;
+        if (closing || cleaning) return;
         cleaning = (async () => {
             for (const {
                 ownerId: owner,
@@ -219,31 +216,6 @@ export async function taskEntryServer({
             const url = request.url ?? '';
             if (!url.startsWith('/') || url.startsWith('//')) throw notFound();
             const [path = '', query] = url.split('?', 2);
-            if (
-                goAccountSweep &&
-                path === '/internal/workspace/drain' &&
-                request.method === 'POST' &&
-                request.socket.remoteAddress === '127.0.0.1'
-            ) {
-                const { owner, confirmed } = object(
-                    await readJson(request, 4096),
-                );
-                if (
-                    typeof owner !== 'string' ||
-                    !owner ||
-                    typeof confirmed !== 'boolean'
-                )
-                    throw notFound();
-                const spaceReady = space ? space.drain(owner, confirmed) : true;
-                response
-                    .writeHead(
-                        !inFlight.has(owner) && (!confirmed || spaceReady)
-                            ? 204
-                            : 409,
-                    )
-                    .end();
-                return;
-            }
             if (
                 !path.startsWith('/api/') &&
                 path !== '/auth' &&

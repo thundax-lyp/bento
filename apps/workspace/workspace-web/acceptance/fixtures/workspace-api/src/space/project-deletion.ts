@@ -1,4 +1,3 @@
-import type { goSpaceUpload } from './index.ts';
 import { randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import {
@@ -57,7 +56,6 @@ type Options = {
     requireWritableProject(owner: string, spaceId: string): void;
     setState(row: Upload, state: Upload['state']): void;
     commitDeletionChange(change: () => void): void;
-    goUpload?: typeof goSpaceUpload;
 };
 export function spaceProjectDeletion({
     db,
@@ -68,7 +66,6 @@ export function spaceProjectDeletion({
     requireWritableProject,
     setState,
     commitDeletionChange,
-    goUpload,
 }: Options) {
     const projectAdvances = new Map<
         string,
@@ -180,17 +177,6 @@ export function spaceProjectDeletion({
         const prior = projectAdvances.get(spaceId);
         if (prior) return prior;
         const task = (async (): Promise<{ deleteStatus: 202 | 204 }> => {
-            if (goUpload) {
-                if (
-                    intent.phase === 'holding' &&
-                    !(await execution.settleProjectTasks(owner, spaceId))
-                )
-                    return { deleteStatus: 202 };
-                return goUpload<{ deleteStatus: 202 | 204 }>(
-                    'advance-project-delete',
-                    { owner, id: spaceId },
-                );
-            }
             let phase = intent.phase;
             const forward = (phase: 'hold' | 'commit' | 'release') =>
                 backend(owner, {
@@ -309,11 +295,7 @@ export function spaceProjectDeletion({
         return task;
     }
 
-    async function deleteProject(owner: string, spaceId: string) {
-        if (goUpload) {
-            await goUpload('enroll-project-delete', { owner, id: spaceId });
-            return advanceProjectDeletion(owner, spaceId);
-        }
+    function deleteProject(owner: string, spaceId: string) {
         commitDeletionChange(() => {
             if (projectDeletion(owner, spaceId)) return;
             const { importing, projectId, uploadCount } = spaceImpact(

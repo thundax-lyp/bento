@@ -1,4 +1,3 @@
-import type { goSpaceUpload } from './index.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { SnapshotIssue as Issue } from './execution.ts';
 import type { DatabaseSync } from 'node:sqlite';
@@ -42,7 +41,6 @@ export function spaceTaskInputs({
     files,
     draining,
     confirmedDraining,
-    goUpload,
 }: {
     db: DatabaseSync;
     backend: Backend;
@@ -54,7 +52,6 @@ export function spaceTaskInputs({
     files: (owner: string, spaceId: string) => Input[];
     draining: ReadonlySet<string>;
     confirmedDraining: ReadonlySet<string>;
-    goUpload?: typeof goSpaceUpload;
 }) {
     db.exec(`
         CREATE TABLE IF NOT EXISTS space_tasks (
@@ -136,16 +133,12 @@ export function spaceTaskInputs({
         return input;
     }
 
-    async function enrollTask(
+    function enrollTask(
         owner: string,
         key: string,
         name: string,
         source: Extract<TaskSource, { kind: 'space_snapshot' }>,
     ) {
-        if (goUpload) {
-            await goUpload('enroll-snapshot', { owner, key, name, source });
-            return taskIntent(owner, key)!;
-        }
         const canonical = { name, source };
         const hash = createHash('sha256')
             .update(JSON.stringify(canonical))
@@ -185,10 +178,6 @@ export function spaceTaskInputs({
     }
 
     async function freezeTask(row: TaskIntent) {
-        if (goUpload) {
-            await goUpload('freeze-snapshot', { owner: row.owner, id: row.id });
-            return;
-        }
         const selected = taskFiles(
             row.owner,
             row.spaceId,
@@ -343,16 +332,11 @@ export function spaceTaskInputs({
             changeTaskState(row, 'abandoned');
             return undefined;
         }
-        if (!goUpload && row.state === 'frozen')
+        if (row.state === 'frozen')
             db.prepare(
                 "UPDATE space_tasks SET state='submitted' WHERE id=?",
             ).run(row.id);
         try {
-            if (goUpload)
-                return await goUpload<Result>('submit-snapshot', {
-                    owner: row.owner,
-                    id: row.id,
-                });
             return verifyTaskReceipt(
                 row,
                 input,
@@ -390,7 +374,7 @@ export function spaceTaskInputs({
         name: string,
         source: Extract<TaskSource, { kind: 'space_snapshot' }>,
     ) {
-        const row = await enrollTask(owner, key, name, source);
+        const row = enrollTask(owner, key, name, source);
         const result = await reconcileTask(row);
         if (!result)
             throw new RequestError(409, 'owner_closed', '账号已注销。');
@@ -436,8 +420,7 @@ export function spaceTaskInputs({
             .all() as TaskIntent[];
         for (const row of tasks) {
             if (isClosing()) return;
-            if (draining.has(row.owner) ? row.state === 'failed' : goUpload)
-                continue;
+            if (row.state === 'failed' && draining.has(row.owner)) continue;
             await reconcileTask(row).catch(() => undefined);
         }
     }

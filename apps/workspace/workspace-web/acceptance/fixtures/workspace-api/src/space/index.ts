@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { spaceFileDeletion } from './file-deletion.ts';
 import type { Upload } from './upload.ts';
 import {
@@ -48,75 +47,11 @@ function view(row: Upload) {
     return { id, project, path, size, state, expires };
 }
 
-export async function goSpaceUpload<T>(
-    action:
-        | 'reserve'
-        | 'prepare'
-        | 'finish'
-        | 'clean'
-        | 'parts'
-        | 'sign'
-        | 'delete'
-        | 'advance-delete'
-        | 'freeze-snapshot'
-        | 'enroll-snapshot'
-        | 'submit-snapshot'
-        | 'purge-file'
-        | 'purge-metadata'
-        | 'lock'
-        | 'unlock'
-        | 'enroll-project-delete'
-        | 'advance-project-delete',
-    input: object,
-): Promise<T> {
-    const response = await fetch(
-        'http://127.0.0.1:4103/internal/space/upload/' + action,
-        {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            redirect: 'error',
-            body: JSON.stringify(input),
-        },
-    );
-    if (response.status === 204) return undefined as T;
-    const data: unknown = await response.json();
-    if (response.ok)
-        return (
-            action === 'submit-snapshot'
-                ? { status: response.status, json: data }
-                : data
-        ) as T;
-    const failure = object(object(data).error);
-    if (typeof failure.code !== 'string' || typeof failure.message !== 'string')
-        throw new Error('Invalid Go upload response');
-    throw new RequestError(
-        response.status,
-        failure.code,
-        failure.message,
-        Array.isArray(failure.issues)
-            ? (failure.issues as RequestError['issues'])
-            : undefined,
-    );
-}
-
 export function mySpace(
     dbPath: string,
     storage: ReturnType<typeof spaceStorage>,
     backend: Backend,
-    remoteUpload?: typeof goSpaceUpload,
 ) {
-    const lockTokens = new Map<string, string>();
-    const goUpload: typeof goSpaceUpload | undefined = remoteUpload
-        ? <T>(action: Parameters<typeof goSpaceUpload>[0], input: object) => {
-              const id = 'id' in input ? input.id : undefined;
-              const token =
-                  typeof id === 'string' ? lockTokens.get(id) : undefined;
-              return remoteUpload<T>(
-                  action,
-                  token ? { ...input, token } : input,
-              );
-          }
-        : undefined;
     const db = new DatabaseSync(dbPath);
     db.exec(`
         PRAGMA journal_mode = WAL;
@@ -151,7 +86,6 @@ export function mySpace(
         backend,
         storage.read,
         requireWritableProject,
-        goUpload,
     );
     const active = new Set<string>();
     let sweeping: Promise<void> | undefined;
@@ -171,7 +105,6 @@ export function mySpace(
         requireWritableProject,
         setState,
         commitDeletionChange,
-        ...(goUpload ? { goUpload } : {}),
     });
 
     function commitDeletionChange(change: () => void) {
@@ -245,42 +178,15 @@ export function mySpace(
         if (active.has(uploadId))
             throw conflict('操作处理中，请稍后查看状态。');
         active.add(uploadId);
-        const token = remoteUpload ? randomUUID() : undefined;
         try {
-            if (remoteUpload && token) {
-                await remoteUpload('lock', {
-                    id: uploadId,
-                    owner: 'workspace',
-                    token,
-                });
-                lockTokens.set(uploadId, token);
-            }
             return await action();
         } finally {
-            try {
-                if (remoteUpload && token)
-                    await remoteUpload('unlock', {
-                        id: uploadId,
-                        owner: 'workspace',
-                        token,
-                    });
-            } finally {
-                lockTokens.delete(uploadId);
-                active.delete(uploadId);
-            }
+            active.delete(uploadId);
         }
     }
 
-    async function reserve(owner: string, project: string, data: unknown) {
+    function reserve(owner: string, project: string, data: unknown) {
         const input = object(data);
-        if (goUpload)
-            return (
-                await goUpload<{ id: string }>('reserve', {
-                    owner,
-                    project,
-                    input,
-                })
-            ).id;
         const uploadId = id(input.id);
         const path = input.path;
         const size = input.size;
@@ -397,10 +303,6 @@ export function mySpace(
 
     async function prepare(row: Upload) {
         if (row.state !== 'preparing') return row;
-        if (goUpload) {
-            await goUpload('prepare', { owner: row.owner, id: row.id });
-            return upload(row.owner, row.id);
-        }
         if (row.expires <= Date.now()) throw conflict('上传已过期。');
         // Remove any orphan from a prior initiation whose response was lost.
         if (row.size > 0) await storage.abort(key(row));
@@ -413,11 +315,6 @@ export function mySpace(
 
     async function parts(row: Upload): Promise<CompletedPart[] | null> {
         if (!row.storageId) return [];
-        if (goUpload)
-            return goUpload<CompletedPart[] | null>('parts', {
-                owner: row.owner,
-                id: row.id,
-            });
         const checksums = manifest(row);
         const existing = await storage.parts(key(row), row.storageId);
         return (
@@ -446,10 +343,6 @@ export function mySpace(
 
     async function finish(row: Upload) {
         if (row.state === 'saved') return row;
-        if (goUpload) {
-            await goUpload('finish', { owner: row.owner, id: row.id });
-            return upload(row.owner, row.id);
-        }
         if (!['uploading', 'completing'].includes(row.state))
             throw conflict('此上传无法完成。');
         if (row.state === 'uploading') {
@@ -491,10 +384,6 @@ export function mySpace(
     }
 
     async function clean(row: Upload, outcome: NonNullable<Upload['cleanup']>) {
-        if (goUpload) {
-            await goUpload('clean', { owner: row.owner, id: row.id, outcome });
-            return;
-        }
         if (row.state !== 'cleaning') {
             db.prepare(
                 "UPDATE space_uploads SET state = 'cleaning', cleanup = ? WHERE id = ?",
@@ -519,21 +408,18 @@ export function mySpace(
         active,
         execution,
         commitDeletionChange,
-        ...(goUpload ? { goUpload } : {}),
     });
 
     async function sweep() {
-        const rows = goUpload
-            ? []
-            : (db
-                  .prepare(
-                      `
+        const rows = db
+            .prepare(
+                `
                 SELECT * FROM space_uploads WHERE state = 'completing'
                 OR (state = 'cleaning' AND signedUntil <= ?)
                 OR (state IN ('preparing','uploading') AND expires <= ?)
             `,
-                  )
-                  .all(Date.now(), Date.now()) as Upload[]);
+            )
+            .all(Date.now(), Date.now()) as Upload[];
         for (const row of rows) {
             if (closing) return;
             if (active.has(row.id)) continue;
@@ -550,13 +436,11 @@ export function mySpace(
                 // Keep the durable state for the next reconciliation attempt.
             });
         }
-        const deletions = goUpload
-            ? []
-            : (db
-                  .prepare(
-                      'SELECT u.* FROM space_file_deletions d JOIN space_uploads u ON u.id=d.fileId',
-                  )
-                  .all() as Upload[]);
+        const deletions = db
+            .prepare(
+                'SELECT u.* FROM space_file_deletions d JOIN space_uploads u ON u.id=d.fileId',
+            )
+            .all() as Upload[];
         for (const row of deletions) {
             if (closing) return;
             if (active.has(row.id)) continue;
@@ -701,7 +585,7 @@ export function mySpace(
             return execution.start(owner, resource, key, await read());
         }
         if (group === 'projects' && action === 'uploads' && method === 'POST') {
-            const uploadId = await reserve(owner, resource, await read());
+            const uploadId = reserve(owner, resource, await read());
             return locked(uploadId, async () =>
                 view(await prepare(upload(owner, uploadId))),
             );
@@ -778,12 +662,6 @@ export function mySpace(
                     throw invalid('分块编号无效。');
                 const checksum = checksums[n - 1];
                 if (!checksum) throw invalid('分块摘要无效。');
-                if (goUpload)
-                    return goUpload<{ url: string; checksum: string }>('sign', {
-                        owner,
-                        id: row.id,
-                        number: n,
-                    });
                 const url = await storage.signPart(
                     key(row),
                     row.storageId,
@@ -817,14 +695,7 @@ export function mySpace(
                     (row.state !== 'saved' && row.signedUntil > Date.now())
                 )
                     return false;
-                const purged = await locked(row.id, async () => {
-                    if (goUpload) {
-                        const result = await goUpload<{ complete: boolean }>(
-                            'purge-file',
-                            { owner, id: row.id },
-                        );
-                        return result.complete;
-                    }
+                await locked(row.id, async () => {
                     if (row.size > 0)
                         await storage.abort(
                             key(row),
@@ -842,16 +713,7 @@ export function mySpace(
                             'DELETE FROM space_uploads WHERE id=? AND owner=?',
                         ).run(row.id, owner);
                     });
-                    return true;
                 });
-                if (!purged) return false;
-            }
-            if (goUpload) {
-                const result = await goUpload<{ complete: boolean }>(
-                    'purge-metadata',
-                    { owner },
-                );
-                return result.complete;
             }
             db.exec('BEGIN IMMEDIATE');
             try {

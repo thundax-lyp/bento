@@ -12,11 +12,10 @@ export default defineConfig({
     webServer: [
         {
             command:
-                'node --import ./register-paths.mjs apps/workspace/workspace-api/src/main.ts',
+                'node --import ./register-paths.mjs apps/workspace/workspace-web/acceptance/fixtures/workspace-api/start-mock.ts',
             cwd: root,
             url: apiOrigin + '/api/session',
             env: {
-                BENTO_ONE_MODE: 'mock',
                 BENTO_ONE_PORT: '4319',
                 BENTO_ONE_ORIGIN: webOrigin,
             },
