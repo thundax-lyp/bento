@@ -8,6 +8,7 @@ import { createInterface } from 'node:readline';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
+import { Worker } from 'node:worker_threads';
 import {
     localEnvironmentVersion,
     localHost,
@@ -31,6 +32,39 @@ import {
     sdk,
     start,
 } from './fixtures/service.ts';
+
+test('business writes wait for a concurrent dispatch transaction', async () => {
+    const state = await mkdtemp(join(tmpdir(), 'bento-dispatch-contention-'));
+    const file = join(state, 'business.sqlite');
+    const store = new Store(file);
+    const writer = new Worker(
+        `
+            const { DatabaseSync } = require('node:sqlite');
+            const { parentPort, workerData } = require('node:worker_threads');
+            const db = new DatabaseSync(workerData);
+            db.exec('BEGIN IMMEDIATE');
+            parentPort.postMessage('locked');
+            parentPort.once('message', () => {
+                setTimeout(() => {
+                    db.exec('COMMIT');
+                    db.close();
+                    parentPort.close();
+                }, 250);
+            });
+        `,
+        { eval: true, workerData: file },
+    );
+    try {
+        assert.deepEqual(await once(writer, 'message'), ['locked']);
+        writer.postMessage('release');
+        const { id } = store.addProject('tenant', 'Project', []);
+        assert.equal(store.project('tenant', id).status, 'importing');
+    } finally {
+        await writer.terminate();
+        store.close();
+        await rm(state, { recursive: true, force: true });
+    }
+});
 
 test('tenant queue limits and selected reservations survive restart and count recovery', async () => {
     const state = await mkdtemp(join(tmpdir(), 'bento-fair-queue-'));
