@@ -1,4 +1,4 @@
-module github.com/thundax-lyp/bento/apps/workspace/workspace-api/go
+module github.com/thundax-lyp/bento/apps/workspace/workspace-api
 
 go 1.25.3
 

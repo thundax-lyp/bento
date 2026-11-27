@@ -28,6 +28,8 @@ node --import ./register-paths.mjs --env-file=debug-workspace/task-entry.env app
 
 关闭页面再打开时，任务列表会从服务端重新加载。提交结果暂未确认时，浏览器只存账号及项目范围内的提交键与描述摘要。用原任务描述重试会沿用该键。空 diff 可以预览状态并下载为空文件。
 
+Go 入口位于 `src/main.go`。从本工程根目录执行 `go build ./src`，运行 `go test ./... && go vet ./...` 检查 Go 实现。
+
 ## HTTP 服务生命周期
 
 任务入口由 `src/http-listener.ts` 使用 Node 公开的 `node:http` API 监听回环地址，继续使用上文的反向代理和 Web API 配置。请求头和完整请求的接收期限均为 30 秒，在创建 Server 时配置。接收期限独立于处理器耗时；是否收完请求以 Node 的 `IncomingMessage.complete` 为准，不依赖处理器消费请求流或触发 `end`。完整请求的后端处理不会因该期限中断。监听器不读取 DSH 私有字段，不调用 Node 内部连接扫描函数。
