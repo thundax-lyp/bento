@@ -1,3 +1,4 @@
+import { Store } from '@/apps/orchestrator/src/execution-service/store/index.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { TestContext } from 'node:test';
@@ -94,6 +95,54 @@ test(
 );
 
 test(
+    'A6 dispatch: committed reservation and lost publication reply recover one Workflow',
+    { timeout: 120000 },
+    async (t) => {
+        const directory = await mkdtemp('/tmp/bento-a6-dispatch-');
+        let server: Awaited<ReturnType<typeof startServer>> | undefined;
+        try {
+            const namespace = 'bento-a6-' + randomUUID();
+            server = await startServer(
+                tool,
+                directory,
+                { port: await freePort(), namespace, createNamespace: true },
+                t.signal,
+            );
+            const result = await runCommand(
+                'go',
+                [
+                    'test',
+                    '-mod=readonly',
+                    '-count=1',
+                    '-v',
+                    '-run',
+                    '^TestDispatchPublishAgainstTemporal$',
+                    './src/control',
+                ],
+                {
+                    cwd: join(root, 'apps/orchestrator'),
+                    env: {
+                        ...process.env,
+                        BENTO_TEST_DISPATCH_TEMPORAL_ADDRESS: server.address,
+                        BENTO_TEST_DISPATCH_TEMPORAL_NAMESPACE: namespace,
+                    },
+                    timeoutMs: 90000,
+                    signal: t.signal,
+                    input: null,
+                },
+            );
+            assert.match(
+                result.stdout,
+                /^--- PASS: TestDispatchPublishAgainstTemporal /m,
+            );
+        } finally {
+            await server?.close();
+            await rm(directory, { recursive: true, force: true });
+        }
+    },
+);
+
+test(
     'A6 cleanup: managed process timeout and spawn failure',
     { timeout: 15000 },
     async () => {
@@ -149,6 +198,8 @@ function controlBinary(signal: AbortSignal) {
 
 async function proxyCase(shutdown: boolean, signal: AbortSignal) {
     const directory = await mkdtemp('/tmp/bento-a6-');
+    const businessPath = join(directory, 'business.sqlite');
+    new Store(businessPath).close();
     let server: Awaited<ReturnType<typeof startServer>> | undefined;
     let transport:
         Awaited<ReturnType<typeof startControlTransport>> | undefined;
@@ -239,6 +290,7 @@ async function proxyCase(shutdown: boolean, signal: AbortSignal) {
                         taskQueue:
                             'bento_a6_' + randomUUID().replaceAll('-', ''),
                         slots: 1,
+                        businessPath,
                     })
                 ).value,
                 null,
@@ -250,14 +302,8 @@ async function proxyCase(shutdown: boolean, signal: AbortSignal) {
                 });
             else {
                 assert.equal(
-                    (
-                        await request('choose', {
-                            slots: 1,
-                            occupied: [],
-                            queued: [],
-                        })
-                    ).value,
-                    '',
+                    (await request('purge', randomUUID())).value,
+                    true,
                 );
                 const response = await request('close', null);
                 assert.equal(response.value, null);

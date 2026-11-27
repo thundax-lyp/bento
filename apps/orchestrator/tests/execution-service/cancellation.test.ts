@@ -42,8 +42,6 @@ test('queued cancellation store', async () => {
         assert.equal(cancelled.status, 'cancelled');
         assert.equal(store.reserveDispatch(first.run, 1), false);
         assert.equal(store.start(first.run, [], 1), false);
-        assert.deepEqual(store.dispatchSnapshot(1).queued, []);
-        assert.deepEqual(store.schedulableRuns(), []);
         store.close();
         store = new Store(file);
         assert.deepEqual(cancel(), cancelled);
@@ -54,8 +52,6 @@ test('queued cancellation store', async () => {
             'cancelled',
         );
         assert.equal(store.dispatchReserved(second.run), true);
-        assert.deepEqual(store.dispatchSnapshot(1).occupied, []);
-        assert.deepEqual(store.schedulableRuns(), []);
         assert.equal(store.start(second.run, [], 1), false);
         const third = newRun();
         assert.equal(store.start(third.run, [], 1), true);
@@ -163,10 +159,11 @@ test('running cancellation ledger', async () => {
             store.requestRunningCancellation('A', project, id, 1);
         const intent = cancel();
         assert.equal(intent.status, 'cancelling');
-        assert.deepEqual(
-            store.dispatchSnapshot(1).occupied.map((row) => ({ ...row })),
-            [{ owner: 'A', status: 'cancelling' }],
-        );
+        const nextProject = store.addProject('B', 'Next', []).id;
+        store.importResult(nextProject, 'ready');
+        const waiting = store.addRun('B', nextProject, 'waiting', 'prompt').run
+            .id;
+        assert.equal(store.reserveDispatch(waiting, 1), false);
         assert.throws(() => store.addRun('A', project, 'second', 'prompt'), {
             status: 409,
         });
@@ -176,11 +173,13 @@ test('running cancellation ledger', async () => {
         store.close();
         store = new Store(file);
         assert.deepEqual(cancel(), intent);
-        assert.deepEqual(store.schedulableRuns(), [id]);
+        assert.equal(store.findRun(id).status, 'cancelling');
+        assert.equal(store.reserveDispatch(waiting, 1), false);
         assert.equal(store.finishCancellation(id, 1, 'cancelled'), false);
         store.markCancellationWorkerClosed(id, 1);
         assert.equal(store.finishCancellation(id, 1, 'cancelled'), true);
-        assert.deepEqual(store.dispatchSnapshot(1).occupied, []);
+        assert.equal(store.reserveDispatch(waiting, 1), true);
+        store.cancelQueuedRun('B', nextProject, waiting);
         const next = store.addRun('A', project, 'second', 'prompt').run.id;
         assert(store.start(next, [], 1));
         store.received(next);

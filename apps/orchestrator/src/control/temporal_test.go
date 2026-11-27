@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -19,33 +18,11 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/client"
 	sdklog "go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 )
-
-func TestDispatchHonorsCapacityAndTenantFIFO(t *testing.T) {
-	tests := []struct {
-		name, input, want string
-	}{
-		{"idle tenant first", `{"slots":2,"occupied":[{"owner":"A","status":"running"}],"queued":[{"id":"a1","owner":"A"},{"id":"b0","owner":"B"},{"id":"c0","owner":"C"}]}`, "b0"},
-		{"same tenant can fill pool", `{"slots":2,"occupied":[{"owner":"A","status":"running"}],"queued":[{"id":"a1","owner":"A"},{"id":"a2","owner":"A"}]}`, "a1"},
-		{"reserved tenant waits for admission", `{"slots":2,"occupied":[{"owner":"A","status":"queued"}],"queued":[{"id":"a1","owner":"A"},{"id":"b0","owner":"B"}]}`, "b0"},
-		{"full pool counts recovery", `{"slots":2,"occupied":[{"owner":"A","status":"recovering"},{"owner":"B","status":"queued"}],"queued":[{"id":"c0","owner":"C"}]}`, ""},
-		{"global FIFO when idle", `{"slots":2,"occupied":[],"queued":[{"id":"b0","owner":"B"},{"id":"a0","owner":"A"}]}`, "b0"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var snapshot dispatchSnapshot
-			if err := json.Unmarshal([]byte(tt.input), &snapshot); err != nil {
-				t.Fatal(err)
-			}
-			if got := chooseRun(snapshot); got != tt.want {
-				t.Fatalf("selected %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
 
 func TestRunWorkflowRetriesOnlyAdvancement(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
@@ -108,13 +85,46 @@ func TestTemporalRetryControlProcess(t *testing.T) {
 	os.Exit(0)
 }
 
+type fixturePublisher func(string) error
+
+func (publish fixturePublisher) ExecuteWorkflow(_ context.Context, options client.StartWorkflowOptions, workflow interface{}, args ...interface{}) (client.WorkflowRun, error) {
+	if workflow != "bentoRun" || len(args) != 1 {
+		return nil, errors.New("unexpected Workflow")
+	}
+	id, ok := args[0].(string)
+	if !ok || id == "" || options.ID != workflowID(id) {
+		return nil, errors.New("invalid Workflow ID")
+	}
+	return nil, publish(id)
+}
+
+func startFixtureDispatch(cfg temporalConfig, publish fixturePublisher) (func(), error) {
+	db, conn, err := openDispatchLedger(context.Background(), cfg.BusinessPath)
+	if err != nil {
+		return nil, err
+	}
+	dispatch := runDispatcher{db: conn, publisher: publish, queue: cfg.TaskQueue, slots: cfg.Slots}
+	stop := dispatch.start()
+	return func() {
+		stop()
+		_ = conn.Close()
+		_ = db.Close()
+	}, nil
+}
+
 func runTemporalRetryControlFixture() error {
 	b := &bridge{pending: make(map[string]chan message)}
 	replies := make(chan string, 2)
 	done := make(chan error, 1)
 	received := make(map[string]bool, 2)
 	reportPath := os.Getenv("BENTO_TEST_TEMPORAL_REPORT")
-	started, enqueued := false, false
+	enqueued := false
+	var stopDispatch func()
+	defer func() {
+		if stopDispatch != nil {
+			stopDispatch()
+		}
+	}()
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
 		var m message
@@ -124,59 +134,58 @@ func runTemporalRetryControlFixture() error {
 		reply := message{ID: m.ID, Value: json.RawMessage("null")}
 		switch m.Method {
 		case "start":
-			if started {
-				return errors.New("duplicate start")
+			var cfg temporalConfig
+			if stopDispatch != nil || json.Unmarshal(m.Value, &cfg) != nil || cfg.Slots != 1 {
+				return errors.New("invalid start")
 			}
-			started = true
-		case "choose":
-			var snapshot dispatchSnapshot
-			if !started || json.Unmarshal(m.Value, &snapshot) != nil || snapshot.Slots < 1 || snapshot.Slots > 2 {
-				return errors.New("invalid choose request")
-			}
-			reply.Value, _ = json.Marshal(chooseRun(snapshot))
-		case "enqueue":
-			var runID string
-			if !started || enqueued || json.Unmarshal(m.Value, &runID) != nil || runID == "" {
-				return errors.New("invalid or duplicate enqueue")
-			}
-			enqueued = true
 			if err := b.send(reply); err != nil {
 				return err
 			}
-			go func() {
-				var suite testsuite.WorkflowTestSuite
-				suite.SetLogger(sdklog.NewStructuredLogger(slog.New(slog.NewTextHandler(os.Stderr, nil))))
-				env := suite.NewTestWorkflowEnvironment()
-				env.RegisterActivityWithOptions(b.advance, activity.RegisterOptions{Name: "advanceRun"})
-				env.SetTestTimeout(10 * time.Second)
-				env.ExecuteWorkflow(bentoRun, runID)
-				if err := env.GetWorkflowError(); err != nil {
-					fmt.Fprintln(os.Stderr, err)
+			var err error
+			stopDispatch, err = startFixtureDispatch(cfg, func(runID string) error {
+				if enqueued {
+					return errors.New("duplicate enqueue")
+				}
+				enqueued = true
+				go func() {
+					var suite testsuite.WorkflowTestSuite
+					suite.SetLogger(sdklog.NewStructuredLogger(slog.New(slog.NewTextHandler(os.Stderr, nil))))
+					env := suite.NewTestWorkflowEnvironment()
+					env.RegisterActivityWithOptions(b.advance, activity.RegisterOptions{Name: "advanceRun"})
+					env.SetTestTimeout(10 * time.Second)
+					env.ExecuteWorkflow(bentoRun, runID)
+					if err := env.GetWorkflowError(); err != nil {
+						fmt.Fprintln(os.Stderr, err)
+						done <- err
+						return
+					}
+					if len(replies) != 2 {
+						err := errors.New("expected two successful host replies")
+						fmt.Fprintln(os.Stderr, err)
+						done <- err
+						return
+					}
+					report := struct {
+						RunID    string   `json:"runId"`
+						ReplyIDs []string `json:"replyIds"`
+					}{runID, []string{<-replies, <-replies}}
+					data, err := json.Marshal(report)
+					if err == nil {
+						err = os.WriteFile(reportPath+".tmp", data, 0o600)
+					}
+					if err == nil {
+						err = os.Rename(reportPath+".tmp", reportPath)
+					}
+					if err != nil {
+						fmt.Fprintln(os.Stderr, err)
+					}
 					done <- err
-					return
-				}
-				if len(replies) != 2 {
-					err := errors.New("expected two successful host replies")
-					fmt.Fprintln(os.Stderr, err)
-					done <- err
-					return
-				}
-				report := struct {
-					RunID    string   `json:"runId"`
-					ReplyIDs []string `json:"replyIds"`
-				}{runID, []string{<-replies, <-replies}}
-				data, err := json.Marshal(report)
-				if err == nil {
-					err = os.WriteFile(reportPath+".tmp", data, 0o600)
-				}
-				if err == nil {
-					err = os.Rename(reportPath+".tmp", reportPath)
-				}
-				if err != nil {
-					fmt.Fprintln(os.Stderr, err)
-				}
-				done <- err
-			}()
+				}()
+				return nil
+			})
+			if err != nil {
+				return err
+			}
 			continue
 		case "":
 			b.mu.Lock()
@@ -194,6 +203,8 @@ func runTemporalRetryControlFixture() error {
 			pending <- m
 			continue
 		case "close":
+			stopDispatch()
+			stopDispatch = nil
 			if !enqueued {
 				return errors.New("closed before enqueue")
 			}
@@ -203,9 +214,6 @@ func runTemporalRetryControlFixture() error {
 			return b.send(reply)
 		default:
 			return fmt.Errorf("unexpected control request %q", m.Method)
-		}
-		if err := b.send(reply); err != nil {
-			return err
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -230,9 +238,13 @@ func runTemporalFairDispatchControl(dir string) error {
 	b := &bridge{pending: make(map[string]chan message)}
 	published := make(map[string]bool)
 	replied := make(map[string]bool)
-	runIDPattern := regexp.MustCompile(`^[a-f0-9-]{36}$`)
 	var workflows sync.WaitGroup
-	started := false
+	var stopDispatch func()
+	defer func() {
+		if stopDispatch != nil {
+			stopDispatch()
+		}
+	}()
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 64*1024), 8*1024*1024)
 	for scanner.Scan() {
@@ -240,45 +252,40 @@ func runTemporalFairDispatchControl(dir string) error {
 		if err := json.Unmarshal(scanner.Bytes(), &m); err != nil {
 			return err
 		}
-		if !started && m.Method != "start" {
+		if stopDispatch == nil && m.Method != "start" {
 			return errors.New("expected start")
 		}
 		reply := message{ID: m.ID, Value: json.RawMessage("null")}
 		switch m.Method {
 		case "start":
-			var config struct {
-				Address, Namespace, TaskQueue string
-				Slots                         int
-			}
-			if started || json.Unmarshal(m.Value, &config) != nil ||
-				config.Address != "fixture" || config.Namespace != "default" ||
-				config.TaskQueue != "fair-dispatch" || config.Slots != 2 {
+			var cfg temporalConfig
+			if stopDispatch != nil || json.Unmarshal(m.Value, &cfg) != nil ||
+				cfg.Address != "fixture" || cfg.Namespace != "default" ||
+				cfg.TaskQueue != "fair-dispatch" || cfg.Slots != 2 {
 				return errors.New("invalid fair dispatch configuration")
 			}
-			started = true
-		case "choose":
-			var snapshot dispatchSnapshot
-			if json.Unmarshal(m.Value, &snapshot) != nil || snapshot.Slots != 2 {
-				return errors.New("invalid fair dispatch snapshot")
-			}
-			reply.Value, _ = json.Marshal(chooseRun(snapshot))
-		case "enqueue":
-			var runID string
-			if json.Unmarshal(m.Value, &runID) != nil || !runIDPattern.MatchString(runID) || published[runID] {
-				return errors.New("invalid or duplicate fair dispatch enqueue")
-			}
-			published[runID] = true
 			if err := b.send(reply); err != nil {
 				return err
 			}
-			workflows.Add(1)
-			go func(runID string) {
-				defer workflows.Done()
-				if err := runFairDispatchWorkflow(b, dir, runID); err != nil {
-					fmt.Fprintf(os.Stderr, "Run %s: %v\n", runID, err)
-					os.Exit(1)
+			var err error
+			stopDispatch, err = startFixtureDispatch(cfg, func(runID string) error {
+				if published[runID] {
+					return errors.New("duplicate fair dispatch enqueue")
 				}
-			}(runID)
+				published[runID] = true
+				workflows.Add(1)
+				go func(runID string) {
+					defer workflows.Done()
+					if err := runFairDispatchWorkflow(b, dir, runID); err != nil {
+						fmt.Fprintf(os.Stderr, "Run %s: %v\n", runID, err)
+						os.Exit(1)
+					}
+				}(runID)
+				return nil
+			})
+			if err != nil {
+				return err
+			}
 			continue
 		case "":
 			b.mu.Lock()
@@ -291,13 +298,12 @@ func runTemporalFairDispatchControl(dir string) error {
 			pending <- m
 			continue
 		case "close":
+			stopDispatch()
+			stopDispatch = nil
 			workflows.Wait()
 			return b.send(reply)
 		default:
 			return fmt.Errorf("unexpected fair dispatch request %q", m.Method)
-		}
-		if err := b.send(reply); err != nil {
-			return err
 		}
 	}
 	if err := scanner.Err(); err != nil {

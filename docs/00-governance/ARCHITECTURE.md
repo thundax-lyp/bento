@@ -28,7 +28,7 @@
 
 - Run 编排已接入 Temporal [单执行宿主模式](../../deploy/README.md#temporal-配置)。Temporal 持有调度历史，Bento 在 SQLite 持久化 Run 状态、Session、Workspace 绑定和执行授权。Activity 重投以持久 Run 状态决定派发或恢复。账号身份、密码哈希与注销清理状态使用 MySQL；执行宿主的 Run、Session、Workspace 和授权账本继续使用持久 SQLite。
 - [Web 部署](../../deploy/README.md#启动与检查)由 NGINX 同域提供静态前端并代理 Go Web API 入口。Go 提供 MySQL 账号仓储，TypeScript task-entry 位于 `apps/workspace/api/src/`，负责业务 API 与会话认证，通过 Node 公开 HTTP API 监听回环地址，对应测试位于 `apps/workspace/api/tests/`。浏览器直传 S3。
-- 启用 Temporal 时，Go 控制面负责租户公平派发策略与 Temporal Client/Worker。TypeScript 执行宿主通过私有标准输入输出协议提供队列快照并推进 Run。单宿主 Go 模式中，Go 选出的 Run 经 `business` 原子预留后发布 Workflow，`authority` 管理授权代次及绑定条件更新。
+- 启用 Temporal 时，常驻 Go 控制进程直接读取业务账本，在同一 SQLite 写语句中按租户公平策略选择并预约 Run，提交后由 Go 发布 Workflow。TypeScript 执行宿主通过私有标准输入输出协议接收 Activity 推进请求。`authority` 管理授权代次及绑定条件更新。
 
 个人端 Task 生命周期按 [Task 接口](../20-interfaces/WEB-INTERFACE.md#task-生命周期) 接入。执行账本持有 Task、Run、会话和工作区绑定、停止证据与结果版本。个人端 API 管理空间来源意图和文件 pin。Worker 继续领用当次 Run 的授权。
 
@@ -58,8 +58,7 @@ flowchart TB
         Task -->|"owner 绑定的执行服务请求"| Host
         AdminAPI -->|"Workspace 诊断"| Host
         Host --> GoAuthority
-        Host -->|"队列快照"| GoScheduler
-        GoScheduler -->|"选择 Run / 推进 Activity"| Host
+        GoScheduler -->|"推进 Activity"| Host
     end
     subgraph Execution["执行层"]
         DSH["DSH worker 池"]

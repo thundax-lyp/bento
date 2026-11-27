@@ -89,8 +89,6 @@ async function projectDeleteControlFixture(counter: string) {
                 count === 2
                     ? { error: 'Unconfirmed workflow deletion' }
                     : { value: count >= 3 };
-        } else if (method === 'choose') {
-            result = { value: '' };
         } else if (method !== 'start' && method !== 'close') {
             result = { error: 'Unexpected control method' };
         }

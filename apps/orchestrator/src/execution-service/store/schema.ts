@@ -3,6 +3,7 @@ import { pending, pendingRetries } from './model.ts';
 
 export function initializeStoreSchema(db: DatabaseSync) {
     db.exec(`
+            PRAGMA busy_timeout=5000;
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=FULL;
             PRAGMA foreign_keys=ON;

@@ -131,8 +131,9 @@ export async function serveExecution(options: Options) {
 
     try {
         lock.exec('BEGIN IMMEDIATE');
+        const businessPath = join(dir, 'business.sqlite');
         store = new Store(
-            join(dir, 'business.sqlite'),
+            businessPath,
             tenantQueueLimit,
             options.goControl,
             options.requireTaskRunApproval,
@@ -717,6 +718,7 @@ export async function serveExecution(options: Options) {
             scheduler = await temporalRuns(
                 options.temporal,
                 slots,
+                businessPath,
                 async (runId, activitySignal) => {
                     stop.signal.throwIfAborted();
                     const run = db.findRun(runId);
@@ -763,7 +765,6 @@ export async function serveExecution(options: Options) {
                 },
             );
         }
-        let enqueued = new Set<string>();
         let retryCursor = 0;
 
         async function work() {
@@ -778,44 +779,6 @@ export async function serveExecution(options: Options) {
                 if (stop.signal.aborted) return;
             }
             if (scheduler) {
-                // Reserve only available slots before publishing their Workflows.
-                // SQLite retains the decisions if publication or the controller fails.
-                for (let i = 0; !draining && i < slots; i++) {
-                    const snapshot = db.dispatchSnapshot(slots);
-                    if (!snapshot.queued.length) break;
-                    let selected: string;
-                    try {
-                        selected = await scheduler.choose(snapshot);
-                    } catch {
-                        break;
-                    }
-                    if (stop.signal.aborted) return;
-                    if (!selected) break;
-                    // An Activity or HTTP request may have changed the queue
-                    // while Go was choosing a candidate.
-                    if (
-                        JSON.stringify(db.dispatchSnapshot(slots)) !==
-                        JSON.stringify(snapshot)
-                    )
-                        break;
-                    if (!db.reserveDispatch(selected, slots)) break;
-                }
-                const pending = db.schedulableRuns();
-                const previous = enqueued;
-                enqueued = new Set(pending.filter((id) => previous.has(id)));
-                for (const id of pending) {
-                    if (stop.signal.aborted) return;
-                    if (!enqueued.has(id)) {
-                        try {
-                            await scheduler.enqueue(id);
-                        } catch {
-                            // Keep the reservation and retry in order on the next tick.
-                            break;
-                        }
-                        enqueued.add(id);
-                    }
-                }
-                // The publisher can run while a Temporal Activity occupies the host.
                 if (stop.signal.aborted || assigned.size) return;
             } else {
                 const unfinished = db.next('active');

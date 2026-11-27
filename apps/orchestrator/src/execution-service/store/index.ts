@@ -897,20 +897,12 @@ export class Store {
         return this.projectRecords.importResult(id, status, reason);
     }
 
-    dispatchSnapshot(slots: number) {
-        return this.runRecords.dispatchSnapshot(slots);
-    }
-
     reserveDispatch(id: string, slots: number) {
         return this.runRecords.reserveDispatch(id, slots);
     }
 
     dispatchReserved(id: string) {
         return this.runRecords.dispatchReserved(id);
-    }
-
-    schedulableRuns() {
-        return this.runRecords.schedulableRuns();
     }
 
     next(status: 'active' | 'queued') {
@@ -988,11 +980,15 @@ export class Store {
     }
 
     resumeRunAdmission() {
-        this.business('resume-admission', {});
+        if (this.business('resume-admission', {}) === undefined)
+            this.db.exec('DELETE FROM run_admission_drain');
     }
 
     beginRunDrain() {
-        this.business('begin-drain', {});
+        if (this.business('begin-drain', {}) === undefined)
+            this.db.exec(
+                'INSERT OR IGNORE INTO run_admission_drain VALUES (1)',
+            );
     }
 
     reviewReceipt(id: string, proof: string) {

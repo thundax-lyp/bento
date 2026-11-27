@@ -9,12 +9,13 @@
 - 个人端与管理端的认证前端、业务前端、API 独立构建。各端 API 从各自 Realm 验证身份并管理业务会话。Orchestrator 验证调用服务身份、操作权限与目标资源归属后才读写 Run。Worker 使用当次执行授权访问执行接口。
 - 个人端认证构建生成 `apps/workspace/auth/dist/` 下的 `login.html`、`account.html` 和 `style.css`。Compose 将这三项产物复制到运行镜像。NGINX 经 Go 入口反代 `/auth` 到 TypeScript task-entry，后者持有 OIDC 会话并据此选择 HTML。
 - 管理端通过独立 OIDC 会话提供 Workspace 诊断提交与回读。管理 API 和 Orchestrator 各自校验 Workspace 授权，Orchestrator 将固定诊断指令交给现有项目 Run 链路。请求与错误语义见[应用 API 与 Orchestrator](../20-interfaces/APP-ORCHESTRATOR-INTERFACE.md#管理端诊断)。
-- 当前 Go Temporal 模块和 TypeScript 执行宿主通过私有 stdio 交接队列快照、Run ID、容量与推进请求。宿主执行状态和容量的条件写入后，才发布 Workflow。Go 子进程退出时宿主停止新增 Temporal 派发，重启后从持久状态恢复。
+- 启用 Temporal 时，常驻 Go 控制进程持有 `business.sqlite` 连接并驱动派发循环。私有 stdio 在启动时传递账本路径及容量，运行中承载 Activity 推进与清理请求。Go 子进程退出时派发停止，重启后从账本恢复。
 - 目标 Go Orchestrator 在同一服务边界内持有账本和 Temporal 编排。Workflow 只携带 Run ID，Activity 读回权威账本并沿用同一尝试与执行代次。
 
 ## Temporal 执行边界
 
 - Bento 业务 Run ID 是稳定的业务标识。当前 Workflow ID 从该标识派生为 `bento-run-<runId>`。重复启动使用同一 Workflow ID，已存在的 Workflow 视为原派发已接受。启动结果未知时沿用原 ID 对账。Temporal 单次执行的 Run ID 用于流程诊断。
+- Go 派发循环先在同一 SQLite 写语句中核对排空门禁、占用槽位和已有预约，再按空闲租户优先及队列 FIFO 选出一个 Run 并持久预约。活跃 Run、已预约的排队 Run 和仍持有槽位租约的 Run 都计入占用。同一租户已有排队预约时等待其进入执行。提交后优先重投活跃 Run，再按预约顺序发布排队 Run。发布失败保留预约并在后续轮询使用原 Workflow ID。
 - Workflow 负责确定性的流程编排。数据库、模型、文件和沙盒 I/O 由 Activity 推进受信执行链。当前 `advanceRun` 定期发送 heartbeat，业务进度与会话检查点由持久存储维护。文件正文、完整对话和执行凭据不得进入 Workflow 参数、结果或 heartbeat。
 - `advanceRun` 以 Temporal 最近确认的 heartbeat 为本地执行期限。确认超时、Activity 失效或控制连接中断时，执行服务按本次 Activity 关联的 Run 和代次撤权，等待 Worker 退出并核验 OpenShell 沙盒停止后才释放槽位。持久化尝试及代次用于接管校验，Activity 重试计数只用于流程诊断。
 

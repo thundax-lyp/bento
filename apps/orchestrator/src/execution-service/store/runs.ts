@@ -421,32 +421,6 @@ export function runStore({
         return row.diff;
     }
 
-    function dispatchSnapshot(slots: number) {
-        const occupied = db
-            .prepare(
-                `
-            SELECT p.owner, r.status FROM runs r JOIN projects p ON p.id=r.projectId
-            LEFT JOIN run_dispatches d ON d.runId=r.id
-            WHERE r.status IN ('running','recovering','cancelling')
-               OR (r.status='queued' AND d.runId IS NOT NULL)
-               OR EXISTS (SELECT 1 FROM run_slot_leases l WHERE l.runId=r.id)
-            ORDER BY r.rowid
-        `,
-            )
-            .all() as { owner: string; status: string }[];
-        const queued = db
-            .prepare(
-                `
-            SELECT r.id, p.owner FROM runs r JOIN projects p ON p.id=r.projectId
-            WHERE r.status='queued' AND NOT EXISTS (
-                SELECT 1 FROM run_dispatches d WHERE d.runId=r.id
-            ) ORDER BY r.rowid
-        `,
-            )
-            .all() as { id: string; owner: string }[];
-        return { slots, occupied, queued };
-    }
-
     function reserveDispatch(id: string, slots: number) {
         const result = business('reserve', { run: id, slots });
         if (result !== undefined) return result === true;
@@ -479,20 +453,6 @@ export function runStore({
             db.prepare('SELECT 1 FROM run_dispatches WHERE runId=?').get(id) !==
             undefined
         );
-    }
-
-    function schedulableRuns() {
-        return db
-            .prepare(
-                `
-                SELECT r.id FROM runs r LEFT JOIN run_dispatches d ON d.runId=r.id
-                WHERE r.status IN ('running','recovering','cancelling')
-                   OR (r.status='queued' AND d.runId IS NOT NULL)
-                ORDER BY r.status='queued', d.rowid, r.rowid
-                `,
-            )
-            .all()
-            .map((row) => row.id as string);
     }
 
     function next(status: 'active' | 'queued') {
@@ -658,10 +618,8 @@ export function runStore({
         finishCancellation,
         failQueuedBaseline,
         diff,
-        dispatchSnapshot,
         reserveDispatch,
         dispatchReserved,
-        schedulableRuns,
         next,
         binding,
         pendingCapture,
