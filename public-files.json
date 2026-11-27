@@ -343,7 +343,7 @@
         "apps/orchestrator/orchestrator-execution-host/acceptance/single-node-restore/check-package.mjs"
     ],
     "patterns": [
-        "apps/orchestrator/index.ts",
+        "apps/orchestrator/orchestrator-execution-host/src/index.ts",
         "apps/orchestrator/orchestrator-execution-host/src/execution-service/*.ts",
         "apps/orchestrator/orchestrator-execution-host/src/openshell/*.ts"
     ]

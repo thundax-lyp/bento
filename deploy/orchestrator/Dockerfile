@@ -22,7 +22,7 @@ COPY apps/worker/package.json ./apps/worker/
 RUN pnpm --filter @bento/orchestrator... install --prod --frozen-lockfile
 COPY register-paths.mjs ./
 COPY shared/text-snapshot.ts ./shared/
-COPY apps/orchestrator/index.ts ./apps/orchestrator/
+COPY apps/orchestrator/orchestrator-execution-host/src/index.ts ./apps/orchestrator/orchestrator-execution-host/src/
 COPY apps/orchestrator/orchestrator-execution-host/src/execution-service/*.ts ./apps/orchestrator/orchestrator-execution-host/src/execution-service/
 COPY apps/orchestrator/orchestrator-execution-host/src/execution-service/store/*.ts ./apps/orchestrator/orchestrator-execution-host/src/execution-service/store/
 COPY apps/orchestrator/orchestrator-execution-host/src/openshell/*.ts ./apps/orchestrator/orchestrator-execution-host/src/openshell/

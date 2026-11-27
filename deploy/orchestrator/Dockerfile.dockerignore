@@ -8,10 +8,10 @@
 !apps/orchestrator/orchestrator-control/
 !apps/orchestrator/orchestrator-execution-host/
 !apps/orchestrator/orchestrator-execution-host/package.json
-!apps/orchestrator/index.ts
 !apps/orchestrator/orchestrator-control/go.mod
 !apps/orchestrator/orchestrator-control/go.sum
 !apps/orchestrator/orchestrator-execution-host/src/
+!apps/orchestrator/orchestrator-execution-host/src/index.ts
 !apps/orchestrator/orchestrator-control/src/
 !apps/orchestrator/orchestrator-control/src/control/
 !apps/orchestrator/orchestrator-control/src/control/main.go
