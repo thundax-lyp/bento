@@ -1,4 +1,4 @@
-package main
+package auth
 
 import (
 	"context"
@@ -20,7 +20,7 @@ type account struct {
 	Closed     bool   `json:"closed"`
 }
 
-func initializeAccounts(ctx context.Context, db *sql.DB, file string) error {
+func InitializeAccounts(ctx context.Context, db *sql.DB, file string) error {
 	_, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS web_accounts (
 		owner_id VARBINARY(128) PRIMARY KEY,
 		account VARBINARY(128) NOT NULL UNIQUE,
@@ -79,18 +79,18 @@ func initializeAccounts(ctx context.Context, db *sql.DB, file string) error {
 	return tx.Commit()
 }
 
-type accounts struct{ db *sql.DB }
+type Store struct{ db *sql.DB }
 
-type purge struct {
+type Purge struct {
 	Owner string `json:"ownerId"`
 	Space bool   `json:"spaceRequired"`
 }
 
-func (s accounts) accountByName(ctx context.Context, name string) (account, error) {
+func (s Store) accountByName(ctx context.Context, name string) (account, error) {
 	return scanAccount(s.db.QueryRowContext(ctx, accountSelect+"account = ?", name))
 }
 
-func (s accounts) accountByOwner(ctx context.Context, owner string) (account, error) {
+func (s Store) accountByOwner(ctx context.Context, owner string) (account, error) {
 	return scanAccount(s.db.QueryRowContext(ctx, accountSelect+"owner_id = ?", owner))
 }
 
@@ -112,7 +112,7 @@ func (i oidcIdentity) valid() bool {
 }
 
 // linkIdentity accepts claims verified by the caller and returns the persisted binding.
-func (s accounts) linkIdentity(ctx context.Context, identity oidcIdentity) (account, error) {
+func (s Store) linkIdentity(ctx context.Context, identity oidcIdentity) (account, error) {
 	var id [24]byte
 	if _, err := rand.Read(id[:]); err != nil {
 		return account{}, err
@@ -131,25 +131,25 @@ func (s accounts) linkIdentity(ctx context.Context, identity oidcIdentity) (acco
 	return result, err
 }
 
-func (s accounts) registerPassword(ctx context.Context, owner string, salt, hash []byte) (bool, error) {
+func (s Store) registerPassword(ctx context.Context, owner string, salt, hash []byte) (bool, error) {
 	return changed(s.db.ExecContext(ctx, `UPDATE web_accounts SET salt = ?, password_hash = ?
 		WHERE owner_id = ? AND closed = FALSE AND password_hash IS NULL`, salt, hash, owner))
 }
 
-func (s accounts) deactivate(ctx context.Context, owner string, spaceRequired bool) (bool, error) {
+func (s Store) deactivate(ctx context.Context, owner string, spaceRequired bool) (bool, error) {
 	return changed(s.db.ExecContext(ctx, `UPDATE web_accounts SET closed = TRUE, salt = NULL,
 		password_hash = NULL, purge_space = ? WHERE owner_id = ? AND closed = FALSE`, spaceRequired, owner))
 }
 
-func (s accounts) pendingPurges(ctx context.Context) ([]purge, error) {
+func (s Store) PendingPurges(ctx context.Context) ([]Purge, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT owner_id, purge_space FROM web_accounts WHERE purge_space IS NOT NULL")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	result := []purge{}
+	result := []Purge{}
 	for rows.Next() {
-		var p purge
+		var p Purge
 		if err := rows.Scan(&p.Owner, &p.Space); err != nil {
 			return nil, err
 		}
@@ -158,7 +158,7 @@ func (s accounts) pendingPurges(ctx context.Context) ([]purge, error) {
 	return result, rows.Err()
 }
 
-func (s accounts) finishPurge(ctx context.Context, owner string) error {
+func (s Store) FinishPurge(ctx context.Context, owner string) error {
 	_, err := s.db.ExecContext(ctx, "UPDATE web_accounts SET purge_space = NULL WHERE owner_id = ?", owner)
 	return err
 }

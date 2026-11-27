@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -60,7 +61,7 @@ func TestGoProjectDeletionRetainsOperationThroughCommit(t *testing.T) {
 	}))
 	defer upstream.Close()
 	service := spaceProjectDeletion{db: uploads.db, storage: storage, locks: &spaceLocks{}, backend: projectService{origin: upstream.URL, client: upstream.Client()}}
-	if err := service.enroll(ctx, "other", "project"); !errors.Is(err, notFound) {
+	if err := service.enroll(ctx, "other", "project"); !errors.Is(err, httpx.NotFound) {
 		t.Fatalf("foreign project: %v", err)
 	}
 	if err := service.enroll(ctx, "owner", "project"); err == nil || err.Error() != "upload_pending" {

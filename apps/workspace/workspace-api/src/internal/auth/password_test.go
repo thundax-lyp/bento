@@ -1,4 +1,4 @@
-package main
+package auth
 
 import (
 	"context"
@@ -35,7 +35,7 @@ func TestPasswordAuthMySQL(t *testing.T) {
 	t.Cleanup(func() { _ = db.Close() })
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	if err := initializeAccounts(ctx, db, ""); err != nil {
+	if err := InitializeAccounts(ctx, db, ""); err != nil {
 		t.Fatal(err)
 	}
 	var id [16]byte
@@ -58,7 +58,7 @@ func TestPasswordAuthMySQL(t *testing.T) {
 			t.Errorf("clean up fixture: %v", err)
 		}
 	})
-	store := accounts{db: db}
+	store := Store{db: db}
 	const origin = "https://workspace.example.invalid"
 	handler := func() *http.ServeMux {
 		mux := http.NewServeMux()
@@ -125,7 +125,7 @@ func TestPasswordAuthMySQL(t *testing.T) {
 	expect(request("POST", "/api/account/close", origin, body(map[string]any{"password": pass, "confirmed": true}), first), 200, "{}")
 	expect(request("GET", "/api/session", origin, "", second), 401, "login_required")
 	expect(request("POST", "/api/login", origin, loginJSON), 401, "invalid_credentials")
-	purges, err := store.pendingPurges(ctx)
+	purges, err := store.PendingPurges(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

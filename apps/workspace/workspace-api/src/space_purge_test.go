@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"testing"
 	"time"
 )
@@ -49,7 +50,7 @@ func TestGoPurgeWaitsForHorizonAndConfirmsAbsence(t *testing.T) {
 	if _, err := loadSpaceUpload(ctx, service.db, row.ID); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("purged upload still visible: %v", err)
 	}
-	if _, err := service.reserve(ctx, "owner", "project", input); !errors.Is(err, notFound) {
+	if _, err := service.reserve(ctx, "owner", "project", input); !errors.Is(err, httpx.NotFound) {
 		t.Fatalf("retired upload id was reusable: %v", err)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"net/http"
 	"net/url"
 	"slices"
@@ -34,9 +35,18 @@ type snapshotIssue struct {
 }
 
 type snapshotFailure struct {
-	requestFailure
-	Issues []snapshotIssue
+	Failure *httpx.Error
+	Issues  []snapshotIssue
 }
+
+func (f *snapshotFailure) HTTPDetails() (*httpx.Error, any) {
+	if len(f.Issues) == 0 {
+		return f.Failure, nil
+	}
+	return f.Failure, f.Issues
+}
+
+func (f *snapshotFailure) Error() string { return f.Failure.Error() }
 
 type snapshotManifestEntry struct {
 	FileID string `json:"fileId"`
@@ -112,7 +122,7 @@ func (s spaceSnapshots) freeze(ctx context.Context, owner, id string) error {
 		SELECT name,spaceId,fileIds,state FROM space_tasks WHERE id=? AND owner=?`, id, owner).
 		Scan(&name, &space, &fileIDs, &state)
 	if errors.Is(err, sql.ErrNoRows) {
-		return notFound
+		return httpx.NotFound
 	}
 	if err != nil {
 		return err
@@ -125,7 +135,7 @@ func (s spaceSnapshots) freeze(ctx context.Context, owner, id string) error {
 		return err
 	}
 	if len(ids) > 100 {
-		return &requestFailure{413, "too_large", "任务快照最多 100 个文件。"}
+		return httpx.NewError(413, "too_large", "任务快照最多 100 个文件。")
 	}
 	var size int64
 	var oversized []snapshotIssue
@@ -139,7 +149,7 @@ func (s spaceSnapshots) freeze(ctx context.Context, owner, id string) error {
 			AND NOT EXISTS(SELECT 1 FROM space_file_deletions d WHERE d.fileId=u.id)`, file, owner, space).
 			Scan(&row.Path, &row.Size, &row.manifest)
 		if errors.Is(err, sql.ErrNoRows) {
-			return notFound
+			return httpx.NotFound
 		}
 		if err != nil {
 			return err
@@ -151,7 +161,7 @@ func (s spaceSnapshots) freeze(ctx context.Context, owner, id string) error {
 		}
 	}
 	if size > 1024*1024 {
-		return &snapshotFailure{requestFailure{413, "too_large", "任务快照的文本总量不能超过 1 MiB。"}, oversized}
+		return &snapshotFailure{httpx.NewError(413, "too_large", "任务快照的文本总量不能超过 1 MiB。"), oversized}
 	}
 	files := make([]projectFile, 0, len(ids))
 	manifest := make([]snapshotManifestEntry, 0, len(ids))
@@ -183,13 +193,13 @@ func (s spaceSnapshots) freeze(ctx context.Context, owner, id string) error {
 		manifest = append(manifest, snapshotManifestEntry{row.ID, row.Path, row.Size, hex.EncodeToString(digest[:])})
 	}
 	if len(issues) != 0 {
-		return &snapshotFailure{requestFailure{400, "invalid_input", "请调整所选文件后重试。"}, issues}
+		return &snapshotFailure{httpx.NewError(400, "invalid_input", "请调整所选文件后重试。"), issues}
 	}
 
 	for _, file := range files {
 		for _, other := range files {
 			if strings.HasPrefix(other.Path, file.Path+"/") {
-				return &requestFailure{400, "path_conflict", "文件路径和目录路径冲突。"}
+				return httpx.NewError(400, "path_conflict", "文件路径和目录路径冲突。")
 			}
 		}
 	}
@@ -222,11 +232,11 @@ func (s spaceSnapshots) enroll(ctx context.Context, owner, key, name string, sou
 		return badTask
 	}
 	if !taskUUID.MatchString(source.SpaceID) {
-		return notFound
+		return httpx.NotFound
 	}
 	for i, id := range source.FileIDs {
 		if !taskUUID.MatchString(id) {
-			return notFound
+			return httpx.NotFound
 		}
 		if i > 0 && source.FileIDs[i-1] >= id {
 			return badTask
@@ -252,7 +262,7 @@ func (s spaceSnapshots) enroll(ctx context.Context, owner, key, name string, sou
 		err := conn.QueryRowContext(ctx, "SELECT hash FROM space_tasks WHERE owner=? AND key=?", owner, key).Scan(&prior)
 		if err == nil {
 			if prior != hash {
-				return &requestFailure{409, "idempotency_conflict", "提交键已用于其他输入。"}
+				return httpx.NewError(409, "idempotency_conflict", "提交键已用于其他输入。")
 			}
 			return nil
 		}
@@ -270,10 +280,10 @@ func (s spaceSnapshots) enroll(ctx context.Context, owner, key, name string, sou
 			return err
 		}
 		if blocked {
-			return &requestFailure{409, "project_busy", "项目仍有未结束的任务或正在清理。"}
+			return httpx.NewError(409, "project_busy", "项目仍有未结束的任务或正在清理。")
 		}
 		if !projectExists {
-			return notFound
+			return httpx.NotFound
 		}
 		var total int64
 		var oversized []snapshotIssue
@@ -286,7 +296,7 @@ func (s spaceSnapshots) enroll(ctx context.Context, owner, key, name string, sou
 				AND NOT EXISTS(SELECT 1 FROM space_file_deletions d WHERE d.fileId=u.id)`,
 				owner, source.SpaceID, file).Scan(&path, &bytes)
 			if errors.Is(err, sql.ErrNoRows) {
-				return notFound
+				return httpx.NotFound
 			}
 			if err != nil {
 				return err
@@ -297,7 +307,7 @@ func (s spaceSnapshots) enroll(ctx context.Context, owner, key, name string, sou
 			}
 		}
 		if total > 1024*1024 {
-			return &snapshotFailure{requestFailure{413, "too_large", "任务快照的文本总量不能超过 1 MiB。"}, oversized}
+			return &snapshotFailure{httpx.NewError(413, "too_large", "任务快照的文本总量不能超过 1 MiB。"), oversized}
 		}
 		task, err := uuid.NewRandom()
 		if err != nil {
@@ -333,16 +343,16 @@ func (s spaceSnapshots) create(w http.ResponseWriter, r *http.Request, owner, ke
 func (s spaceSnapshots) advance(w http.ResponseWriter, r *http.Request, owner, id string) error {
 	ctx := r.Context()
 	if err := s.freeze(ctx, owner, id); err != nil {
-		var failure *requestFailure
+		var failure *httpx.Error
 		var snapshot *snapshotFailure
 		if errors.As(err, &snapshot) {
-			failure = &snapshot.requestFailure
+			failure = snapshot.Failure
 		} else {
 			errors.As(err, &failure)
 		}
-		if failure != nil && (failure.status == 400 || failure.status == 404 || failure.status == 413) {
+		if failure != nil && (failure.Status == 400 || failure.Status == 404 || failure.Status == 413) {
 			stateErr := spaceImmediate(ctx, s.db, func(conn *sql.Conn) error {
-				result, err := conn.ExecContext(ctx, "UPDATE space_tasks SET state='failed',lastError=? WHERE id=? AND state='pinned'", failure.code, id)
+				result, err := conn.ExecContext(ctx, "UPDATE space_tasks SET state='failed',lastError=? WHERE id=? AND state='pinned'", failure.Code, id)
 				if err != nil {
 					return err
 				}
@@ -420,7 +430,7 @@ func (s spaceSnapshots) submit(w http.ResponseWriter, r *http.Request, owner, id
 		SELECT spaceId,key,state,canonicalBody,lastError FROM space_tasks WHERE owner=? AND id=?`, owner, id).
 		Scan(&space, &key, &state, &body, &lastError)
 	if errors.Is(err, sql.ErrNoRows) {
-		return notFound
+		return httpx.NotFound
 	}
 	if err != nil {
 		return err
@@ -430,20 +440,20 @@ func (s spaceSnapshots) submit(w http.ResponseWriter, r *http.Request, owner, id
 		if code == "" {
 			code = "owner_closed"
 		}
-		return &requestFailure{409, code, "原任务提交无法继续。"}
+		return httpx.NewError(409, code, "原任务提交无法继续。")
 	}
 	if !body.Valid {
 		code := lastError.String
 		if code == "" {
 			code = "invalid_input"
 		}
-		return &requestFailure{400, code, "所选文件无法用于任务。"}
+		return httpx.NewError(400, code, "所选文件无法用于任务。")
 	}
 	var input struct {
 		Digest string `json:"inputDigest"`
 	}
 	if json.Unmarshal([]byte(body.String), &input) != nil || !taskHex.MatchString(input.Digest) {
-		return backendUnavailable
+		return httpx.BackendUnavailable
 	}
 	if state == "frozen" {
 		result, err := s.db.ExecContext(ctx, `
@@ -459,7 +469,7 @@ func (s spaceSnapshots) submit(w http.ResponseWriter, r *http.Request, owner, id
 		if changed == 0 {
 			err := s.db.QueryRowContext(ctx, "SELECT state FROM space_tasks WHERE id=? AND owner=?", id, owner).Scan(&state)
 			if errors.Is(err, sql.ErrNoRows) || state == "abandoned" || state == "frozen" {
-				return &requestFailure{409, "owner_closed", "账号已注销。"}
+				return httpx.NewError(409, "owner_closed", "账号已注销。")
 			}
 			if err != nil {
 				return err
@@ -486,7 +496,7 @@ func (s spaceSnapshots) submit(w http.ResponseWriter, r *http.Request, owner, id
 	op.accept = func(value any) error {
 		task := value.(map[string]any)["task"].(map[string]any)
 		if task["id"] != id || task["sourceSpaceId"] != space || task["inputDigest"] != input.Digest {
-			return backendUnavailable
+			return httpx.BackendUnavailable
 		}
 		next := task["status"].(string)
 		if next != "ready" && next != "failed" {
@@ -573,20 +583,20 @@ func (s spaceSnapshots) drainOwner(ctx context.Context, owner string) error {
 			Digest string `json:"inputDigest"`
 		}
 		if json.Unmarshal([]byte(row.body), &input) != nil || !taskHex.MatchString(input.Digest) {
-			return backendUnavailable
+			return httpx.BackendUnavailable
 		}
 		var accepted bool
 		op := taskRequest{action: "list", path: "/v1/tasks", query: url.Values{"creationKey": {row.key}}}
 		op.accept = func(value any) error {
 			items := value.(map[string]any)["items"].([]any)
 			if len(items) > 1 {
-				return backendUnavailable
+				return httpx.BackendUnavailable
 			}
 			state, last := "abandoned", any("owner_closed")
 			if len(items) == 1 {
 				receipt := items[0].(map[string]any)
 				if receipt["id"] != row.id || receipt["sourceSpaceId"] != row.space || receipt["inputDigest"] != input.Digest {
-					return backendUnavailable
+					return httpx.BackendUnavailable
 				}
 				state = receipt["status"].(string)
 				if state == "ready" || state == "failed" {
@@ -613,7 +623,7 @@ func (s spaceSnapshots) drainOwner(ctx context.Context, owner string) error {
 			return err
 		}
 		if !accepted {
-			return backendUnavailable
+			return httpx.BackendUnavailable
 		}
 	}
 	return nil

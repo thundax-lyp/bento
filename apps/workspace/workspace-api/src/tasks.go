@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"io"
 	"mime"
 	"net/http"
@@ -22,8 +24,8 @@ var (
 	taskPath = regexp.MustCompile(`^/api/tasks/([^/]+)(?:/(prepare|events|runs)(?:/([^/]+)(?:/(cancel|retry|results)(?:/(1)/diff)?)?)?)?$`)
 	taskHex  = regexp.MustCompile(`^[0-9a-f]{64}$`)
 	taskSeq  = regexp.MustCompile(`^[0-9]+$`)
-	badTask  = &requestFailure{400, "invalid_input", "任务请求内容无效。"}
-	badKey   = &requestFailure{400, "invalid_key", "提交键无效。"}
+	badTask  = httpx.NewError(400, "invalid_input", "任务请求内容无效。")
+	badKey   = httpx.NewError(400, "invalid_key", "提交键无效。")
 )
 
 type taskRequest struct {
@@ -46,7 +48,7 @@ func parseGoTask(w http.ResponseWriter, r *http.Request) (taskRequest, error) {
 		match := taskPath.FindStringSubmatch(path)
 		if len(match) == 0 || !taskUUID.MatchString(match[1]) ||
 			(match[3] != "" && !taskUUID.MatchString(match[3])) {
-			return result, notFound
+			return result, httpx.NotFound
 		}
 		result.task, result.run = match[1], match[3]
 		section, mode, version := match[2], match[4], match[5]
@@ -73,7 +75,7 @@ func parseGoTask(w http.ResponseWriter, r *http.Request) (taskRequest, error) {
 				result.action = "diff"
 			}
 		default:
-			return result, notFound
+			return result, httpx.NotFound
 		}
 	}
 	query, err := url.ParseQuery(r.URL.RawQuery)
@@ -109,8 +111,8 @@ func parseGoTask(w http.ResponseWriter, r *http.Request) (taskRequest, error) {
 	if result.action == "createRun" {
 		fields, err := readProjectJSON(w, r, 64*1024)
 		if err != nil {
-			var failure *requestFailure
-			if errors.As(err, &failure) && failure.status == 400 {
+			var failure *httpx.Error
+			if errors.As(err, &failure) && failure.Status == 400 {
 				return result, badTask
 			}
 			return result, err
@@ -121,10 +123,10 @@ func parseGoTask(w http.ResponseWriter, r *http.Request) (taskRequest, error) {
 		prompt, _ := projectString(fields["prompt"])
 		result.prompt = strings.TrimSpace(prompt)
 		if result.prompt == "" || utf8.RuneCountInString(result.prompt) > 8000 {
-			return result, &requestFailure{400, "invalid_prompt", "任务描述须为 1 至 8000 个字符。"}
+			return result, httpx.NewError(400, "invalid_prompt", "任务描述须为 1 至 8000 个字符。")
 		}
 	} else if r.ContentLength != 0 || len(r.TransferEncoding) != 0 {
-		return result, &requestFailure{400, "invalid_input", "此任务请求不接受正文。"}
+		return result, httpx.NewError(400, "invalid_input", "此任务请求不接受正文。")
 	}
 	result.path = "/v1" + strings.TrimPrefix(path, "/api")
 	result.query = query
@@ -136,7 +138,7 @@ type taskProjection func(json.RawMessage) (any, error)
 func taskObject(raw json.RawMessage, fields map[string]taskProjection) (any, error) {
 	var row map[string]json.RawMessage
 	if json.Unmarshal(raw, &row) != nil || row == nil {
-		return nil, backendUnavailable
+		return nil, httpx.BackendUnavailable
 	}
 	result := make(map[string]any, len(fields))
 	for name, project := range fields {
@@ -153,7 +155,7 @@ func taskArray(project taskProjection) taskProjection {
 	return func(raw json.RawMessage) (any, error) {
 		var rows []json.RawMessage
 		if json.Unmarshal(raw, &rows) != nil || rows == nil {
-			return nil, backendUnavailable
+			return nil, httpx.BackendUnavailable
 		}
 		result := make([]any, 0, len(rows))
 		for _, row := range rows {
@@ -171,7 +173,7 @@ func taskString(valid func(string) bool) taskProjection {
 	return func(raw json.RawMessage) (any, error) {
 		value, ok := projectString(raw)
 		if !ok || (valid != nil && !valid(value)) {
-			return nil, backendUnavailable
+			return nil, httpx.BackendUnavailable
 		}
 		return value, nil
 	}
@@ -202,7 +204,7 @@ func taskInteger(min int64) taskProjection {
 		var number *float64
 		if json.Unmarshal(raw, &number) != nil || number == nil || *number < float64(min) ||
 			*number > 1<<53-1 || *number != float64(int64(*number)) {
-			return nil, backendUnavailable
+			return nil, httpx.BackendUnavailable
 		}
 		return int64(*number), nil
 	}
@@ -215,7 +217,7 @@ func taskBool(raw json.RawMessage) (any, error) {
 	case "false":
 		return false, nil
 	default:
-		return nil, backendUnavailable
+		return nil, httpx.BackendUnavailable
 	}
 }
 
@@ -255,7 +257,7 @@ func (op taskRequest) projectResponse(raw json.RawMessage) (any, error) {
 		}
 		row := value.(map[string]any)
 		if row["taskId"] != op.task || (op.run != "" && row["id"] != op.run) {
-			return nil, backendUnavailable
+			return nil, httpx.BackendUnavailable
 		}
 		return row, nil
 	}
@@ -273,7 +275,7 @@ func (op taskRequest) projectResponse(raw json.RawMessage) (any, error) {
 		return taskObject(raw, map[string]taskProjection{"task": func(raw json.RawMessage) (any, error) {
 			task, err := projectTask(raw)
 			if err != nil || task.(map[string]any)["id"] != op.task {
-				return nil, backendUnavailable
+				return nil, httpx.BackendUnavailable
 			}
 			return task, nil
 		}})
@@ -300,7 +302,7 @@ func (op taskRequest) projectResponse(raw json.RawMessage) (any, error) {
 			}
 			row := item.(map[string]any)
 			if row["runId"] != op.run || row["version"] != int64(1) {
-				return nil, backendUnavailable
+				return nil, httpx.BackendUnavailable
 			}
 			return row, nil
 		}})
@@ -311,17 +313,17 @@ func (op taskRequest) projectResponse(raw json.RawMessage) (any, error) {
 			})
 		}})
 	}
-	return nil, backendUnavailable
+	return nil, httpx.BackendUnavailable
 }
 
-func (s projectService) taskRoutes(mux *http.ServeMux, sessions *webSessions, origin string, snapshots *spaceSnapshots) {
+func (s projectService) taskRoutes(mux *http.ServeMux, current func(*http.Request) (*auth.Session, error), origin string, snapshots *spaceSnapshots) {
 	handle := func(w http.ResponseWriter, r *http.Request) {
 		s.responseHeaders(w)
 		if r.Method == http.MethodPost && (len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != origin) {
-			authFailure(w, &requestFailure{400, "invalid_origin", "请从任务入口提交请求。"})
+			httpx.Fail(w, httpx.NewError(400, "invalid_origin", "请从任务入口提交请求。"))
 			return
 		}
-		session, err := sessions.current(r)
+		session, err := current(r)
 		if err == nil {
 			if r.Method == http.MethodPost && r.URL.EscapedPath() == "/api/tasks" {
 				err = s.createTask(w, r, session.Owner, snapshots)
@@ -330,7 +332,7 @@ func (s projectService) taskRoutes(mux *http.ServeMux, sessions *webSessions, or
 			}
 		}
 		if err != nil {
-			authFailure(w, err)
+			httpx.Fail(w, err)
 		}
 	}
 	mux.HandleFunc("GET /api/tasks", handle)
@@ -353,7 +355,7 @@ func (s projectService) createTask(w http.ResponseWriter, r *http.Request, owner
 	if !strings.EqualFold(media, "application/json") {
 		return badTask
 	}
-	tooLarge := &requestFailure{413, "too_large", "请求超过大小限制。"}
+	tooLarge := httpx.NewError(413, "too_large", "请求超过大小限制。")
 	if r.ContentLength > limit {
 		return tooLarge
 	}
@@ -386,17 +388,17 @@ func (s projectService) createTask(w http.ResponseWriter, r *http.Request, owner
 			return badTask
 		}
 		if len(fileIDs) > 100 {
-			return &requestFailure{413, "too_large", "任务快照最多 100 个文件。"}
+			return httpx.NewError(413, "too_large", "任务快照最多 100 个文件。")
 		}
 		selection.Kind = kind
 		selection.SpaceID, ok = wellFormedProjectString(source["spaceId"])
 		if !ok || !projectResourceID(selection.SpaceID) {
-			return notFound
+			return httpx.NotFound
 		}
 		for _, rawID := range fileIDs {
 			id, ok := wellFormedProjectString(rawID)
 			if !ok || !projectResourceID(id) {
-				return notFound
+				return httpx.NotFound
 			}
 			selection.FileIDs = append(selection.FileIDs, id)
 		}
@@ -407,7 +409,7 @@ func (s projectService) createTask(w http.ResponseWriter, r *http.Request, owner
 			}
 		}
 		if snapshots == nil {
-			return &requestFailure{503, "source_unavailable", "空间文件入口暂不可用。"}
+			return httpx.NewError(503, "source_unavailable", "空间文件入口暂不可用。")
 		}
 		return snapshots.create(w, r, owner, keys[0], name, selection)
 	}
@@ -452,7 +454,7 @@ func (s projectService) forwardTask(w http.ResponseWriter, r *http.Request, owne
 	}
 	request, err := http.NewRequestWithContext(r.Context(), r.Method, upstream, body)
 	if err != nil {
-		return backendUnavailable
+		return httpx.BackendUnavailable
 	}
 	request.Header.Set("Authorization", "Bearer "+s.bearer)
 	request.Header.Set("X-Bento-Owner-Id", owner)
@@ -464,13 +466,13 @@ func (s projectService) forwardTask(w http.ResponseWriter, r *http.Request, owne
 	}
 	response, err := s.client.Do(request)
 	if err != nil {
-		return backendUnavailable
+		return httpx.BackendUnavailable
 	}
 	defer response.Body.Close()
 	media, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	status := response.StatusCode
 	if status == 404 {
-		return notFound
+		return httpx.NotFound
 	}
 	if status != 200 && !(status == 202 && (op.action == "create" || op.action == "createRun" || op.action == "retry")) {
 		if media == "application/json" && (status == 400 || status == 409) {
@@ -479,7 +481,7 @@ func (s projectService) forwardTask(w http.ResponseWriter, r *http.Request, owne
 			}
 			raw, err := io.ReadAll(io.LimitReader(response.Body, 64*1024+1))
 			if err != nil || len(raw) > 64*1024 || json.Unmarshal(raw, &failure) != nil {
-				return backendUnavailable
+				return httpx.BackendUnavailable
 			}
 			code := failure.Error.Code
 			allowed := taskEnum("invalid_input", "invalid_key")
@@ -489,7 +491,7 @@ func (s projectService) forwardTask(w http.ResponseWriter, r *http.Request, owne
 			}
 			encoded, _ := json.Marshal(code)
 			if _, err := allowed(encoded); err != nil {
-				return backendUnavailable
+				return httpx.BackendUnavailable
 			}
 			if op.reject != nil {
 				if err := op.reject(code); err != nil {
@@ -507,20 +509,20 @@ func (s projectService) forwardTask(w http.ResponseWriter, r *http.Request, owne
 				}
 			}
 			if w == nil {
-				return &requestFailure{status, code, body["message"]}
+				return httpx.NewError(status, code, body["message"])
 			}
-			authJSON(w, status, map[string]any{"error": body})
+			httpx.JSON(w, status, map[string]any{"error": body})
 			return nil
 		}
 		return projectBackendError(status, "")
 	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxProjectRequest+1))
 	if err != nil || len(raw) > maxProjectRequest {
-		return backendUnavailable
+		return httpx.BackendUnavailable
 	}
 	if op.action == "diff" {
 		if media != "text/plain" || !utf8.Valid(raw) {
-			return backendUnavailable
+			return httpx.BackendUnavailable
 		}
 		if op.query.Get("download") == "1" {
 			w.Header().Set("Content-Disposition", `attachment; filename="changes.patch"`)
@@ -531,7 +533,7 @@ func (s projectService) forwardTask(w http.ResponseWriter, r *http.Request, owne
 		return nil
 	}
 	if media != "application/json" {
-		return backendUnavailable
+		return httpx.BackendUnavailable
 	}
 	value, err := op.projectResponse(raw)
 	if err != nil {
@@ -543,7 +545,7 @@ func (s projectService) forwardTask(w http.ResponseWriter, r *http.Request, owne
 		}
 	}
 	if w != nil {
-		authJSON(w, status, value)
+		httpx.JSON(w, status, value)
 	}
 	return nil
 }

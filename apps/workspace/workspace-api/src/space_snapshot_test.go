@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"testing"
 )
 
@@ -48,7 +49,7 @@ func TestGoFreezeSnapshotPreservesCanonicalInput(t *testing.T) {
 			return []byte(text), nil
 		},
 	}
-	if err := service.freeze(ctx, "other", taskID); !errors.Is(err, notFound) {
+	if err := service.freeze(ctx, "other", taskID); !errors.Is(err, httpx.NotFound) {
 		t.Fatalf("foreign snapshot: %v", err)
 	}
 	if err := service.freeze(ctx, "owner", taskID); err != nil {
@@ -108,7 +109,7 @@ func TestGoEnrollSnapshotPinsAndPreservesIdempotency(t *testing.T) {
 	if _, err := uploads.db.Exec("INSERT INTO space_file_deletions VALUES (?)", row.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.enroll(ctx, "owner", key, "Snapshot", selection); !errors.Is(err, notFound) {
+	if err := service.enroll(ctx, "owner", key, "Snapshot", selection); !errors.Is(err, httpx.NotFound) {
 		t.Fatalf("enrolled deleting file: %v", err)
 	}
 	if _, err := uploads.db.Exec("DELETE FROM space_file_deletions WHERE fileId=?", row.ID); err != nil {

@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"net/http"
 	"time"
 
@@ -13,7 +15,7 @@ import (
 func (s spaceUploads) ownerUpload(ctx context.Context, owner, id string, writable bool) (spaceUpload, error) {
 	row, err := loadSpaceUpload(ctx, s.db, id)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && row.owner != owner {
-		return row, notFound
+		return row, httpx.NotFound
 	}
 	if err != nil {
 		return row, err
@@ -30,30 +32,30 @@ func (s spaceUploads) ownerUpload(ctx context.Context, owner, id string, writabl
 		return row, projectDeletionBlocked("project_busy")
 	}
 	if deleted {
-		return row, notFound
+		return row, httpx.NotFound
 	}
 	return row, nil
 }
 
-func (s spaceUploads) routes(mux *http.ServeMux, sessions *webSessions, backend projectService, origin string, locks *spaceLocks) {
+func (s spaceUploads) routes(mux *http.ServeMux, current func(*http.Request) (*auth.Session, error), backend projectService, origin string, locks *spaceLocks) {
 	deletions := spaceFileDeletion{db: s.db, storage: s.storage, hold: backend.fileHold}
 	register := func(pattern string, handle func(http.ResponseWriter, *http.Request, string) error) {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			backend.responseHeaders(w)
 			if r.Method != http.MethodGet && r.Method != http.MethodHead &&
 				(len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != origin) {
-				authFailure(w, &requestFailure{400, "invalid_origin", "请从任务入口提交请求。"})
+				httpx.Fail(w, httpx.NewError(400, "invalid_origin", "请从任务入口提交请求。"))
 				return
 			}
-			session, err := sessions.current(r)
+			session, err := current(r)
 			if err == nil && r.Method == http.MethodHead {
-				err = notFound
+				err = httpx.NotFound
 			}
 			if err == nil {
 				err = handle(w, r, session.Owner)
 			}
 			if err != nil {
-				authFailure(w, err)
+				httpx.Fail(w, err)
 			}
 		})
 	}
@@ -72,7 +74,7 @@ func (s spaceUploads) routes(mux *http.ServeMux, sessions *webSessions, backend 
 	register("POST /api/space/projects/{project}/uploads", func(w http.ResponseWriter, r *http.Request, owner string) error {
 		project := r.PathValue("project")
 		if !taskUUID.MatchString(project) {
-			return notFound
+			return httpx.NotFound
 		}
 		fields, err := readProjectJSON(w, r, 32*1024)
 		if err != nil {
@@ -93,14 +95,14 @@ func (s spaceUploads) routes(mux *http.ServeMux, sessions *webSessions, backend 
 			if err := s.prepare(r.Context(), &row); err != nil {
 				return err
 			}
-			authJSON(w, 200, row.spaceUploadView)
+			httpx.JSON(w, 200, row.spaceUploadView)
 			return nil
 		})
 	})
 	register("GET /api/space/uploads/{id}", func(w http.ResponseWriter, r *http.Request, owner string) error {
 		id := r.PathValue("id")
 		if !taskUUID.MatchString(id) {
-			return notFound
+			return httpx.NotFound
 		}
 		row, err := s.ownerUpload(r.Context(), owner, id, false)
 		if err != nil {
@@ -116,7 +118,7 @@ func (s spaceUploads) routes(mux *http.ServeMux, sessions *webSessions, backend 
 				parts = append(parts, *part.PartNumber)
 			}
 		}
-		authJSON(w, 200, struct {
+		httpx.JSON(w, 200, struct {
 			spaceUploadView
 			Parts []int32 `json:"parts"`
 		}{row.spaceUploadView, parts})
@@ -126,7 +128,7 @@ func (s spaceUploads) routes(mux *http.ServeMux, sessions *webSessions, backend 
 		register("POST /api/space/uploads/{id}/"+action, func(w http.ResponseWriter, r *http.Request, owner string) error {
 			id := r.PathValue("id")
 			if !taskUUID.MatchString(id) {
-				return notFound
+				return httpx.NotFound
 			}
 			return locked(id, busy, func() error {
 				row, err := s.ownerUpload(r.Context(), owner, id, true)
@@ -160,12 +162,12 @@ func (s spaceUploads) routes(mux *http.ServeMux, sessions *webSessions, backend 
 					}
 					signed, checksum, err := s.signPart(r.Context(), &row, int32(number.(int64)))
 					if err == nil {
-						authJSON(w, 200, map[string]string{"url": signed, "checksum": checksum})
+						httpx.JSON(w, 200, map[string]string{"url": signed, "checksum": checksum})
 					}
 					return err
 				}
 				if err == nil {
-					authJSON(w, 200, row.spaceUploadView)
+					httpx.JSON(w, 200, row.spaceUploadView)
 				}
 				return err
 			})
@@ -174,7 +176,7 @@ func (s spaceUploads) routes(mux *http.ServeMux, sessions *webSessions, backend 
 	register("DELETE /api/space/files/{id}", func(w http.ResponseWriter, r *http.Request, owner string) error {
 		id := r.PathValue("id")
 		if !taskUUID.MatchString(id) {
-			return notFound
+			return httpx.NotFound
 		}
 		row, err := s.ownerUpload(r.Context(), owner, id, true)
 		if err != nil {
@@ -185,11 +187,11 @@ func (s spaceUploads) routes(mux *http.ServeMux, sessions *webSessions, backend 
 			w.WriteHeader(http.StatusNoContent)
 			return nil
 		case "deleting":
-			authJSON(w, http.StatusAccepted, map[string]string{"state": "deleting"})
+			httpx.JSON(w, http.StatusAccepted, map[string]string{"state": "deleting"})
 			return nil
 		case "saved":
 		default:
-			return notFound
+			return httpx.NotFound
 		}
 		return locked(id, fileDeleteUnconfirmed, func() error {
 			status, err := deletions.request(r.Context(), owner, id)
@@ -197,7 +199,7 @@ func (s spaceUploads) routes(mux *http.ServeMux, sessions *webSessions, backend 
 				if status == http.StatusNoContent {
 					w.WriteHeader(status)
 				} else {
-					authJSON(w, status, map[string]string{"state": "deleting"})
+					httpx.JSON(w, status, map[string]string{"state": "deleting"})
 				}
 			}
 			return err

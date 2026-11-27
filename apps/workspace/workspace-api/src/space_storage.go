@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
 	"io"
 	"net/url"
 	"strings"
@@ -28,7 +29,7 @@ type spaceStorage struct {
 }
 
 func newSpaceStorage(ctx context.Context, endpoint, bucket, region string) (*spaceStorage, error) {
-	origin, err := secureOIDCURL(endpoint, true)
+	origin, err := auth.SecureURL(endpoint, true)
 	if err != nil || origin.Path != "" || origin.RawQuery != "" || bucket == "" {
 		return nil, errors.New("invalid S3 endpoint or bucket")
 	}

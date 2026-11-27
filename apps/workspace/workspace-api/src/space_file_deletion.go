@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"io"
 	"mime"
 	"net/http"
@@ -25,8 +26,8 @@ type fileDeletionIntent struct {
 }
 
 var (
-	fileDeleteUnconfirmed = &requestFailure{503, "file_delete_unconfirmed", "暂未确认删除结果，请刷新后重试。"}
-	fileDeleteBusy        = &requestFailure{409, "project_busy", "文件正在被未结束的任务使用。"}
+	fileDeleteUnconfirmed = httpx.NewError(503, "file_delete_unconfirmed", "暂未确认删除结果，请刷新后重试。")
+	fileDeleteBusy        = httpx.NewError(409, "project_busy", "文件正在被未结束的任务使用。")
 )
 
 func spaceImmediate(ctx context.Context, db *sql.DB, run func(*sql.Conn) error) error {
@@ -62,7 +63,7 @@ func (s spaceFileDeletion) enroll(ctx context.Context, owner, id string) (spaceU
 		var err error
 		row, err = loadSpaceUpload(ctx, conn, id)
 		if errors.Is(err, sql.ErrNoRows) || err == nil && row.owner != owner {
-			return notFound
+			return httpx.NotFound
 		}
 		if err != nil {
 			return err
@@ -75,7 +76,7 @@ func (s spaceFileDeletion) enroll(ctx context.Context, owner, id string) (spaceU
 			return err
 		}
 		if blocked {
-			return &requestFailure{409, "project_busy", "项目仍有未结束的任务或正在清理。"}
+			return httpx.NewError(409, "project_busy", "项目仍有未结束的任务或正在清理。")
 		}
 		switch row.State {
 		case "deleted":
@@ -85,7 +86,7 @@ func (s spaceFileDeletion) enroll(ctx context.Context, owner, id string) (spaceU
 			return nil
 		case "saved":
 		default:
-			return notFound
+			return httpx.NotFound
 		}
 		intent, err = readFileDeletion(ctx, conn, id)
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -106,7 +107,7 @@ func (s spaceFileDeletion) enroll(ctx context.Context, owner, id string) (spaceU
 			Scan(&execOwner, &state, &inputs, &project)
 		if err == nil {
 			if execOwner != owner {
-				return notFound
+				return httpx.NotFound
 			}
 			var manifest []struct {
 				FileID string `json:"fileId"`
@@ -119,7 +120,7 @@ func (s spaceFileDeletion) enroll(ctx context.Context, owner, id string) (spaceU
 					continue
 				}
 				if state == "validating" || state == "importing" {
-					return &requestFailure{409, "project_importing", "文件正在用于初始化工作区。"}
+					return httpx.NewError(409, "project_importing", "文件正在用于初始化工作区。")
 				}
 				intent.project = project
 				break
@@ -145,8 +146,8 @@ func (s spaceFileDeletion) check(ctx context.Context, row spaceUpload, intent fi
 		return false, fileDeleteUnconfirmed
 	}
 	state, err := s.hold(ctx, row, intent, false)
-	var failure *requestFailure
-	rejected := errors.As(err, &failure) && (failure.code == "owner_closed" || failure.code == "not_found")
+	var failure *httpx.Error
+	rejected := errors.As(err, &failure) && (failure.Code == "owner_closed" || failure.Code == "not_found")
 	if rejected || err == nil && state == "denied" {
 		_, removeErr := s.db.ExecContext(ctx, `
 			DELETE FROM space_file_deletions WHERE fileId=? AND operationId=? AND phase='checking'`, row.ID, intent.operation)
@@ -189,9 +190,9 @@ func (s spaceFileDeletion) request(ctx context.Context, owner, id string) (int, 
 		return status, err
 	}
 	held, err := s.check(ctx, row, intent)
-	var failure *requestFailure
+	var failure *httpx.Error
 	if err != nil {
-		if errors.As(err, &failure) && (failure.code == "owner_closed" || failure.code == "not_found") {
+		if errors.As(err, &failure) && (failure.Code == "owner_closed" || failure.Code == "not_found") {
 			return 0, err
 		}
 		return 0, fileDeleteUnconfirmed
@@ -270,7 +271,7 @@ func (s projectService) fileHold(ctx context.Context, row spaceUpload, intent fi
 	}
 	defer response.Body.Close()
 	if response.StatusCode == http.StatusNotFound {
-		return "", notFound
+		return "", httpx.NotFound
 	}
 	media, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if media != "application/json" {
@@ -285,7 +286,7 @@ func (s projectService) fileHold(ctx context.Context, row spaceUpload, intent fi
 			Error struct{ Code string } `json:"error"`
 		}
 		if json.Unmarshal(raw, &result) == nil && result.Error.Code == "owner_closed" {
-			return "", &requestFailure{409, "owner_closed", "当前请求无法执行。"}
+			return "", httpx.NewError(409, "owner_closed", "当前请求无法执行。")
 		}
 	}
 	var result struct {

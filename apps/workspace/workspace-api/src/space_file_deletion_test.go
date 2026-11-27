@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"net/http"
 	"testing"
 )
@@ -60,7 +61,7 @@ func TestGoFileDeletionReconcilesHoldAndRelease(t *testing.T) {
 			return "", fileDeleteUnconfirmed
 		},
 	}
-	if _, err := service.request(ctx, "other", row.ID); !errors.Is(err, notFound) {
+	if _, err := service.request(ctx, "other", row.ID); !errors.Is(err, httpx.NotFound) {
 		t.Fatalf("foreign file: %v", err)
 	}
 	if _, err := service.request(ctx, row.owner, row.ID); !errors.Is(err, fileDeleteBusy) || len(operations) != 0 {

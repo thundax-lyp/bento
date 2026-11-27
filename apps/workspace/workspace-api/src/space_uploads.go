@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"sort"
 	"strings"
 	"time"
@@ -55,18 +56,18 @@ type uploadReservation struct {
 	manifest string
 }
 
-func invalidSpace(message string) *requestFailure {
-	return &requestFailure{400, "invalid_space_input", message}
+func invalidSpace(message string) *httpx.Error {
+	return httpx.NewError(400, "invalid_space_input", message)
 }
 
-func spaceConflict(message string) *requestFailure {
-	return &requestFailure{409, "space_conflict", message}
+func spaceConflict(message string) *httpx.Error {
+	return httpx.NewError(409, "space_conflict", message)
 }
 
 func parseUploadReservation(fields map[string]json.RawMessage) (uploadReservation, error) {
 	id, _ := projectString(fields["id"])
 	if !taskUUID.MatchString(id) {
-		return uploadReservation{}, notFound
+		return uploadReservation{}, httpx.NotFound
 	}
 	path, ok := wellFormedProjectString(fields["path"])
 	if !ok || len(utf16.Encode([]rune(path))) > 1024 ||
@@ -84,7 +85,7 @@ func parseUploadReservation(fields map[string]json.RawMessage) (uploadReservatio
 	}
 	size := number.(int64)
 	if size > spaceFileLimit {
-		return uploadReservation{}, &requestFailure{413, "file_limit", "单文件最多 100 MB。"}
+		return uploadReservation{}, httpx.NewError(413, "file_limit", "单文件最多 100 MB。")
 	}
 	var checksums []json.RawMessage
 	if json.Unmarshal(fields["checksums"], &checksums) != nil || checksums == nil ||
@@ -142,18 +143,18 @@ func (s spaceUploads) reserve(ctx context.Context, owner, project string, input 
 		return spaceUpload{}, err
 	}
 	if !exists {
-		return spaceUpload{}, notFound
+		return spaceUpload{}, httpx.NotFound
 	}
 	if blocked {
-		return spaceUpload{}, &requestFailure{409, "project_busy", "项目仍有未结束的任务或正在清理。"}
+		return spaceUpload{}, httpx.NewError(409, "project_busy", "项目仍有未结束的任务或正在清理。")
 	}
 	if retired {
-		return spaceUpload{}, notFound
+		return spaceUpload{}, httpx.NotFound
 	}
 	row, err := loadSpaceUpload(ctx, conn, input.id)
 	if err == nil {
 		if row.owner != owner {
-			return spaceUpload{}, notFound
+			return spaceUpload{}, httpx.NotFound
 		}
 		if row.State == "deleting" || row.State == "deleted" {
 			return spaceUpload{}, spaceConflict("该文件正在删除或已删除，请重新选择文件。")
@@ -177,7 +178,7 @@ func (s spaceUploads) reserve(ctx context.Context, owner, project string, input 
 			return spaceUpload{}, spaceConflict("目标路径已有文件或上传。")
 		}
 		if used+input.size > spaceQuota {
-			return spaceUpload{}, &requestFailure{409, "space_quota", "账号空间不足，已保存和上传预占合计最多 200 MB。"}
+			return spaceUpload{}, httpx.NewError(409, "space_quota", "账号空间不足，已保存和上传预占合计最多 200 MB。")
 		}
 		expires := s.now().Add(spaceUploadLife).UnixMilli()
 		_, err = conn.ExecContext(ctx, `

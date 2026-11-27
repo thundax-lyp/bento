@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"net/http"
 	"slices"
 	"strings"
@@ -64,7 +66,7 @@ func (s spaceExecution) register(ctx context.Context, owner, id, name string) er
 			return projectDeletionBlocked("project_busy")
 		}
 		if deleted {
-			return notFound
+			return httpx.NotFound
 		}
 		if _, err := conn.ExecContext(ctx, "INSERT OR IGNORE INTO space_projects VALUES (?,?,?)", id, owner, name); err != nil {
 			return err
@@ -72,7 +74,7 @@ func (s spaceExecution) register(ctx context.Context, owner, id, name string) er
 		var saved string
 		err := conn.QueryRowContext(ctx, "SELECT name FROM space_projects WHERE id=? AND owner=?", id, owner).Scan(&saved)
 		if errors.Is(err, sql.ErrNoRows) {
-			return notFound
+			return httpx.NotFound
 		}
 		if err != nil {
 			return err
@@ -125,7 +127,7 @@ func (s spaceExecution) detail(ctx context.Context, owner, id string) (map[strin
 	err = tx.QueryRowContext(ctx, `SELECT name,EXISTS(SELECT 1 FROM space_project_deletions WHERE spaceId=? AND owner=?)
     FROM space_projects WHERE id=? AND owner=?`, id, owner, id, owner).Scan(&name, &deleting)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, notFound
+		return nil, httpx.NotFound
 	}
 	if err != nil {
 		return nil, err
@@ -180,7 +182,7 @@ func (s spaceExecution) enroll(ctx context.Context, owner, id, key string, ids [
 			return err
 		}
 		if !found {
-			return notFound
+			return httpx.NotFound
 		}
 		if blocked {
 			return projectDeletionBlocked("project_busy")
@@ -192,7 +194,7 @@ func (s spaceExecution) enroll(ctx context.Context, owner, id, key string, ids [
 				previous = append(previous, input.ID)
 			}
 			if !slices.Equal(ids, previous) {
-				return &requestFailure{409, "idempotency_conflict", "此提交键已用于其他文件。"}
+				return httpx.NewError(409, "idempotency_conflict", "此提交键已用于其他文件。")
 			}
 			status = http.StatusOK
 			result, err = executionView(ctx, conn, intent)
@@ -205,7 +207,7 @@ func (s spaceExecution) enroll(ctx context.Context, owner, id, key string, ids [
 			return err
 		}
 		if blocked {
-			return &requestFailure{409, "execution_already_bound", "项目已有工作区或正在初始化，请查看原记录。"}
+			return httpx.NewError(409, "execution_already_bound", "项目已有工作区或正在初始化，请查看原记录。")
 		}
 		intent = executionIntent{space: id, owner: owner, key: key, state: "validating"}
 		var total int64
@@ -215,7 +217,7 @@ func (s spaceExecution) enroll(ctx context.Context, owner, id, key string, ids [
 			err := conn.QueryRowContext(ctx, `SELECT path,size,manifest FROM space_uploads u WHERE owner=? AND project=? AND id=? AND state='saved'
       AND NOT EXISTS(SELECT 1 FROM space_file_deletions WHERE fileId=u.id)`, owner, id, file).Scan(&item.Path, &item.Size, &item.Manifest)
 			if errors.Is(err, sql.ErrNoRows) {
-				return notFound
+				return httpx.NotFound
 			}
 			if err != nil {
 				return err
@@ -225,7 +227,7 @@ func (s spaceExecution) enroll(ctx context.Context, owner, id, key string, ids [
 			intent.inputs = append(intent.inputs, item)
 		}
 		if total > 1024*1024 {
-			return &snapshotFailure{requestFailure{413, "execution_input_too_large", "执行输入合计最多 1 MiB。"}, issues}
+			return &snapshotFailure{httpx.NewError(413, "execution_input_too_large", "执行输入合计最多 1 MiB。"), issues}
 		}
 		raw, err := json.Marshal(intent.inputs)
 		if err != nil {
@@ -256,7 +258,7 @@ func (s spaceExecution) validate(ctx context.Context, row executionIntent) error
 			var manifest []string
 			hash := sha256.Sum256(data)
 			if json.Unmarshal([]byte(input.Manifest), &manifest) != nil || len(manifest) == 0 || base64.StdEncoding.EncodeToString(hash[:]) != manifest[0] {
-				return backendUnavailable
+				return httpx.BackendUnavailable
 			}
 		}
 		if !utf8.Valid(data) {
@@ -336,7 +338,7 @@ func (s spaceExecution) advance(ctx context.Context, space, key string) error {
 	}
 	project, ok := value.(projectView)
 	if !ok {
-		return backendUnavailable
+		return httpx.BackendUnavailable
 	}
 	_, err = s.db.ExecContext(ctx, "UPDATE space_execution SET projectId=?,state=?,snapshot=NULL WHERE spaceId=? AND key=? AND state='importing'", project.ID, project.Status, space, key)
 	return err
@@ -388,24 +390,24 @@ func (s spaceExecution) reconcile(ctx context.Context) {
 	}
 }
 
-func (s spaceExecution) routes(mux *http.ServeMux, sessions *webSessions, origin string) {
+func (s spaceExecution) routes(mux *http.ServeMux, current func(*http.Request) (*auth.Session, error), origin string) {
 	register := func(pattern string, handle func(http.ResponseWriter, *http.Request, string) error) {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			s.backend.responseHeaders(w)
 			if r.Method == http.MethodPost && (len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != origin) {
-				authFailure(w, &requestFailure{400, "invalid_origin", "请从任务入口提交请求。"})
+				httpx.Fail(w, httpx.NewError(400, "invalid_origin", "请从任务入口提交请求。"))
 				return
 			}
-			session, err := sessions.current(r)
+			session, err := current(r)
 			if err == nil {
 				if r.Method == http.MethodHead || r.PathValue("project") != "" && !taskUUID.MatchString(r.PathValue("project")) {
-					err = notFound
+					err = httpx.NotFound
 				} else {
 					err = handle(w, r, session.Owner)
 				}
 			}
 			if err != nil {
-				authFailure(w, err)
+				httpx.Fail(w, err)
 			}
 		})
 	}
@@ -416,7 +418,7 @@ func (s spaceExecution) routes(mux *http.ServeMux, sessions *webSessions, origin
 		}
 		id, _ := projectString(data["id"])
 		if !taskUUID.MatchString(id) {
-			return notFound
+			return httpx.NotFound
 		}
 		name, _ := projectString(data["name"])
 		name = strings.TrimSpace(name)
@@ -426,26 +428,26 @@ func (s spaceExecution) routes(mux *http.ServeMux, sessions *webSessions, origin
 		if err := s.register(r.Context(), owner, id, name); err != nil {
 			return err
 		}
-		authJSON(w, http.StatusOK, map[string]string{"id": id})
+		httpx.JSON(w, http.StatusOK, map[string]string{"id": id})
 		return nil
 	})
 	register("GET /api/space/projects/{project}", func(w http.ResponseWriter, r *http.Request, owner string) error {
 		result, err := s.detail(r.Context(), owner, r.PathValue("project"))
 		if err == nil {
-			authJSON(w, http.StatusOK, result)
+			httpx.JSON(w, http.StatusOK, result)
 		}
 		return err
 	})
 	register("POST /api/space/projects/{project}/execution", func(w http.ResponseWriter, r *http.Request, owner string) error {
 		keys := r.Header.Values("Idempotency-Key")
 		if len(keys) != 1 || len(keys[0]) < 1 || len(keys[0]) > 128 || strings.ContainsFunc(keys[0], func(r rune) bool { return r < 33 || r > 126 }) {
-			return &requestFailure{400, "invalid_key", "请提供有效的 Idempotency-Key。"}
+			return httpx.NewError(400, "invalid_key", "请提供有效的 Idempotency-Key。")
 		}
 		data, err := readProjectJSON(w, r, 32*1024)
 		if err != nil {
 			return err
 		}
-		invalid := &requestFailure{400, "invalid_execution_input", "请选择不重复的项目文件。"}
+		invalid := httpx.NewError(400, "invalid_execution_input", "请选择不重复的项目文件。")
 		var fileIDs []json.RawMessage
 		if json.Unmarshal(data["fileIds"], &fileIDs) != nil || len(fileIDs) == 0 {
 			return invalid
@@ -461,12 +463,12 @@ func (s spaceExecution) routes(mux *http.ServeMux, sessions *webSessions, origin
 			ids = append(ids, id)
 		}
 		if len(ids) > 100 {
-			return &requestFailure{413, "execution_input_too_large", "执行输入最多 100 个文件。"}
+			return httpx.NewError(413, "execution_input_too_large", "执行输入最多 100 个文件。")
 		}
 		slices.Sort(ids)
 		status, result, err := s.enroll(r.Context(), owner, r.PathValue("project"), keys[0], ids)
 		if err == nil {
-			authJSON(w, status, result)
+			httpx.JSON(w, status, result)
 			if status == http.StatusAccepted {
 				select {
 				case s.wake <- struct{}{}:

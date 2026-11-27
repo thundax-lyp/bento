@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,12 +13,8 @@ func TestProjectCancellation(t *testing.T) {
 	const origin = "http://127.0.0.1:8080"
 	const route = "/api/projects/project/runs/run/cancel"
 	const timestamp = "2026-11-27T00:00:00Z"
-	identity := account{Owner: "fixture-owner", Name: "fixture@example.test"}
-	sessions := newWebSessions(oidcTestAccountReader{account: identity}, false, false)
-	cookie, err := sessions.start(httptest.NewRequest(http.MethodGet, origin+route, nil), identity)
-	if err != nil {
-		t.Fatal(err)
-	}
+	identity := &auth.Session{Owner: "fixture-owner", Name: "fixture@example.test"}
+	current := func(*http.Request) (*auth.Session, error) { return identity, nil }
 	for _, tc := range []struct {
 		name        string
 		upstream    int
@@ -48,10 +45,10 @@ func TestProjectCancellation(t *testing.T) {
 			}))
 			defer backend.Close()
 			mux := http.NewServeMux()
-			projectService{origin: backend.URL, bearer: "fixture-only", client: backend.Client()}.routes(mux, sessions, origin)
+			projectService{origin: backend.URL, bearer: "fixture-only", client: backend.Client()}.routes(mux, current, origin)
 			req := httptest.NewRequest(http.MethodPost, origin+route, nil)
 			req.Header.Set("Origin", origin)
-			req.AddCookie(cookie)
+
 			response := httptest.NewRecorder()
 			mux.ServeHTTP(response, req)
 			if response.Code != tc.wantStatus {

@@ -1,10 +1,11 @@
-package main
+package auth
 
 import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"io"
 	"net"
 	"net/http"
@@ -20,7 +21,7 @@ import (
 
 const oidcLifetime = 5 * time.Minute
 
-var oidcDenied = &requestFailure{401, "oidc_denied", "此身份没有有效的 Bento 邀请，请从登录页重试。"}
+var oidcDenied = httpx.NewError(401, "oidc_denied", "此身份没有有效的 Bento 邀请，请从登录页重试。")
 
 type externalSession struct {
 	subject string
@@ -41,13 +42,13 @@ type oidcOptions struct {
 type loginTransaction struct {
 	state, nonce, verifier string
 	started, expires       time.Time
-	closing                *webSession
+	closing                *Session
 }
 
 type keycloak struct {
 	options      oidcOptions
 	store        oidcAccounts
-	sessions     *webSessions
+	sessions     *Sessions
 	config       oauth2.Config
 	verifier     *oidc.IDTokenVerifier
 	client       *http.Client
@@ -82,18 +83,18 @@ func loadAuthArtifacts(directory string) (authArtifacts, error) {
 	return assets, nil
 }
 
-func secureOIDCURL(raw string, local bool) (*url.URL, error) {
+func SecureURL(raw string, local bool) (*url.URL, error) {
 	u, err := url.Parse(raw)
 	if err != nil || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
 		return nil, errors.New("invalid Keycloak URL")
 	}
-	if u.Scheme == "https" || (local && u.Scheme == "http" && loopback(u.Hostname())) {
+	if u.Scheme == "https" || (local && u.Scheme == "http" && Loopback(u.Hostname())) {
 		return u, nil
 	}
 	return nil, errors.New("Keycloak URLs require HTTPS")
 }
 
-func loopback(host string) bool {
+func Loopback(host string) bool {
 	if host == "localhost" {
 		return true
 	}
@@ -101,14 +102,14 @@ func loopback(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-func newKeycloak(ctx context.Context, options oidcOptions, store oidcAccounts, sessions *webSessions) (*keycloak, error) {
-	origin, err := secureOIDCURL(options.origin, true)
+func newKeycloak(ctx context.Context, options oidcOptions, store oidcAccounts, sessions *Sessions) (*keycloak, error) {
+	origin, err := SecureURL(options.origin, true)
 	if err != nil || origin.Path != "" || origin.RawQuery != "" ||
 		options.clientID == "" || options.clientSecret == "" || options.organization == "" {
 		return nil, errors.New("invalid Keycloak settings")
 	}
-	local := origin.Scheme == "http" && loopback(origin.Hostname())
-	issuer, err := secureOIDCURL(options.issuer, local)
+	local := origin.Scheme == "http" && Loopback(origin.Hostname())
+	issuer, err := SecureURL(options.issuer, local)
 	if err != nil || issuer.RawQuery != "" {
 		return nil, errors.New("invalid Keycloak issuer")
 	}
@@ -135,11 +136,11 @@ func newKeycloak(ctx context.Context, options oidcOptions, store oidcAccounts, s
 	endpoint := provider.Endpoint()
 	allowHTTP := local && issuer.Scheme == "http"
 	for _, raw := range []string{endpoint.AuthURL, endpoint.TokenURL, metadata.JWKS} {
-		if _, err := secureOIDCURL(raw, allowHTTP); err != nil {
+		if _, err := SecureURL(raw, allowHTTP); err != nil {
 			return nil, err
 		}
 	}
-	logout, err := secureOIDCURL(metadata.Logout, allowHTTP)
+	logout, err := SecureURL(metadata.Logout, allowHTTP)
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +173,7 @@ func (k *keycloak) key(r *http.Request) ([32]byte, bool) {
 	return sha256.Sum256([]byte(cookies[0].Value)), true
 }
 
-func (k *keycloak) start(w http.ResponseWriter, r *http.Request, closing *webSession) error {
+func (k *keycloak) start(w http.ResponseWriter, r *http.Request, closing *Session) error {
 	token := oauth2.GenerateVerifier()
 	now := time.Now()
 	tx := loginTransaction{
@@ -190,7 +191,7 @@ func (k *keycloak) start(w http.ResponseWriter, r *http.Request, closing *webSes
 	}
 	if len(k.transactions) >= 2048 {
 		k.mu.Unlock()
-		return &requestFailure{503, "auth_busy", "登录请求较多，请稍后重试。"}
+		return httpx.NewError(503, "auth_busy", "登录请求较多，请稍后重试。")
 	}
 	k.transactions[sha256.Sum256([]byte(token))] = tx
 	k.mu.Unlock()
@@ -277,7 +278,7 @@ func (k *keycloak) callback(w http.ResponseWriter, r *http.Request) error {
 	}
 
 	if tx.closing != nil {
-		saved, err := k.sessions.current(r)
+		saved, err := k.sessions.Current(r)
 		authTime := time.Unix(claims.AuthTime, 0)
 		if err != nil || saved != tx.closing || saved.Identity == nil || saved.Identity.subject != token.Subject ||
 			authTime.Before(tx.started.Add(-5*time.Second)) || authTime.After(time.Now().Add(5*time.Second)) {
@@ -346,18 +347,18 @@ func (k *keycloak) routes(mux *http.ServeMux) {
 			}
 			w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src "+connect+"; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 			if r.Method == "POST" && (len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != k.options.origin) {
-				authFailure(w, &requestFailure{400, "invalid_origin", "请从任务入口提交请求。"})
+				httpx.Fail(w, httpx.NewError(400, "invalid_origin", "请从任务入口提交请求。"))
 				return
 			}
 			if err := handle(w, r); err != nil {
-				authFailure(w, err)
+				httpx.Fail(w, err)
 			}
 		})
 	}
 	register("GET /auth", func(w http.ResponseWriter, r *http.Request) error {
-		_, err := k.sessions.current(r)
+		_, err := k.sessions.Current(r)
 		page := k.assets.account
-		if errors.Is(err, errLoginRequired) {
+		if errors.Is(err, httpx.ErrLoginRequired) {
 			page = k.assets.login
 		} else if err != nil {
 			return err
@@ -377,7 +378,7 @@ func (k *keycloak) routes(mux *http.ServeMux) {
 	register("GET /api/oidc/start", func(w http.ResponseWriter, r *http.Request) error { return k.start(w, r, nil) })
 	register("GET /api/oidc/callback", k.callback)
 	register("POST /api/oidc/logout", func(w http.ResponseWriter, r *http.Request) error {
-		session, err := k.sessions.current(r)
+		session, err := k.sessions.Current(r)
 		if err != nil {
 			return err
 		}
@@ -389,7 +390,7 @@ func (k *keycloak) routes(mux *http.ServeMux) {
 		return nil
 	})
 	register("POST /api/oidc/close", func(w http.ResponseWriter, r *http.Request) error {
-		session, err := k.sessions.current(r)
+		session, err := k.sessions.Current(r)
 		if err != nil {
 			return err
 		}

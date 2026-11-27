@@ -6,6 +6,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"io"
 	"net/http"
 	"time"
@@ -14,7 +16,7 @@ import (
 )
 
 type accountSweep struct {
-	store   accounts
+	store   auth.Store
 	backend projectService
 	space   *spaceReader
 }
@@ -39,7 +41,7 @@ func (s accountSweep) start(ctx context.Context) func() {
 }
 
 func (s accountSweep) run(ctx context.Context) {
-	pending, err := s.store.pendingPurges(ctx)
+	pending, err := s.store.PendingPurges(ctx)
 	if err != nil {
 		return
 	}
@@ -48,12 +50,12 @@ func (s accountSweep) run(ctx context.Context) {
 			return
 		}
 		if s.purge(ctx, row) {
-			_ = s.store.finishPurge(ctx, row.Owner)
+			_ = s.store.FinishPurge(ctx, row.Owner)
 		}
 	}
 }
 
-func (s accountSweep) purge(ctx context.Context, row purge) bool {
+func (s accountSweep) purge(ctx context.Context, row auth.Purge) bool {
 	if s.space != nil {
 		if _, err := s.space.db.ExecContext(ctx, "INSERT OR IGNORE INTO space_draining_owners VALUES (?)", row.Owner); err != nil {
 			return false
@@ -141,14 +143,14 @@ func (s accountSweep) accountRequest(ctx context.Context, owner, path string, ra
 		return true, nil
 	}
 	if raw == nil || response.StatusCode != http.StatusOK && response.StatusCode != http.StatusAccepted {
-		return false, backendUnavailable
+		return false, httpx.BackendUnavailable
 	}
 	var result struct {
 		Complete *bool `json:"complete"`
 	}
 	encoded, err := io.ReadAll(io.LimitReader(response.Body, 65537))
 	if err != nil || len(encoded) > 65536 || json.Unmarshal(encoded, &result) != nil || result.Complete == nil {
-		return false, backendUnavailable
+		return false, httpx.BackendUnavailable
 	}
 	return *result.Complete, nil
 }

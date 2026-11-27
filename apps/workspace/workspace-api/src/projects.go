@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"io"
 	"mime"
 	"net/http"
@@ -32,9 +34,6 @@ type projectRoute struct {
 	run     string
 }
 
-var notFound = &requestFailure{404, "not_found", "找不到该资源。"}
-var backendUnavailable = &requestFailure{502, "backend_error", "任务服务暂不可用，请稍后重试。"}
-
 func (r projectRoute) path() string {
 	path := "/v1/projects"
 	if r.project != "" {
@@ -58,9 +57,9 @@ func (r projectRoute) path() string {
 func readProjectJSON(w http.ResponseWriter, r *http.Request, maxBytes int64) (map[string]json.RawMessage, error) {
 	media := strings.TrimSpace(strings.SplitN(r.Header.Get("Content-Type"), ";", 2)[0])
 	if !strings.EqualFold(media, "application/json") {
-		return nil, &requestFailure{400, "invalid_content_type", "请使用 application/json。"}
+		return nil, httpx.NewError(400, "invalid_content_type", "请使用 application/json。")
 	}
-	tooLarge := &requestFailure{413, "too_large", "请求超过大小限制。"}
+	tooLarge := httpx.NewError(413, "too_large", "请求超过大小限制。")
 	if r.ContentLength > maxBytes {
 		return nil, tooLarge
 	}
@@ -71,11 +70,11 @@ func readProjectJSON(w http.ResponseWriter, r *http.Request, maxBytes int64) (ma
 	}
 	body = bytes.TrimPrefix(body, []byte{0xef, 0xbb, 0xbf})
 	if err != nil || !utf8.Valid(body) || !json.Valid(body) {
-		return nil, &requestFailure{400, "invalid_json", "请求内容必须是 UTF-8 JSON。"}
+		return nil, httpx.NewError(400, "invalid_json", "请求内容必须是 UTF-8 JSON。")
 	}
 	var fields map[string]json.RawMessage
 	if json.Unmarshal(body, &fields) != nil || fields == nil {
-		return nil, &requestFailure{400, "invalid_input", "请求必须是 JSON 对象。"}
+		return nil, httpx.NewError(400, "invalid_input", "请求必须是 JSON 对象。")
 	}
 	return fields, nil
 }
@@ -131,10 +130,10 @@ func parseProjectInput(fields map[string]json.RawMessage) (projectInput, error) 
 	name, ok := projectString(fields["name"])
 	var files []json.RawMessage
 	if !ok || strings.TrimSpace(name) == "" || json.Unmarshal(fields["files"], &files) != nil || files == nil {
-		return projectInput{}, &requestFailure{400, "invalid_project", "请提供项目名称和文件列表。"}
+		return projectInput{}, httpx.NewError(400, "invalid_project", "请提供项目名称和文件列表。")
 	}
 	if len(files) > 100 {
-		return projectInput{}, &requestFailure{413, "too_many_files", "项目最多包含 100 个文件。"}
+		return projectInput{}, httpx.NewError(413, "too_many_files", "项目最多包含 100 个文件。")
 	}
 	result := projectInput{Name: name, Files: make([]projectFile, 0, len(files))}
 	paths := make(map[string]bool, len(files))
@@ -142,10 +141,10 @@ func parseProjectInput(fields map[string]json.RawMessage) (projectInput, error) 
 	for _, raw := range files {
 		var file map[string]json.RawMessage
 		if json.Unmarshal(raw, &file) != nil || file == nil {
-			return projectInput{}, &requestFailure{400, "invalid_input", "请求必须是 JSON 对象。"}
+			return projectInput{}, httpx.NewError(400, "invalid_input", "请求必须是 JSON 对象。")
 		}
 		path, ok := wellFormedProjectString(file["path"])
-		badPath := &requestFailure{400, "invalid_path", "文件路径无效或重复。"}
+		badPath := httpx.NewError(400, "invalid_path", "文件路径无效或重复。")
 		if !ok || strings.Contains(path, "\\") || strings.ContainsFunc(path, unicode.IsControl) || paths[path] {
 			return projectInput{}, badPath
 		}
@@ -156,7 +155,7 @@ func parseProjectInput(fields map[string]json.RawMessage) (projectInput, error) 
 		}
 		text, ok := wellFormedProjectString(file["text"])
 		if !ok {
-			return projectInput{}, &requestFailure{400, "invalid_file", "文件必须是 UTF-8 文本。"}
+			return projectInput{}, httpx.NewError(400, "invalid_file", "文件必须是 UTF-8 文本。")
 		}
 		result.Files = append(result.Files, projectFile{Path: path, Text: text})
 		paths[path] = true
@@ -165,7 +164,7 @@ func parseProjectInput(fields map[string]json.RawMessage) (projectInput, error) 
 	for path := range paths {
 		for index := strings.IndexByte(path, '/'); index >= 0; {
 			if paths[path[:index]] {
-				return projectInput{}, &requestFailure{400, "path_conflict", "文件路径和目录路径冲突。"}
+				return projectInput{}, httpx.NewError(400, "path_conflict", "文件路径和目录路径冲突。")
 			}
 			next := strings.IndexByte(path[index+1:], '/')
 			if next < 0 {
@@ -175,7 +174,7 @@ func parseProjectInput(fields map[string]json.RawMessage) (projectInput, error) 
 		}
 	}
 	if total > 1024*1024 {
-		return projectInput{}, &requestFailure{413, "project_too_large", "项目文本内容最多 1 MiB。"}
+		return projectInput{}, httpx.NewError(413, "project_too_large", "项目文本内容最多 1 MiB。")
 	}
 	return result, nil
 }
@@ -237,7 +236,7 @@ func (route projectRoute) decode(raw []byte) (any, error) {
 		if json.Unmarshal(raw, &result) == nil && result.Projects != nil {
 			for _, project := range result.Projects {
 				if !project.valid("") {
-					return nil, backendUnavailable
+					return nil, httpx.BackendUnavailable
 				}
 			}
 			return result, nil
@@ -254,7 +253,7 @@ func (route projectRoute) decode(raw []byte) (any, error) {
 		if json.Unmarshal(raw, &result) == nil && result.Runs != nil {
 			for i := range result.Runs {
 				if !result.Runs[i].valid(route.project, "") {
-					return nil, backendUnavailable
+					return nil, httpx.BackendUnavailable
 				}
 			}
 			return result, nil
@@ -263,7 +262,7 @@ func (route projectRoute) decode(raw []byte) (any, error) {
 		var result runView
 		if json.Unmarshal(raw, &result) == nil && result.valid(route.project, route.run) {
 			if route.kind == "cancelRun" && result.Status != "cancelling" && result.Status != "cancelled" && result.Status != "needs_review" {
-				return nil, backendUnavailable
+				return nil, httpx.BackendUnavailable
 			}
 			return result, nil
 		}
@@ -272,15 +271,15 @@ func (route projectRoute) decode(raw []byte) (any, error) {
 			return string(raw), nil
 		}
 	}
-	return nil, backendUnavailable
+	return nil, httpx.BackendUnavailable
 }
 
 func projectBackendError(status int, kind string) error {
 	switch status {
 	case 400:
-		return &requestFailure{400, "invalid_input", "任务服务拒绝了请求内容。"}
+		return httpx.NewError(400, "invalid_input", "任务服务拒绝了请求内容。")
 	case 404:
-		return notFound
+		return httpx.NotFound
 	case 409:
 		message := "当前项目状态不允许提交，或此提交键已用于其他内容。"
 		switch kind {
@@ -289,13 +288,13 @@ func projectBackendError(status int, kind string) error {
 		case "cancelRun":
 			message = "当前任务状态不能取消。"
 		}
-		return &requestFailure{409, "conflict", message}
+		return httpx.NewError(409, "conflict", message)
 	case 413:
-		return &requestFailure{413, "too_large", "导入内容超过任务服务的限制。"}
+		return httpx.NewError(413, "too_large", "导入内容超过任务服务的限制。")
 	case 429:
-		return &requestFailure{429, "tenant_queue_full", "当前账号的任务队列已满。等一个排队任务开始后再提交。"}
+		return httpx.NewError(429, "tenant_queue_full", "当前账号的任务队列已满。等一个排队任务开始后再提交。")
 	default:
-		return backendUnavailable
+		return httpx.BackendUnavailable
 	}
 }
 
@@ -329,9 +328,9 @@ func (s projectService) invoke(ctx context.Context, owner, key string, route pro
 	if err != nil {
 		var timeout interface{ Timeout() bool }
 		if errors.As(err, &timeout) && timeout.Timeout() {
-			return 0, nil, &requestFailure{504, "backend_timeout", "任务服务响应超时，请用原提交重试。"}
+			return 0, nil, httpx.NewError(504, "backend_timeout", "任务服务响应超时，请用原提交重试。")
 		}
-		return 0, nil, backendUnavailable
+		return 0, nil, httpx.BackendUnavailable
 	}
 	defer response.Body.Close()
 	status := response.StatusCode
@@ -352,11 +351,11 @@ func (s projectService) invoke(ctx context.Context, owner, key string, route pro
 	media, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if media != wantType || (status != wantStatus && !(key != "" && status == 200 &&
 		(route.kind == "createRun" || route.kind == "createProject"))) {
-		return 0, nil, backendUnavailable
+		return 0, nil, httpx.BackendUnavailable
 	}
 	raw, err := io.ReadAll(io.LimitReader(response.Body, maxProjectRequest+1))
 	if err != nil || len(raw) > maxProjectRequest {
-		return 0, nil, backendUnavailable
+		return 0, nil, httpx.BackendUnavailable
 	}
 	result, err := route.decode(raw)
 	return status, result, err
@@ -373,29 +372,29 @@ func (s projectService) responseHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src "+connect+"; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
 }
 
-func (s projectService) routes(mux *http.ServeMux, sessions *webSessions, origin string) {
+func (s projectService) routes(mux *http.ServeMux, current func(*http.Request) (*auth.Session, error), origin string) {
 	register := func(pattern, kind string) {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			s.responseHeaders(w)
 			if r.Method == http.MethodHead {
 				// ServeMux treats GET as matching HEAD. The Workspace API exposes GET only.
-				if _, err := sessions.current(r); err != nil {
-					authFailure(w, err)
+				if _, err := current(r); err != nil {
+					httpx.Fail(w, err)
 				} else {
-					authFailure(w, notFound)
+					httpx.Fail(w, httpx.NotFound)
 				}
 				return
 			}
 			if r.Method == "POST" && (r.Header.Get("Origin") != origin || len(r.Header.Values("Origin")) != 1) {
-				authFailure(w, &requestFailure{400, "invalid_origin", "请从任务入口提交请求。"})
+				httpx.Fail(w, httpx.NewError(400, "invalid_origin", "请从任务入口提交请求。"))
 				return
 			}
-			saved, err := sessions.current(r)
+			saved, err := current(r)
 			if err == nil {
 				err = s.handle(w, r, saved.Owner, kind)
 			}
 			if err != nil {
-				authFailure(w, err)
+				httpx.Fail(w, err)
 			}
 		})
 	}
@@ -413,7 +412,7 @@ func (s projectService) handle(w http.ResponseWriter, r *http.Request, owner, ki
 	route := projectRoute{kind: kind, project: r.PathValue("project"), run: r.PathValue("run")}
 	if (route.project != "" && !projectResourceID(route.project)) ||
 		(route.run != "" && !projectResourceID(route.run)) {
-		return notFound
+		return httpx.NotFound
 	}
 	var input any
 	var key string
@@ -432,7 +431,7 @@ func (s projectService) handle(w http.ResponseWriter, r *http.Request, owner, ki
 		keys := r.Header.Values("Idempotency-Key")
 		if len(keys) != 1 || keys[0] == "" ||
 			strings.ContainsFunc(keys[0], func(r rune) bool { return r < '!' || r > '~' }) {
-			return &requestFailure{400, "invalid_key", "请提供一个有效的 Idempotency-Key。"}
+			return httpx.NewError(400, "invalid_key", "请提供一个有效的 Idempotency-Key。")
 		}
 		key = keys[0]
 		fields, err := readProjectJSON(w, r, 64*1024)
@@ -442,7 +441,7 @@ func (s projectService) handle(w http.ResponseWriter, r *http.Request, owner, ki
 		prompt, _ := projectString(fields["prompt"])
 		prompt = strings.TrimSpace(prompt)
 		if prompt == "" || utf8.RuneCountInString(prompt) > 8000 {
-			return &requestFailure{400, "invalid_prompt", "任务描述须为 1 至 8000 个字符。"}
+			return httpx.NewError(400, "invalid_prompt", "任务描述须为 1 至 8000 个字符。")
 		}
 		input = map[string]string{"prompt": prompt}
 	}
@@ -461,6 +460,6 @@ func (s projectService) handle(w http.ResponseWriter, r *http.Request, owner, ki
 		_, _ = fmt.Fprint(w, result)
 		return nil
 	}
-	authJSON(w, status, result)
+	httpx.JSON(w, status, result)
 	return nil
 }

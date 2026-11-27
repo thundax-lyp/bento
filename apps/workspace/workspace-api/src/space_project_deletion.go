@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"io"
 	"mime"
 	"net/http"
@@ -13,7 +15,7 @@ import (
 	"github.com/google/uuid"
 )
 
-var projectDeleteUnconfirmed = &requestFailure{503, "project_delete_unconfirmed", "暂无法确认项目删除进度，请重试。"}
+var projectDeleteUnconfirmed = httpx.NewError(503, "project_delete_unconfirmed", "暂无法确认项目删除进度，请重试。")
 
 type spaceProjectDeletion struct {
 	db      *sql.DB
@@ -33,7 +35,7 @@ func projectDeletionBlocked(code string) error {
 		"project_importing": "请等待工作区初始化结束。",
 		"project_busy":      "项目仍有未结束的任务或正在清理。",
 	}
-	return &requestFailure{409, code, messages[code]}
+	return httpx.NewError(409, code, messages[code])
 }
 
 func (s spaceProjectDeletion) enroll(ctx context.Context, owner, id string) error {
@@ -54,14 +56,14 @@ func (s spaceProjectDeletion) enroll(ctx context.Context, owner, id string) erro
 			return err
 		}
 		if !project {
-			return notFound
+			return httpx.NotFound
 		}
 		var execution sql.NullString
 		var execOwner, state string
 		err = conn.QueryRowContext(ctx, "SELECT owner,state,projectId FROM space_execution WHERE spaceId=? ORDER BY rowid DESC LIMIT 1", id).
 			Scan(&execOwner, &state, &execution)
 		if err == nil && execOwner != owner {
-			return notFound
+			return httpx.NotFound
 		}
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
@@ -135,7 +137,7 @@ func (s spaceProjectDeletion) advance(ctx context.Context, owner, id string) (in
 		SELECT operationId,phase,executionProjectId,lastError FROM space_project_deletions WHERE owner=? AND spaceId=?`, owner, id).
 		Scan(&intent.operation, &intent.phase, &intent.execution, &intent.last)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, notFound
+		return 0, httpx.NotFound
 	}
 	if err != nil {
 		return 0, err
@@ -290,7 +292,7 @@ func (s spaceProjectDeletion) impact(ctx context.Context, owner, id string) (map
   LEFT JOIN space_execution e ON e.rowid=(SELECT rowid FROM space_execution WHERE spaceId=p.id AND owner=p.owner ORDER BY rowid DESC LIMIT 1)
   WHERE p.id=? AND p.owner=?`, id, owner).Scan(&phase, &state, &binding)
 	if errors.Is(err, sql.ErrNoRows) || phase == "deleted" {
-		return nil, notFound
+		return nil, httpx.NotFound
 	}
 	if err != nil {
 		return nil, err
@@ -312,7 +314,7 @@ func (s spaceProjectDeletion) impact(ctx context.Context, owner, id string) (map
 			return nil, err
 		}
 		if latest == "deleted" {
-			return nil, notFound
+			return nil, httpx.NotFound
 		}
 		if upstreamErr != nil && latest != "cleaning" {
 			return nil, projectDeleteUnconfirmed
@@ -378,7 +380,7 @@ func (s spaceProjectDeletion) advanceLocked(ctx context.Context, owner, id strin
 	var phase string
 	err := s.db.QueryRowContext(ctx, "SELECT phase FROM space_project_deletions WHERE owner=? AND spaceId=?", owner, id).Scan(&phase)
 	if errors.Is(err, sql.ErrNoRows) {
-		return 0, notFound
+		return 0, httpx.NotFound
 	}
 	if err != nil {
 		return 0, err
@@ -391,24 +393,24 @@ func (s spaceProjectDeletion) advanceLocked(ctx context.Context, owner, id strin
 	return s.advance(ctx, owner, id)
 }
 
-func (s spaceProjectDeletion) routes(mux *http.ServeMux, sessions *webSessions, origin string, snapshots *spaceSnapshots) {
+func (s spaceProjectDeletion) routes(mux *http.ServeMux, current func(*http.Request) (*auth.Session, error), origin string, snapshots *spaceSnapshots) {
 	handle := func(w http.ResponseWriter, r *http.Request) {
 		s.backend.responseHeaders(w)
 		if r.Method == http.MethodDelete && (len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != origin) {
-			authFailure(w, &requestFailure{400, "invalid_origin", "请从任务入口提交请求。"})
+			httpx.Fail(w, httpx.NewError(400, "invalid_origin", "请从任务入口提交请求。"))
 			return
 		}
-		session, err := sessions.current(r)
+		session, err := current(r)
 		id := r.PathValue("project")
 		if err == nil {
 			switch {
 			case !taskUUID.MatchString(id) || r.Method == http.MethodHead:
-				err = notFound
+				err = httpx.NotFound
 			case r.Method == http.MethodGet:
 				var result map[string]any
 				result, err = s.impact(r.Context(), session.Owner, id)
 				if err == nil {
-					authJSON(w, http.StatusOK, result)
+					httpx.JSON(w, http.StatusOK, result)
 				}
 			default:
 				err = s.enroll(r.Context(), session.Owner, id)
@@ -419,14 +421,14 @@ func (s spaceProjectDeletion) routes(mux *http.ServeMux, sessions *webSessions, 
 						if status == http.StatusNoContent {
 							w.WriteHeader(status)
 						} else {
-							authJSON(w, status, map[string]string{"state": "deleting"})
+							httpx.JSON(w, status, map[string]string{"state": "deleting"})
 						}
 					}
 				}
 			}
 		}
 		if err != nil {
-			authFailure(w, err)
+			httpx.Fail(w, err)
 		}
 	}
 	mux.HandleFunc("GET /api/space/projects/{project}/deletion", handle)

@@ -1,4 +1,4 @@
-package main
+package auth
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"io"
 	"mime"
 	"net/http"
@@ -35,7 +36,7 @@ type loginAttempt struct {
 
 type passwordAuth struct {
 	accounts      passwordAccounts
-	sessions      *webSessions
+	sessions      *Sessions
 	origin        string
 	spaceRequired bool
 	hashSlots     chan struct{}
@@ -43,63 +44,22 @@ type passwordAuth struct {
 	attempts      map[string]loginAttempt
 }
 
-func newPasswordAuth(store passwordAccounts, sessions *webSessions, origin string, spaceRequired bool) *passwordAuth {
+func newPasswordAuth(store passwordAccounts, sessions *Sessions, origin string, spaceRequired bool) *passwordAuth {
 	return &passwordAuth{
 		accounts: store, sessions: sessions, origin: origin, spaceRequired: spaceRequired,
 		hashSlots: make(chan struct{}, 2), attempts: make(map[string]loginAttempt),
 	}
 }
 
-type requestFailure struct {
-	status  int
-	code    string
-	message string
-}
-
 var (
-	invalidCredentials = &requestFailure{401, "invalid_credentials", "账号或登录凭据不正确。"}
-	invalidInvite      = &requestFailure{401, "invalid_invite", "账号或邀请码不正确。"}
-	alreadyRegistered  = &requestFailure{409, "already_registered", "账号已注册，请登录。"}
-	invalidPassword    = &requestFailure{400, "invalid_password", "请设置 15 至 128 个字符的密码，与邀请码不同。"}
-	authBusy           = &requestFailure{429, "auth_busy", "认证请求较多，请稍后重试。"}
-	loginLimited       = &requestFailure{429, "login_limited", "登录尝试过多，请稍后重试。"}
+	invalidCredentials = httpx.NewError(401, "invalid_credentials", "账号或登录凭据不正确。")
+	invalidInvite      = httpx.NewError(401, "invalid_invite", "账号或邀请码不正确。")
+	alreadyRegistered  = httpx.NewError(409, "already_registered", "账号已注册，请登录。")
+	invalidPassword    = httpx.NewError(400, "invalid_password", "请设置 15 至 128 个字符的密码，与邀请码不同。")
+	authBusy           = httpx.NewError(429, "auth_busy", "认证请求较多，请稍后重试。")
+	loginLimited       = httpx.NewError(429, "login_limited", "登录尝试过多，请稍后重试。")
 	accountName        = regexp.MustCompile(`^[A-Za-z0-9_.@-]{1,128}$`)
 )
-
-func (f *requestFailure) Error() string { return f.code }
-
-func authFailure(w http.ResponseWriter, err error) {
-	var snapshot *snapshotFailure
-	if errors.As(err, &snapshot) {
-		body := map[string]any{"code": snapshot.code, "message": snapshot.message}
-		if len(snapshot.Issues) != 0 {
-			body["issues"] = snapshot.Issues
-		}
-		authJSON(w, snapshot.status, map[string]any{"error": body})
-		return
-	}
-	failure := &requestFailure{500, "server_error", "任务入口暂不可用，请稍后重试。"}
-	switch {
-	case errors.Is(err, errLoginRequired):
-		failure = &requestFailure{401, "login_required", "请使用受邀账号登录。"}
-	default:
-		var known *requestFailure
-		if errors.As(err, &known) {
-			failure = known
-		}
-	}
-	authJSON(w, failure.status, map[string]any{"error": map[string]string{
-		"code": failure.code, "message": failure.message,
-	}})
-}
-
-func authJSON(w http.ResponseWriter, status int, value any) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
-}
 
 type credentials struct {
 	Account   string `json:"account"`
@@ -112,16 +72,16 @@ func readCredentials(w http.ResponseWriter, r *http.Request) (credentials, error
 	var input credentials
 	media, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if media != "application/json" {
-		return input, &requestFailure{400, "invalid_content_type", "请使用 application/json。"}
+		return input, httpx.NewError(400, "invalid_content_type", "请使用 application/json。")
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4096))
 	var limit *http.MaxBytesError
 	if errors.As(err, &limit) {
-		return input, &requestFailure{413, "too_large", "请求超过大小限制。"}
+		return input, httpx.NewError(413, "too_large", "请求超过大小限制。")
 	}
 	if err != nil || !utf8.Valid(body) || !strings.HasPrefix(strings.TrimSpace(string(body)), "{") ||
 		json.Unmarshal(body, &input) != nil {
-		return input, &requestFailure{400, "invalid_json", "请求内容必须是 UTF-8 JSON。"}
+		return input, httpx.NewError(400, "invalid_json", "请求内容必须是 UTF-8 JSON。")
 	}
 	return input, nil
 }
@@ -251,17 +211,17 @@ func (a *passwordAuth) login(w http.ResponseWriter, r *http.Request, input crede
 		return err
 	}
 	http.SetCookie(w, cookie)
-	authJSON(w, 200, map[string]string{"account": row.Name})
+	httpx.JSON(w, 200, map[string]string{"account": row.Name})
 	return nil
 }
 
 func (a *passwordAuth) close(w http.ResponseWriter, r *http.Request, input credentials) error {
-	saved, err := a.sessions.current(r)
+	saved, err := a.sessions.Current(r)
 	if err != nil {
 		return err
 	}
 	if !input.Confirmed {
-		return &requestFailure{400, "confirmation_required", "请先确认注销账号的影响。"}
+		return httpx.NewError(400, "confirmation_required", "请先确认注销账号的影响。")
 	}
 	row, err := a.accounts.accountByOwner(r.Context(), saved.Owner)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -273,7 +233,7 @@ func (a *passwordAuth) close(w http.ResponseWriter, r *http.Request, input crede
 	if err := a.verify(row, input.Password); err != nil {
 		return err
 	}
-	if current, err := a.sessions.current(r); err != nil || current != saved {
+	if current, err := a.sessions.Current(r); err != nil || current != saved {
 		if err != nil {
 			return err
 		}
@@ -288,18 +248,18 @@ func (a *passwordAuth) close(w http.ResponseWriter, r *http.Request, input crede
 	}
 	a.sessions.revokeOwner(row.Owner)
 	http.SetCookie(w, a.sessions.logout(r))
-	authJSON(w, 200, struct{}{})
+	httpx.JSON(w, 200, struct{}{})
 	return nil
 }
 
-func registerSessionRoute(mux *http.ServeMux, sessions *webSessions) {
+func registerSessionRoute(mux *http.ServeMux, sessions *Sessions) {
 	mux.HandleFunc("GET /api/session", func(w http.ResponseWriter, r *http.Request) {
-		saved, err := sessions.current(r)
+		saved, err := sessions.Current(r)
 		if err != nil {
-			authFailure(w, err)
+			httpx.Fail(w, err)
 			return
 		}
-		authJSON(w, 200, map[string]string{"account": saved.Name})
+		httpx.JSON(w, 200, map[string]string{"account": saved.Name})
 	})
 }
 
@@ -307,7 +267,7 @@ func (a *passwordAuth) sessionRoutes(mux *http.ServeMux) {
 	registerSessionRoute(mux, a.sessions)
 	mux.HandleFunc("POST /api/logout", a.post(func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, a.sessions.logout(r))
-		authJSON(w, 200, struct{}{})
+		httpx.JSON(w, 200, struct{}{})
 	}))
 }
 
@@ -316,7 +276,7 @@ func (a *passwordAuth) routes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/register", a.withCredentials(func(w http.ResponseWriter, r *http.Request, input credentials) error {
 		row, err := a.register(r.Context(), input)
 		if err == nil {
-			authJSON(w, 201, map[string]string{"account": row.Name})
+			httpx.JSON(w, 201, map[string]string{"account": row.Name})
 		}
 		return err
 	}))
@@ -327,7 +287,7 @@ func (a *passwordAuth) routes(mux *http.ServeMux) {
 func (a *passwordAuth) post(handle http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Origin") != a.origin || len(r.Header.Values("Origin")) != 1 {
-			authFailure(w, &requestFailure{400, "invalid_origin", "请从任务入口提交请求。"})
+			httpx.Fail(w, httpx.NewError(400, "invalid_origin", "请从任务入口提交请求。"))
 			return
 		}
 		handle(w, r)
@@ -341,7 +301,7 @@ func (a *passwordAuth) withCredentials(handle func(http.ResponseWriter, *http.Re
 			err = handle(w, r, input)
 		}
 		if err != nil {
-			authFailure(w, err)
+			httpx.Fail(w, err)
 		}
 	})
 }

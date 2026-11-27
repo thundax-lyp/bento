@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"log"
 	"net/http"
 	"net/url"
@@ -41,13 +43,13 @@ func run() error {
 	defer database.Close()
 	database.SetMaxOpenConns(8)
 	startup, cancel := context.WithTimeout(ctx, 30*time.Second)
-	err = initializeAccounts(startup, database, os.Getenv("BENTO_ONE_ACCOUNTS_FILE"))
+	err = auth.InitializeAccounts(startup, database, os.Getenv("BENTO_ONE_ACCOUNTS_FILE"))
 	cancel()
 	if err != nil {
 		return errors.New("could not initialize MySQL accounts; check connectivity, schema and invitation file")
 	}
 
-	store := accounts{db: database}
+	store := auth.NewStore(database)
 	backend, err := workspaceProjectBackend()
 	if err != nil {
 		return err
@@ -91,13 +93,13 @@ func run() error {
 	}
 }
 
-func registerGoAuth(ctx context.Context, public *http.ServeMux, store accounts, backend projectService) (*spaceReader, error) {
+func registerGoAuth(ctx context.Context, public *http.ServeMux, store auth.Store, backend projectService) (*spaceReader, error) {
 	var space *spaceReader
 	origin := strings.TrimSuffix(os.Getenv("BENTO_ONE_ORIGIN"), "/")
 	if origin == "" {
 		origin = "http://127.0.0.1:4102"
 	}
-	publicURL, err := secureOIDCURL(origin, true)
+	publicURL, err := auth.SecureURL(origin, true)
 	if err != nil || publicURL.Path != "" || publicURL.RawQuery != "" {
 		return nil, errors.New("invalid Workspace origin")
 	}
@@ -106,45 +108,25 @@ func registerGoAuth(ctx context.Context, public *http.ServeMux, store accounts, 
 		return nil, errors.New("Keycloak issuer is required")
 	}
 	spaceRequired := os.Getenv("BENTO_SPACE_S3_ENDPOINT") != ""
-	sessions := newWebSessions(store, publicURL.Scheme == "https", issuer != "")
-	password := newPasswordAuth(store, sessions, origin, spaceRequired)
-	if issuer == "" {
-		password.routes(public)
-	} else {
-		identity, err := newKeycloak(ctx, oidcOptions{
-			origin: origin, issuer: issuer, clientID: os.Getenv("BENTO_OIDC_CLIENT_ID"),
-			clientSecret: os.Getenv("BENTO_OIDC_CLIENT_SECRET"), organization: os.Getenv("BENTO_OIDC_ORGANIZATION"),
-			spaceRequired: spaceRequired, assetsDir: "apps/workspace/workspace-auth/dist",
-			spaceOrigin: strings.TrimSuffix(os.Getenv("BENTO_SPACE_S3_ENDPOINT"), "/"),
-		}, store, sessions)
-		if err != nil {
-			if errors.Is(err, errAuthArtifacts) {
-				return nil, errAuthArtifacts
-			}
-			return nil, errors.New("could not initialize Workspace OIDC")
-		}
-		identity.routes(public)
-		password.sessionRoutes(public)
-		for _, path := range []string{"/api/login", "/api/register", "/api/account/close", "/api/oidc/"} {
-			public.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == "POST" && (len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != origin) {
-					authFailure(w, &requestFailure{400, "invalid_origin", "请从任务入口提交请求。"})
-					return
-				}
-				authFailure(w, notFound)
-			})
-		}
+	sessions, err := auth.Register(ctx, public, store, auth.Options{
+		Origin: origin, Issuer: issuer, ClientID: os.Getenv("BENTO_OIDC_CLIENT_ID"),
+		ClientSecret: os.Getenv("BENTO_OIDC_CLIENT_SECRET"), Organization: os.Getenv("BENTO_OIDC_ORGANIZATION"),
+		SpaceRequired: spaceRequired, Secure: publicURL.Scheme == "https", AssetsDir: "apps/workspace/workspace-auth/dist",
+		SpaceOrigin: strings.TrimSuffix(os.Getenv("BENTO_SPACE_S3_ENDPOINT"), "/"),
+	})
+	if err != nil {
+		return nil, err
 	}
-	backend.routes(public, sessions, origin)
+	backend.routes(public, sessions.Current, origin)
 	var snapshots *spaceSnapshots
 	database, endpoint, bucket := os.Getenv("BENTO_SPACE_DB"), os.Getenv("BENTO_SPACE_S3_ENDPOINT"), os.Getenv("BENTO_SPACE_S3_BUCKET")
 	if database != "" || endpoint != "" || bucket != "" {
 		if database == "" || database == ":memory:" || endpoint == "" || bucket == "" {
 			return nil, errors.New("incomplete space configuration")
 		}
-		endpointURL, err := secureOIDCURL(strings.TrimSuffix(endpoint, "/"), loopback(publicURL.Hostname()))
+		endpointURL, err := auth.SecureURL(strings.TrimSuffix(endpoint, "/"), auth.Loopback(publicURL.Hostname()))
 		if err != nil || endpointURL.Path != "" || endpointURL.RawQuery != "" ||
-			(!loopback(publicURL.Hostname()) && endpointURL.Hostname() == publicURL.Hostname()) {
+			(!auth.Loopback(publicURL.Hostname()) && endpointURL.Hostname() == publicURL.Hostname()) {
 			return nil, errors.New("invalid Workspace object storage origin")
 		}
 		storage, err := newSpaceStorage(ctx, strings.TrimSuffix(endpoint, "/"), bucket, os.Getenv("AWS_REGION"))
@@ -161,16 +143,16 @@ func registerGoAuth(ctx context.Context, public *http.ServeMux, store accounts, 
 		}
 		space = &spaceReader{db: db, storage: storage}
 
-		space.routes(public, sessions, backend)
+		space.routes(public, sessions.Current, backend)
 		snapshots = &spaceSnapshots{db: db, read: storage.read, backend: backend}
 		locks := &spaceLocks{}
 		space.locks = locks
 		execution := spaceExecution{db: db, storage: storage, backend: backend, wake: make(chan struct{}, 1), locks: locks}
-		execution.routes(public, sessions, origin)
+		execution.routes(public, sessions.Current, origin)
 		uploads := spaceUploads{db: db, storage: storage, now: time.Now}
-		uploads.routes(public, sessions, backend, origin, locks)
+		uploads.routes(public, sessions.Current, backend, origin, locks)
 		projectDeletion := spaceProjectDeletion{db: db, storage: storage, backend: backend, locks: locks}
-		projectDeletion.routes(public, sessions, origin, snapshots)
+		projectDeletion.routes(public, sessions.Current, origin, snapshots)
 		stopUploads := uploads.startReconciliation(ctx, locks, backend, func(ctx context.Context) {
 			projectDeletion.reconcile(ctx, snapshots)
 		})
@@ -182,20 +164,20 @@ func registerGoAuth(ctx context.Context, public *http.ServeMux, store accounts, 
 			stopUploads()
 		}
 	}
-	backend.taskRoutes(public, sessions, origin, snapshots)
+	backend.taskRoutes(public, sessions.Current, origin, snapshots)
 	public.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		backend.responseHeaders(w)
 		if r.Method == http.MethodPost && (len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != origin) {
-			authFailure(w, &requestFailure{400, "invalid_origin", "请从任务入口提交请求。"})
+			httpx.Fail(w, httpx.NewError(400, "invalid_origin", "请从任务入口提交请求。"))
 			return
 		}
-		if _, err := sessions.current(r); err != nil {
-			authFailure(w, err)
+		if _, err := sessions.Current(r); err != nil {
+			httpx.Fail(w, err)
 			return
 		}
-		authFailure(w, notFound)
+		httpx.Fail(w, httpx.NotFound)
 	})
-	public.HandleFunc("/auth/", func(w http.ResponseWriter, r *http.Request) { authFailure(w, notFound) })
+	public.HandleFunc("/auth/", func(w http.ResponseWriter, r *http.Request) { httpx.Fail(w, httpx.NotFound) })
 	return space, nil
 }
 

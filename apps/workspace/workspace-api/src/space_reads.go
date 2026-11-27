@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"net/http"
 	"net/url"
 	"path"
@@ -180,31 +182,31 @@ func (s *spaceReader) readableFile(ctx context.Context, owner, id string) (space
 			SELECT 1 FROM space_project_deletions d WHERE d.spaceId=u.project AND d.owner=u.owner
 		)`, owner, id).Scan(&upload.ID, &upload.Project, &upload.Path, &upload.Size, &upload.State, &upload.Expires)
 	if errors.Is(err, sql.ErrNoRows) {
-		return spaceUploadView{}, notFound
+		return spaceUploadView{}, httpx.NotFound
 	}
 	return upload, err
 }
 
-func (s *spaceReader) routes(mux *http.ServeMux, sessions *webSessions, backend projectService) {
+func (s *spaceReader) routes(mux *http.ServeMux, current func(*http.Request) (*auth.Session, error), backend projectService) {
 	register := func(pattern string, handle func(http.ResponseWriter, *http.Request, string) error) {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			backend.responseHeaders(w)
-			saved, err := sessions.current(r)
+			saved, err := current(r)
 			if err == nil && r.Method == http.MethodHead {
-				err = notFound
+				err = httpx.NotFound
 			}
 			if err == nil {
 				err = handle(w, r, saved.Owner)
 			}
 			if err != nil {
-				authFailure(w, err)
+				httpx.Fail(w, err)
 			}
 		})
 	}
 	register("GET /api/space", func(w http.ResponseWriter, r *http.Request, owner string) error {
 		result, err := s.overview(r.Context(), owner)
 		if err == nil {
-			authJSON(w, http.StatusOK, result)
+			httpx.JSON(w, http.StatusOK, result)
 		}
 		return err
 	})
@@ -212,7 +214,7 @@ func (s *spaceReader) routes(mux *http.ServeMux, sessions *webSessions, backend 
 		register("GET /api/space/files/{file}/"+action, func(w http.ResponseWriter, r *http.Request, owner string) error {
 			id := r.PathValue("file")
 			if !taskUUID.MatchString(id) {
-				return notFound
+				return httpx.NotFound
 			}
 			upload, err := s.readableFile(r.Context(), owner, id)
 			if err != nil {
@@ -221,7 +223,7 @@ func (s *spaceReader) routes(mux *http.ServeMux, sessions *webSessions, backend 
 			var location string
 			if action == "preview" {
 				if upload.Size > 256*1024 {
-					return &requestFailure{413, "preview_too_large", "文件超过 256 KiB，无法预览。"}
+					return httpx.NewError(413, "preview_too_large", "文件超过 256 KiB，无法预览。")
 				}
 				location, err = s.storage.preview(r.Context(), spaceObjectKey(id))
 			} else {

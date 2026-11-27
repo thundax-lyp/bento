@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"path/filepath"
 	"testing"
 	"time"
@@ -56,7 +57,7 @@ func TestGoUploadReservationContract(t *testing.T) {
 	if err != nil || replay != row {
 		t.Fatalf("reservation replay: %v, %#v", err, replay)
 	}
-	if _, err := uploads.reserve(ctx, "other", "foreign", input); !errors.Is(err, notFound) {
+	if _, err := uploads.reserve(ctx, "other", "foreign", input); !errors.Is(err, httpx.NotFound) {
 		t.Fatalf("foreign account received wrong error: %v", err)
 	}
 	for _, next := range []uploadReservation{

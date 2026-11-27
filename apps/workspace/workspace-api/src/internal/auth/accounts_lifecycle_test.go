@@ -1,4 +1,4 @@
-package main
+package auth
 
 import (
 	"context"
@@ -27,16 +27,16 @@ func TestOIDCAccountPurgeMySQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	openStore := func() accounts {
+	openStore := func() Store {
 		db := sql.OpenDB(connector)
 		db.SetMaxOpenConns(1)
 		t.Cleanup(func() { _ = db.Close() })
-		return accounts{db: db}
+		return Store{db: db}
 	}
 	first, second := openStore(), openStore()
 	ctx, cancel := context.WithTimeout(t.Context(), 15*time.Second)
 	defer cancel()
-	if err := initializeAccounts(ctx, first.db, ""); err != nil {
+	if err := InitializeAccounts(ctx, first.db, ""); err != nil {
 		t.Fatal(err)
 	}
 	var id [16]byte
@@ -66,7 +66,7 @@ func TestOIDCAccountPurgeMySQL(t *testing.T) {
 	ready := make(chan struct{}, 2)
 	start := make(chan struct{})
 	results := make(chan linkResult, 2)
-	for _, store := range []accounts{first, second} {
+	for _, store := range []Store{first, second} {
 		go func() {
 			ready <- struct{}{}
 			<-start
@@ -88,7 +88,7 @@ func TestOIDCAccountPurgeMySQL(t *testing.T) {
 	if err != nil || count != 1 {
 		t.Fatalf("parallel OIDC binding produced %d rows: %v", count, err)
 	}
-	checkBinding := func(store accounts, claim oidcIdentity, closed bool) {
+	checkBinding := func(store Store, claim oidcIdentity, closed bool) {
 		t.Helper()
 		bound, err := store.linkIdentity(ctx, claim)
 		if err != nil || bound.Owner != owner || bound.Closed != closed || bound.Name != claim.Account {
@@ -111,18 +111,18 @@ func TestOIDCAccountPurgeMySQL(t *testing.T) {
 	if err := first.db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	checkState := func(store accounts, pending bool) {
+	checkState := func(store Store, pending bool) {
 		t.Helper()
 		closed, err := store.accountByOwner(ctx, owner)
 		if err != nil || !closed.Closed {
 			t.Fatalf("OIDC account closure did not persist: %v", err)
 		}
 		checkBinding(store, identity, true)
-		purges, err := store.pendingPurges(ctx)
+		purges, err := store.PendingPurges(ctx)
 		if err != nil {
 			t.Fatal(err)
 		}
-		index := slices.IndexFunc(purges, func(item purge) bool { return item.Owner == owner })
+		index := slices.IndexFunc(purges, func(item Purge) bool { return item.Owner == owner })
 		if pending && (index < 0 || !purges[index].Space) || !pending && index >= 0 {
 			t.Fatal("unexpected persisted cleanup request")
 		}
@@ -138,7 +138,7 @@ func TestOIDCAccountPurgeMySQL(t *testing.T) {
 	}
 	checkState(second, true)
 	for range 2 {
-		if err := second.finishPurge(ctx, owner); err != nil {
+		if err := second.FinishPurge(ctx, owner); err != nil {
 			t.Fatal(err)
 		}
 		checkState(second, false)

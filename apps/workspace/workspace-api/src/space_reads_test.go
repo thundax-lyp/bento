@@ -3,6 +3,8 @@ package main
 import (
 	"database/sql"
 	"errors"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/auth"
+	"github.com/thundax-lyp/bento/apps/workspace/workspace-api/src/internal/httpx"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -51,7 +53,7 @@ func TestSpaceReadsScopeAndDeletion(t *testing.T) {
 		t.Fatalf("unexpected owner overview: %#v", view)
 	}
 	for _, id := range []string{"hidden", "foreign", "pending"} {
-		if _, err := reader.readableFile(t.Context(), "owner", id); !errors.Is(err, notFound) {
+		if _, err := reader.readableFile(t.Context(), "owner", id); !errors.Is(err, httpx.NotFound) {
 			t.Fatalf("file %s should be invisible: %v", id, err)
 		}
 	}
@@ -72,20 +74,16 @@ func TestSpaceReadsScopeAndDeletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity := account{Owner: "owner", Name: "fixture@example.test"}
-	sessions := newWebSessions(oidcTestAccountReader{account: identity}, false, false)
-	cookie, err := sessions.start(httptest.NewRequest(http.MethodGet, "/api/space", nil), identity)
-	if err != nil {
-		t.Fatal(err)
-	}
+	identity := &auth.Session{Owner: "owner", Name: "fixture@example.test"}
+	current := func(*http.Request) (*auth.Session, error) { return identity, nil }
 	mux := http.NewServeMux()
-	reader.routes(mux, sessions, projectService{})
+	reader.routes(mux, current, projectService{})
 	for _, tc := range []struct{ mode, parameter, value string }{
 		{"preview", "response-cache-control", "no-store"},
 		{"download", "response-content-disposition", "attachment; filename*=UTF-8''a.txt"},
 	} {
 		req := httptest.NewRequest(http.MethodGet, "/api/space/files/"+fileID+"/"+tc.mode, nil)
-		req.AddCookie(cookie)
+
 		response := httptest.NewRecorder()
 		mux.ServeHTTP(response, req)
 		location, err := url.Parse(response.Header().Get("Location"))
