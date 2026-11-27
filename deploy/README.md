@@ -77,8 +77,8 @@ PASS 时两项测试通过，零失败、零跳过。三库演练报告三个备
 在独立 Linux/amd64、Node.js 22 环境准备 Docker CLI、Git、官方 SDK/CLI、受控 bootstrap 和私有配置。配置包含独立资源归属、精确镜像 ID、源码提交、Gateway 身份及通过的能力门禁；不接受缺失证明或其他 owner 的资源。DSH 和官方文件/DeepSeek 插件固定 `0.2.1-rc.4`，Cordis 固定 `4.0.5`，按 frozen lockfile 安装。私有配置、凭据、数据库、备份和报告放在仓库外受限目录。T0 在核实 `sourceCommit` 对应的干净源码及受控适配器后，用 `executionSourceDigest(runtimeRoot)` 记录实际执行树的 `sourceTreeSha256`，同时记录宿主配置的 `hostConfigSha256`，适配器清单与 bootstrap 必须位于该执行源码树根目录，随后冻结运行目录。执行入口重新核对实际源码、lockfile、Dockerfile、宿主配置、适配器输出/base/relay 摘要；旧证明不能授权变化后的文件，不能为绕过拒绝而只重算摘要。
 
 ```sh
-BENTO_A7_CONFIG=/absolute/private/case-restart.json node apps/orchestrator/orchestrator-execution-host/acceptance/single-node-restore/run.mjs --case restart
-BENTO_A7_CONFIG=/absolute/private/case-restore.json node apps/orchestrator/orchestrator-execution-host/acceptance/single-node-restore/run.mjs --case restore
+BENTO_A7_CONFIG=/absolute/private/case-restart.json node apps/orchestrator/orchestrator-execution-host/tests/acceptance/single-node-restore/run.mjs --case restart
+BENTO_A7_CONFIG=/absolute/private/case-restore.json node apps/orchestrator/orchestrator-execution-host/tests/acceptance/single-node-restore/run.mjs --case restore
 ```
 
 两个用例分别使用全新业务状态和独立归属。恢复用例停止服务并备份执行账本、授权账本、Session 历史和 Temporal 四个 SQLite 数据库，校验 integrity、外键和 SHA-256，同时归档真实工作区卷并建立独立保全副本。独立数据库快照固定为 DELETE journal mode；校验拒绝未纳入清单的 WAL、SHM 和 journal 文件。恢复前校验绑定和完整清单，仅写入空目标。归档 helper 断网并只读挂载源卷；解包使用受控 root 恢复新卷的文件所有权。无法证明停写、归属冲突、非空目标和损坏备份均拒绝继续。
@@ -217,7 +217,7 @@ SDK 宿主要提供安全重试，须具备 `sdk.decodeExecEvent`、独立的 `o
 
 ```sh
 node --import ./register-paths.mjs \
-  apps/orchestrator/orchestrator-execution-host/acceptance/shared-volume/real.mjs \
+  apps/orchestrator/orchestrator-execution-host/tests/acceptance/shared-volume/real.mjs \
   "$BENTO_A4_HOST_CONFIG" "$BENTO_A4_SDK_RAW" "$BENTO_A4_STATE"
 ```
 
@@ -260,7 +260,7 @@ Temporal UI 位于宿主回环 `18233`，Mailpit 位于 `18494`。Temporal 开�
 pnpm --filter @bento/orchestrator test:temporal-retry
 ```
 
-该入口校验官方 Temporal CLI 1.5.1 archive 并提取工具，运行独立真实 Server 1.29.1。支持平台固定为 Darwin arm64 和 Linux x64，其他平台直接失败。下载来自固定官方 release asset，大小/SHA-256 按[工具锁定](../apps/orchestrator/orchestrator-execution-host/acceptance/temporal-retry/tool.ts)验证；HTTP/1.1 Range 最多 8 分钟/12 次请求，签名 URL 只在内存使用，网络/完整性或任一测试失败均返回非零，不静默 skip。
+该入口校验官方 Temporal CLI 1.5.1 archive 并提取工具，运行独立真实 Server 1.29.1。支持平台固定为 Darwin arm64 和 Linux x64，其他平台直接失败。下载来自固定官方 release asset，大小/SHA-256 按[工具锁定](../apps/orchestrator/orchestrator-execution-host/tests/acceptance/temporal-retry/tool.ts)验证；HTTP/1.1 Range 最多 8 分钟/12 次请求，签名 URL 只在内存使用，网络/完整性或任一测试失败均返回非零，不静默 skip。
 
 本机默认复用仓库外 `../bento-sdk-cache/temporal/1.5.1/<平台架构>/release.tar.gz`，平台目录为 `darwin-arm64` 或 `linux-x64`。归档不存在时从锁定官方来源下载，完成大小、SHA、成员、二进制及版本校验后原子写入缓存；每次命中仍完整核验，损坏时明确失败，不静默换源。设置 `BENTO_A6_TEMPORAL_ARCHIVE` 可优先指定其他仓库外、本平台官方 archive 的绝对路径。CI 按固定版本、平台和 SHA-256 恢复归档缓存，未命中时获取官方资产，命中后仍校验；运行目录及 Temporal 数据库继续独立创建和清理，不删除共享归档。`BENTO_A6_EVIDENCE_DIR` 可指定仓库外私有目录保存脱敏 CaseReport、SQL/文件回执及真实 history；不设置时输出摘要并清理运行状态。
 
@@ -310,7 +310,7 @@ base每轮新Context/SessionStore/provider，回执前依次关闭Agent、root f
 ```sh
 pnpm --filter @bento/orchestrator test:worker-runtime
 pnpm --filter @bento/orchestrator test:worker-reuse
-node apps/orchestrator/orchestrator-execution-host/acceptance/worker-reuse/check-package.mjs
+node apps/orchestrator/orchestrator-execution-host/tests/acceptance/worker-reuse/check-package.mjs
 ```
 
 默认 `soak` 模式成功须五case无skip、64轮四项隔离全通过、跨度至少315秒、同一实际PID，以及撤权/清理失败换PID、同库重开与资源归零。PR CI 显式设置 `BENTO_A6_WORKER_REUSE_MODE=burst`，保留全部64轮与逐轮断言但不补足轮间5秒等待；main CI及本地默认使用 `soak`。本地可在上述命令前设置同名变量复现连续模式，其他值直接失败。诊断输出记录模式、间隔和实际跨度；连续模式通过不能作为长期驻留证据。测试失败按对应case和分项定位，保留失败结论；只清理本次准确拥有的临时资源，不删除其他服务状态。SDK默认走原[官方准备工具](../apps/orchestrator/orchestrator-execution-host/tests/openshell/binding-grants/sdk.ts)及六项schema探针；固定源码revision为`ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47`，TLS/安装和构建预算不变。官方源码归档首次下载并通过固定SHA-256校验后，保存到仓库旁的`../bento-sdk-cache/openshell/<revision>/source.tar.gz`；后续准备逐次复验并复用，npm/Buf下载内容分别缓存在同级`npm/`和`buf/`。每次构建仍使用独立临时目录，清理测试不会删除缓存；源码缓存损坏时明确失败，应先核对原因再删除该版本缓存并重新获取。

@@ -231,7 +231,7 @@ async function proxyCase(shutdown: boolean, signal: AbortSignal) {
             [
                 join(
                     root,
-                    'apps/orchestrator/orchestrator-execution-host/acceptance/temporal-retry/control-proxy.mjs',
+                    'apps/orchestrator/orchestrator-execution-host/tests/acceptance/temporal-retry/control-proxy.mjs',
                 ),
             ],
             {

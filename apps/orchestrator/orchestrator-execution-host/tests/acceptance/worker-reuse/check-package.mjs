@@ -4,11 +4,11 @@ import { log } from 'node:console';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath, URL } from 'node:url';
 
-const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
 const read = (path) =>
     JSON.parse(
         readFileSync(
-            new URL(path, new URL('../../../../../', import.meta.url)),
+            new URL(path, new URL('../../../../../../', import.meta.url)),
             'utf8',
         ),
     );
@@ -105,7 +105,7 @@ const sources = [
         'check-package.mjs',
     ].map(
         (name) =>
-            'apps/orchestrator/orchestrator-execution-host/acceptance/worker-reuse/' +
+            'apps/orchestrator/orchestrator-execution-host/tests/acceptance/worker-reuse/' +
             name,
     ),
 ];

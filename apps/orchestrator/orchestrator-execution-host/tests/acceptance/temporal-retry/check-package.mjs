@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath, URL } from 'node:url';
 import { join } from 'node:path';
 
-const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
 const expectedFiles = [
     'register-paths.mjs',
     'shared/text-snapshot.ts',
@@ -41,7 +41,7 @@ const sources = [
     'check-package.mjs',
 ].map(
     (name) =>
-        'apps/orchestrator/orchestrator-execution-host/acceptance/temporal-retry/' +
+        'apps/orchestrator/orchestrator-execution-host/tests/acceptance/temporal-retry/' +
         name,
 );
 sources.push(

@@ -25,7 +25,7 @@ import {
 } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/command-host.ts';
 
 type File = { path: string; bytes: number; sha256: string };
-const repo = fileURLToPath(new URL('../../../../../', import.meta.url));
+const repo = fileURLToPath(new URL('../../../../../../', import.meta.url));
 const digest = (bytes: Uint8Array) =>
     createHash('sha256').update(bytes).digest('hex');
 const controls: readonly File[] = [

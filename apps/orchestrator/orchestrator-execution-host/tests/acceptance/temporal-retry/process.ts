@@ -8,7 +8,9 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { TemporalTool } from './tool.ts';
 
-export const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+export const root = fileURLToPath(
+    new URL('../../../../../../', import.meta.url),
+);
 type Exit = { code: number | null; signal: NodeJS.Signals | null };
 export type OwnedProcess = { child: ChildProcess; closed: Promise<Exit> };
 const closed = new WeakSet<ChildProcess>();
@@ -558,7 +560,7 @@ export async function startHost(
             '--experimental-strip-types',
             join(
                 root,
-                'apps/orchestrator/orchestrator-execution-host/acceptance/temporal-retry/host.ts',
+                'apps/orchestrator/orchestrator-execution-host/tests/acceptance/temporal-retry/host.ts',
             ),
             configPath,
         ],

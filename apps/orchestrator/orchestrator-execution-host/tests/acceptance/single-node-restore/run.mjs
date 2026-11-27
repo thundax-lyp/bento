@@ -17,7 +17,7 @@ if (
 } else {
     const directory = dirname(fileURLToPath(import.meta.url));
     const registration = fileURLToPath(
-        new URL('../../../../../register-paths.mjs', import.meta.url),
+        new URL('../../../../../../register-paths.mjs', import.meta.url),
     );
     const child = spawn(
         process.execPath,

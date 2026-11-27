@@ -11,7 +11,7 @@ import { after, before, test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
 import { SingleHostExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/openshell/single-host.ts';
-import { prepareReuseSdk } from '@/apps/orchestrator/orchestrator-execution-host/acceptance/worker-reuse/sdk.ts';
+import { prepareReuseSdk } from '@/apps/orchestrator/orchestrator-execution-host/tests/acceptance/worker-reuse/sdk.ts';
 import { remoteSessionPersistence } from './remote-session.ts';
 import { runDshWorker } from './dsh-worker.ts';
 import type { WorkerRequest } from './protocol.ts';
