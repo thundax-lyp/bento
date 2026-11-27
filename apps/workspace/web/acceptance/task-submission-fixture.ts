@@ -10,11 +10,11 @@ import { mockAccounts } from '@/apps/workspace/api/src/account-store.ts';
 import { demoAccounts, sessionAuth } from '@/apps/workspace/api/src/auth.ts';
 import { httpBackend } from '@/apps/workspace/api/src/execution-service-http.ts';
 import { taskEntryServer } from '@/apps/workspace/api/src/server.ts';
-import { mySpace } from '@/apps/workspace/api/src/space.ts';
+import { mySpace } from '@/apps/workspace/api/src/space/index.ts';
 import {
     spaceObjectKey,
     spaceStorage,
-} from '@/apps/workspace/api/src/space-storage.ts';
+} from '@/apps/workspace/api/src/space/storage.ts';
 
 // Identity, saved object bytes and Worker are synthetic; API, freezing and SQLite are production.
 export async function startTaskSubmissionFixture() {

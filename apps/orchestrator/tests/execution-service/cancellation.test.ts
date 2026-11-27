@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
-import { Store } from '@/apps/orchestrator/src/execution-service/store.ts';
+import { Store } from '@/apps/orchestrator/src/execution-service/store/index.ts';
 import {
     type ExecutionHost,
     type WorkerRequest,

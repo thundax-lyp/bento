@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import console from 'node:console';
 import process from 'node:process';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath, URL } from 'node:url';
 import { join, posix } from 'node:path';
@@ -46,6 +46,16 @@ const sources = [
     'real-restore.test.ts',
     'check-package.mjs',
 ].map((name) => 'apps/orchestrator/acceptance/single-node-restore/' + name);
+const storeDirectory = 'apps/orchestrator/src/execution-service/store';
+const storeSources = readdirSync(join(root, storeDirectory), {
+    withFileTypes: true,
+})
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.ts'))
+    .map(({ name }) => storeDirectory + '/' + name);
+assert(
+    storeSources.includes(storeDirectory + '/index.ts'),
+    'Store entry is missing',
+);
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 assert.deepEqual(
     manifest.files,
@@ -62,7 +72,7 @@ assert.deepEqual(publication.patterns, [
 ]);
 assert(Array.isArray(publication.files));
 assert.equal(new Set(publication.files).size, publication.files.length);
-for (const path of sources)
+for (const path of [...sources, ...storeSources])
     assert.equal(
         publication.files.filter((file) => file === path).length,
         1,
@@ -96,6 +106,7 @@ for (const path of [
     'apps/orchestrator/go.mod',
     'apps/orchestrator/src/execution-service/service.ts',
     ...sources,
+    ...storeSources,
 ])
     assert.equal(
         files.filter((file) => file === path).length,
@@ -103,7 +114,7 @@ for (const path of [
         'Expected package source missing: ' + path,
     );
 // Verify package-local source imports, including the backup implementation consumed by tests/driver.
-for (const path of sources) {
+for (const path of [...sources, ...storeSources]) {
     const body = readFileSync(join(root, path), 'utf8');
     for (const match of body.matchAll(
         /(?:from\s+|import\s*\()(['"])([^'"\n]+)\1/g,

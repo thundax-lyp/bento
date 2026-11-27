@@ -3,7 +3,7 @@ import {
     createProject,
     projectsQuery,
 } from '@/apps/workspace/web/src/api.ts';
-import { SpaceList } from '@/apps/workspace/web/src/space.tsx';
+import { SpaceList } from '@/apps/workspace/web/src/space/index.tsx';
 import { Button, Notice } from '@/apps/workspace/web/src/ui.tsx';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { FormEvent } from 'react';

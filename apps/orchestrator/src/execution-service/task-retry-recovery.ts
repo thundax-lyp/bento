@@ -4,7 +4,7 @@ import {
     type VerifiedStopProof,
 } from '../openshell/session-history.ts';
 import { RequestError, textSnapshot } from './input.ts';
-import type { Store } from './store.ts';
+import type { Store } from './store/index.ts';
 import { snapshotSha256 } from './snapshot.ts';
 import {
     TaskRestoreEvidenceConflict,

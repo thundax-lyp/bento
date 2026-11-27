@@ -4,8 +4,8 @@ import { keycloakAuth, WorkspaceAuthArtifactsError } from './oidc.ts';
 import { mockBackend } from './mock.ts';
 import { taskEntryServer } from './server.ts';
 import { httpBackend } from './execution-service-http.ts';
-import { mySpace } from './space.ts';
-import { spaceStorage } from './space-storage.ts';
+import { mySpace } from './space/index.ts';
+import { spaceStorage } from './space/storage.ts';
 
 function positiveInteger(value: string, max: number, label: string): number {
     const result = Number(value);

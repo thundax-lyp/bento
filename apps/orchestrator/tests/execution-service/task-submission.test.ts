@@ -8,7 +8,7 @@ import { test, type TestContext } from 'node:test';
 import {
     Store,
     type TaskInput,
-} from '@/apps/orchestrator/src/execution-service/store.ts';
+} from '@/apps/orchestrator/src/execution-service/store/index.ts';
 import type { RunStatus } from '@/apps/orchestrator/src/execution-service/types.ts';
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');

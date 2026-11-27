@@ -14,8 +14,8 @@ import { httpBackend } from '../src/execution-service-http.ts';
 import { taskEntryServer } from '../src/server.ts';
 import { mockBackend } from '../src/mock.ts';
 import { RequestError } from '../src/protocol.ts';
-import { mySpace } from '../src/space.ts';
-import { spaceObjectKey, spaceStorage } from '../src/space-storage.ts';
+import { mySpace } from '../src/space/index.ts';
+import { spaceObjectKey, spaceStorage } from '../src/space/storage.ts';
 import { noBody, notFound } from './fixtures/space-assertions.ts';
 
 test('project deletion space retains frozen progress and retires object IDs globally', async (t) => {

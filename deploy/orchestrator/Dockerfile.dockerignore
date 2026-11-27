@@ -16,11 +16,14 @@
 !apps/orchestrator/src/control/business.go
 !apps/orchestrator/src/control/temporal.go
 !apps/orchestrator/src/control/run_ledger.go
+!apps/orchestrator/src/control/recovery_owner.go
 !apps/orchestrator/src/ledger/
 !apps/orchestrator/src/ledger/ledger.go
 !apps/orchestrator/src/ledger/tasks.go
 !apps/orchestrator/src/execution-service/
 !apps/orchestrator/src/execution-service/*.ts
+!apps/orchestrator/src/execution-service/store/
+!apps/orchestrator/src/execution-service/store/*.ts
 !apps/orchestrator/src/openshell/
 !apps/orchestrator/src/openshell/*.ts
 !apps/worker/

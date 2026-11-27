@@ -12,7 +12,7 @@ import {
     runPrompt,
 } from './protocol.ts';
 import type { Backend, Operation } from './protocol.ts';
-import type { mySpace } from './space.ts';
+import type { mySpace } from './space/index.ts';
 
 type Options = {
     port: number;

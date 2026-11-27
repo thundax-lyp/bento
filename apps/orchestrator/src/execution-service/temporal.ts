@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import type { Store } from './store.ts';
+import type { Store } from './store/index.ts';
 
 export type TemporalRunOptions = {
     address: string;

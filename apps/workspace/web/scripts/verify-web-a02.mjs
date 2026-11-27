@@ -1,12 +1,20 @@
+import {
+    size,
+    partSize,
+    partCount,
+    uuid,
+    origin,
+    digest,
+    fixtures,
+    verifyExpiredPut,
+    poll,
+} from './web-a02-fixtures.mjs';
+import { verifyQuota } from './web-a02-quota.mjs';
 import assert from 'node:assert/strict';
-import { Buffer } from 'node:buffer';
 import console from 'node:console';
-import dns from 'node:dns/promises';
 import { execFileSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import * as fs from 'node:fs/promises';
-import { request as httpsRequest } from 'node:https';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
@@ -14,128 +22,6 @@ import { clearTimeout, setTimeout } from 'node:timers';
 import { URL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 import { chromium } from '@playwright/test';
-
-const size = 100_000_000;
-const partSize = 16_777_216;
-const partCount = Math.ceil(size / partSize);
-const uuid = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i;
-
-function origin(value) {
-    const url = new URL(value);
-    assert.equal(url.origin, value);
-    assert(
-        url.protocol === 'https:' ||
-            (url.protocol === 'http:' &&
-                ['127.0.0.1', '[::1]', 'localhost'].includes(url.hostname)),
-    );
-    return url.origin;
-}
-
-async function digest(file) {
-    const hash = createHash('sha256');
-    for await (const bytes of createReadStream(file)) hash.update(bytes);
-    return hash.digest('hex');
-}
-
-async function fixtures(directory, size) {
-    const partCount = Math.ceil(size / partSize);
-    const files = [];
-    for (const variant of ['original', 'changed', 'oversize']) {
-        const folder = join(directory, variant);
-        await fs.mkdir(folder, { mode: 0o700 });
-        const file = join(
-            folder,
-            variant === 'oversize' ? 'oversize.bin' : 'web-a02.bin',
-        );
-        const handle = await fs.open(file, 'wx', 0o600);
-        try {
-            await handle.truncate(size + Number(variant === 'oversize'));
-            if (variant !== 'oversize') {
-                for (let i = 0; i < partCount; i++) {
-                    const end = Math.min((i + 1) * partSize, size) - 1;
-                    await handle.write(
-                        Buffer.from([i + 1]),
-                        0,
-                        1,
-                        i * partSize,
-                    );
-                    await handle.write(Buffer.from([255 - i]), 0, 1, end);
-                }
-                if (variant === 'changed') {
-                    await handle.write(Buffer.from([0]), 0, 1, size - 1);
-                }
-            }
-        } finally {
-            await handle.close();
-        }
-        files.push(file);
-    }
-    return files;
-}
-
-async function verifyExpiredPut(url, original, checksum) {
-    const bytes = Buffer.alloc(partSize);
-    const file = await fs.open(original, 'r');
-    try {
-        const { bytesRead } = await file.read(bytes, 0, partSize, partSize);
-        assert.equal(bytesRead, partSize);
-    } finally {
-        await file.close();
-    }
-    assert.equal(createHash('sha256').update(bytes).digest('base64'), checksum);
-    const address = await dns.lookup(new URL(url).hostname, { family: 4 });
-    const { status, body, sent } = await new Promise((resolve, reject) => {
-        let sent = false;
-        const request = httpsRequest(
-            url,
-            {
-                method: 'PUT',
-                signal: globalThis.AbortSignal.timeout(30_000),
-                lookup: (_hostname, options, callback) =>
-                    options.all
-                        ? callback(null, [address])
-                        : callback(null, address.address, address.family),
-                headers: {
-                    Expect: '100-continue',
-                    'content-length': String(bytes.length),
-                    'x-amz-checksum-sha256': checksum,
-                },
-            },
-            (response) => {
-                let body = '';
-                response.setEncoding('utf8');
-                response.on('data', (chunk) => {
-                    if (body.length < 4096) body += chunk;
-                });
-                response.on('error', reject);
-                response.on('end', () =>
-                    resolve({ status: response.statusCode, body, sent }),
-                );
-            },
-        );
-        request.once('continue', () => {
-            sent = true;
-            request.end(bytes);
-        });
-        request.on('error', reject);
-        request.flushHeaders();
-    });
-    console.log('WEB_A02_EXPIRED_NODE_PUT', status, bytes.length, Number(sent));
-    assert(sent, 'expired PUT sent the original block');
-    assert.equal(status, 403);
-    assert.match(body, /<Code>AccessDenied<\/Code>/);
-    assert.match(body, /<Message>[^<]*expired/i);
-}
-
-async function poll(read, accept, timeout = 30_000) {
-    const end = Date.now() + timeout;
-    do {
-        const value = await read();
-        if (accept(value)) return value;
-        await delay(250);
-    } while (Date.now() < end);
-    throw Error('poll timeout');
-}
 
 async function verify(browser) {
     const web = origin(process.env.BENTO_A02_ORIGIN);
@@ -314,130 +200,6 @@ async function verify(browser) {
         assert.equal(body.saved, saved);
         assert.equal(body.reserved, reserved);
         console.log('WEB_A03_USAGE', saved, reserved);
-    }
-
-    async function verifyQuota(original, changed) {
-        const downloadLinks = page.getByRole('link', {
-            name: '下载文件',
-            exact: true,
-        });
-        const second = join(directory, 'second.bin');
-        await fs.rename(changed, second);
-        for (const [index, file] of [original, second].entries()) {
-            await stage('quota save ' + (index + 1));
-            await select(file);
-            await poll(
-                async () => {
-                    assert(Date.now() - lastProgress < 120_000);
-                    return await downloadLinks.count();
-                },
-                (count) => count === index + 1,
-                600_000,
-            );
-            await expectPuts(
-                phase,
-                size,
-                Array.from({ length: partCount }, (_, i) => i + 1),
-            );
-            checkObject('saved', record.uploadIds[index]);
-            await usage((index + 1) * size, 0);
-        }
-        const checksum = createHash('sha256')
-            .update(Buffer.from([0]))
-            .digest('base64');
-        const input = (path, bytes) => ({
-            id: randomUUID(),
-            path,
-            size: bytes,
-            checksums: Array(Math.ceil(bytes / partSize)).fill(checksum),
-        });
-        const start = (payload) => post(projectPath() + '/uploads', payload);
-        const excess = input('excess.bin', 1);
-        record.uploadIds.push(excess.id);
-        await persist();
-        const denied = await start(excess);
-        assert.equal(denied.status, 409);
-        assert.equal(denied.body.error.code, 'space_quota');
-        checkObject('absent', excess.id);
-        await usage(2 * size, 0);
-        console.log('WEB_A03_FULL_QUOTA_OK', 2 * size);
-
-        await stage('quota delete');
-        const [first] = record.uploadIds;
-        const row = page.getByRole('listitem').filter({
-            has: page
-                .getByRole('link', { name: '下载文件' })
-                .and(
-                    page.locator(
-                        'a[href="/api/space/files/' + first + '/download"]',
-                    ),
-                ),
-        });
-        await row
-            .getByRole('button', { name: '删除文件', exact: true })
-            .click();
-        await page
-            .locator('[aria-label="确认删除文件"]')
-            .getByRole('button', { name: '确认删除', exact: true })
-            .click();
-        await poll(
-            () => read('/api/space'),
-            ({ body }) => body?.saved === size,
-        );
-        checkObject('absent', first);
-        await usage(size, 0);
-
-        await stage('quota race');
-        const contenders = [
-            input('race-a.bin', size),
-            input('race-b.bin', size),
-        ];
-        record.uploadIds.push(...contenders.map(({ id }) => id));
-        await persist();
-        const results = await Promise.all(contenders.map(start));
-        assert.deepEqual(
-            results.map(({ status }) => status).sort(),
-            [200, 409],
-        );
-        const winner =
-            contenders[results.findIndex(({ status }) => status === 200)];
-        const loser =
-            contenders[results.findIndex(({ status }) => status === 409)];
-        assert.equal(
-            results.find(({ status }) => status === 409).body.error.code,
-            'space_quota',
-        );
-        checkObject('absent', loser.id);
-        await usage(size, size);
-        await stage('quota cancel');
-        const cancel = await post(
-            '/api/space/uploads/' + winner.id + '/cancel',
-            {},
-        );
-        assert.equal(cancel.status, 200);
-        await poll(
-            () => read('/api/space/uploads/' + winner.id),
-            ({ body }) => body?.state === 'cancelled',
-        );
-        checkObject('absent', winner.id);
-        await usage(size, 0);
-        const reusable = input('reusable.bin', size);
-        record.uploadIds.push(reusable.id);
-        await persist();
-        assert.equal((await start(reusable)).status, 200);
-        await usage(size, size);
-        assert.equal(
-            (await post('/api/space/uploads/' + reusable.id + '/cancel', {}))
-                .status,
-            200,
-        );
-        await poll(
-            () => read('/api/space/uploads/' + reusable.id),
-            ({ body }) => body?.state === 'cancelled',
-        );
-        checkObject('absent', reusable.id);
-        await usage(size, 0);
-        console.log('WEB_A03_CONCURRENT_CANCEL_DELETE_REUSE_OK');
     }
 
     async function sameParts() {
@@ -694,7 +456,22 @@ async function verify(browser) {
         await page.waitForURL(projectUrl);
 
         if (quotaRun) {
-            await verifyQuota(original, changed);
+            await verifyQuota(original, changed, {
+                page,
+                directory,
+                stage,
+                select,
+                progressAt: () => lastProgress,
+                expectPuts,
+                currentPhase: () => phase,
+                checkObject,
+                record,
+                usage,
+                projectPath,
+                persist,
+                post,
+                read,
+            });
             result = true;
         } else if (preflight || downloadOnly) {
             await stage(

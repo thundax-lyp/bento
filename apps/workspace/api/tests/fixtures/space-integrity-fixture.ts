@@ -14,8 +14,8 @@ import { taskEntryServer } from '@/apps/workspace/api/src/server.ts';
 import {
     spaceObjectKey,
     spaceStorage,
-} from '@/apps/workspace/api/src/space-storage.ts';
-import { mySpace } from '@/apps/workspace/api/src/space.ts';
+} from '@/apps/workspace/api/src/space/storage.ts';
+import { mySpace } from '@/apps/workspace/api/src/space/index.ts';
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type Row = Record<string, SQLOutputValue>;

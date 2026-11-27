@@ -1,7 +1,7 @@
 import type { SingleHostExecution } from '../openshell/single-host.ts';
 import { HistoryCheckpointUnavailable } from '../openshell/session-history.ts';
 import { textSnapshot } from './input.ts';
-import type { Store } from './store.ts';
+import type { Store } from './store/index.ts';
 import type { Binding, ExecutionHost } from './types.ts';
 import { snapshotSha256 } from './snapshot.ts';
 type Run = ReturnType<Store['findRun']>;

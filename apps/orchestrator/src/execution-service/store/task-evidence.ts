@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { conflict } from './input.ts';
-import type { FileText } from './types.ts';
-import type { Store } from './store.ts';
+import { conflict } from '../input.ts';
+import type { FileText } from '../types.ts';
+import type { Store } from './index.ts';
 const sha256 = (value: string) =>
     createHash('sha256').update(value).digest('hex');
 const now = () => new Date().toISOString();

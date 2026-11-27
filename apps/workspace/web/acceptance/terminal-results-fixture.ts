@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
 import { serveExecution } from '@/apps/orchestrator/src/execution-service/service.ts';
-import { Store } from '@/apps/orchestrator/src/execution-service/store.ts';
+import { Store } from '@/apps/orchestrator/src/execution-service/store/index.ts';
 import { projectTaskChecks } from '@/apps/worker/task-projection.ts';
 import { mockAccounts } from '@/apps/workspace/api/src/account-store.ts';
 import { demoAccounts, sessionAuth } from '@/apps/workspace/api/src/auth.ts';
