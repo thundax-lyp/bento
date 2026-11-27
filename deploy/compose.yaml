@@ -11,7 +11,7 @@ services:
                 COPY apps/workspace/workspace-api/go.mod apps/workspace/workspace-api/go.sum ./
                 RUN --mount=type=cache,id=bento-go-mod-1.25,target=/go/pkg/mod \
                     go mod download
-                COPY apps/workspace/workspace-api/src/*.go ./src/
+                COPY apps/workspace/workspace-api/src/ ./src/
                 RUN --mount=type=cache,id=bento-go-mod-1.25,target=/go/pkg/mod \
                     --mount=type=cache,id=bento-go-build-1.25,target=/root/.cache/go-build \
                     CGO_ENABLED=0 go build -trimpath -o /out/bento-web-api ./src
