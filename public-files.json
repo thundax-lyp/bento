@@ -323,6 +323,7 @@
         "apps/orchestrator/orchestrator-execution-host/tests/acceptance/worker-reuse/trace.ts",
         "apps/orchestrator/orchestrator-execution-host/src/execution-service/snapshot.ts",
         "apps/orchestrator/orchestrator-execution-host/src/execution-service/store/index.ts",
+        "apps/orchestrator/orchestrator-execution-host/src/execution-service/store/store.ts",
         "apps/orchestrator/orchestrator-execution-host/src/execution-service/store/model.ts",
         "apps/orchestrator/orchestrator-execution-host/src/execution-service/store/projects.ts",
         "apps/orchestrator/orchestrator-execution-host/src/execution-service/store/runs.ts",
