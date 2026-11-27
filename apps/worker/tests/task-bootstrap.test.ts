@@ -6,9 +6,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { runDshWorker, type DshWorkerBootstrap } from './dsh-worker.ts';
-import type { WorkerRequest } from './protocol.ts';
-import bootstrap from './task-bootstrap.ts';
+import { runDshWorker, type DshWorkerBootstrap } from '../src/dsh-worker.ts';
+import type { WorkerRequest } from '../src/protocol.ts';
+import bootstrap from '../src/task-bootstrap.ts';
 
 const request: WorkerRequest = {
     mode: 'execute',
@@ -121,7 +121,9 @@ test('bootstrap resolves only a distinct absolute module and preserves the under
             for (const bad of [
                 '',
                 'fixture.mjs',
-                fileURLToPath(new URL('./task-bootstrap.ts', import.meta.url)),
+                fileURLToPath(
+                    new URL('../src/task-bootstrap.ts', import.meta.url),
+                ),
                 invalid,
             ]) {
                 process.env.BENTO_DSH_BASE_BOOTSTRAP = bad;

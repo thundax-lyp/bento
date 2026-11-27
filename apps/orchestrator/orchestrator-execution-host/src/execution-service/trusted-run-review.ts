@@ -1,4 +1,4 @@
-import { operationId } from '@/apps/worker/protocol.ts';
+import { operationId } from '@/apps/worker/src/protocol.ts';
 import type { SingleHostExecution } from '../openshell/single-host.ts';
 import { unifiedDiff } from './diff.ts';
 import { conflict, textSnapshot } from './input.ts';

@@ -10,7 +10,7 @@ import { createInterface } from 'node:readline';
 import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
 import { SessionId } from '@deepseek-ai/dsh-session';
 import type { TestContext } from 'node:test';
-import type { Grant, WorkerRequest } from '@/apps/worker/protocol.ts';
+import type { Grant, WorkerRequest } from '@/apps/worker/src/protocol.ts';
 
 const repositoryRoot = fileURLToPath(
     new URL('../../../../../../', import.meta.url),

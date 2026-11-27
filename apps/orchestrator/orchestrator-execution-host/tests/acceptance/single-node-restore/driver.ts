@@ -19,7 +19,7 @@ import {
     startServer,
     type TemporalServer,
 } from '@/apps/orchestrator/orchestrator-execution-host/tests/acceptance/temporal-retry/process.ts';
-import type { Binding } from '@/apps/worker/protocol.ts';
+import type { Binding } from '@/apps/worker/src/protocol.ts';
 import { startAcceptanceHost } from './host.ts';
 import {
     backupSqlite,

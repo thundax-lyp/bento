@@ -5,7 +5,7 @@ import { constants } from 'node:fs';
 import { lstat, open, readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, basename } from 'node:path';
 import { promisify } from 'node:util';
-import type { Binding } from '@/apps/worker/protocol.ts';
+import type { Binding } from '@/apps/worker/src/protocol.ts';
 import { requireRecoveryOwner } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/recovery-gate.ts';
 import { restoreSqlite, verifyBackup, type BackupMember } from './backup.ts';
 

@@ -14,7 +14,7 @@ import { test } from 'node:test';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import type { Binding } from '@/apps/worker/protocol.ts';
+import type { Binding } from '@/apps/worker/src/protocol.ts';
 import { backupSqlite } from './backup.ts';
 import { assertSameLedger, readLedger, type Ledger } from './audit.ts';
 import {
@@ -350,7 +350,7 @@ test('execution proof rejects changed live source, host wiring and private adapt
     const digest = (s: string) => createHash('sha256').update(s).digest('hex');
     const files: Record<string, string> = {
         'apps/orchestrator/service.ts': 'export const service = 1;',
-        'apps/worker/worker.ts': 'export const worker = 1;',
+        'apps/worker/src/worker.ts': 'export const worker = 1;',
         'shared/value.ts': 'export const value = 1;',
         'register-paths.mjs': '// loader',
         'package.json': '{}',
@@ -408,14 +408,14 @@ test('execution proof rejects changed live source, host wiring and private adapt
             await writeFile(join(tree, path), body);
         }
         await writeFile(
-            join(tree, 'apps/worker/added.ts'),
+            join(tree, 'apps/worker/src/added.ts'),
             'export const added = 1;',
         );
         await assert.rejects(
             verifyExecutionInputs(config, proof, tree),
             /execution_source_mismatch/,
         );
-        await rm(join(tree, 'apps/worker/added.ts'));
+        await rm(join(tree, 'apps/worker/src/added.ts'));
         await writeFile(config.hostConfig, '{"changed":true}');
         await assert.rejects(
             verifyExecutionInputs(config, proof, tree),

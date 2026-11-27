@@ -7,8 +7,8 @@ import type {
     SessionEvent,
     SessionStore,
 } from '@deepseek-ai/dsh-session';
-import base from '@/apps/worker/base-bootstrap.ts';
-import type { DshWorkerBootstrap } from '@/apps/worker/dsh-worker.ts';
+import base from '@/apps/worker/src/base-bootstrap.ts';
+import type { DshWorkerBootstrap } from '@/apps/worker/src/dsh-worker.ts';
 
 type Runtime = Awaited<ReturnType<DshWorkerBootstrap>>;
 type Target = Awaited<ReturnType<Runtime['ctx']['fs']['resolve']>>;

@@ -26,6 +26,6 @@ COPY apps/orchestrator/orchestrator-execution-host/src/index.ts ./apps/orchestra
 COPY apps/orchestrator/orchestrator-execution-host/src/execution-service/*.ts ./apps/orchestrator/orchestrator-execution-host/src/execution-service/
 COPY apps/orchestrator/orchestrator-execution-host/src/execution-service/store/*.ts ./apps/orchestrator/orchestrator-execution-host/src/execution-service/store/
 COPY apps/orchestrator/orchestrator-execution-host/src/openshell/*.ts ./apps/orchestrator/orchestrator-execution-host/src/openshell/
-COPY apps/worker/*.ts ./apps/worker/
+COPY apps/worker/src/ ./apps/worker/src/
 COPY --from=go-build /out/bento-orchestrator /usr/local/bin/bento-orchestrator
 USER node

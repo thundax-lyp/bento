@@ -150,7 +150,7 @@ node -e 'const {createHash}=require("node:crypto"); const imageDigest=process.en
 
 执行 HTTP API 通过 Compose 网络提供给 Web，使用同一服务 bearer。Worker 的持久化、操作和 SDK 入口仍绑定容器回环。Compose 不向宿主发布执行 HTTP 端口。OpenShell Gateway、模型服务与私有对象存储由部署环境提供。Worker 由受信适配器按任务启动。容器化配置应验证所选适配器可以访问外部服务及独立持久卷。
 
-在私有 `BENTO_HOST_CONFIG` 中设置 `"prewarmWorker": true`，并给 [DSH Worker 入口](../apps/worker/run-worker.ts)传入 `--warm`，即可启用单槽预热。Worker 导入 bootstrap 后进入空闲状态，每次收到 Run 才绑定当次 Session、Workspace 和授权。bootstrap 必须为每次调用创建独立运行时，并在回执前关闭该次运行的 Agent、连接和监听器。bootstrap 模块可预加载依赖，运行数据与授权只放在该次调用内。
+在私有 `BENTO_HOST_CONFIG` 中设置 `"prewarmWorker": true`，并给 [DSH Worker 入口](../apps/worker/src/run-worker.ts)传入 `--warm`，即可启用单槽预热。Worker 导入 bootstrap 后进入空闲状态，每次收到 Run 才绑定当次 Session、Workspace 和授权。bootstrap 必须为每次调用创建独立运行时，并在回执前关闭该次运行的 Agent、连接和监听器。bootstrap 模块可预加载依赖，运行数据与授权只放在该次调用内。
 
 受信适配器需要单独的 Worker 镜像时，通过同一 Compose 构建。受信启动器以交互 stdin/stdout 连接镜像，按环境挂载私有 bootstrap 并设置 `BENTO_DSH_BOOTSTRAP`。镜像工作目录是 `/app/apps/worker`，bootstrap 可挂载到此目录下，以解析镜像中的 Worker 依赖。Worker 的协议包括单次 JSON 请求、`--warm` 模式的逐行请求和回执。
 
@@ -227,7 +227,7 @@ Task 的 execute 请求含可选 `publicEventsUrl`，与当次 grant 一起交�
 
 回调以本轮 DSH 事件的零基索引作 `offset`。每个索引至多一项，按索引递增。回复、步骤和命令使用 `{offset,kind,text}`，检查使用 `{offset,kind:"check",name,status,output}`。检查状态为 passed、failed、not_run 或 unavailable。仅投影用户可见内容，命令只给出脱敏名称，检查输出只给出可公开摘要。禁止输出工具参数、环境变量、原始 DSH 帧或凭据。Worker 每批最多 100 项及 256 KiB，单个 text/output 最多 4096 UTF-8 字节，name 最多 120 字节。空批标记投影完成；发布结果前服务须收到此批。生产 bootstrap 的投影和保密性使用部署场景验收。
 
-使用仓库自带的 Task 投影适配器时，将 `BENTO_DSH_BOOTSTRAP` 指向 `apps/worker/task-bootstrap.ts`，并将 `BENTO_DSH_BASE_BOOTSTRAP` 指向受信私有运行时的容器内绝对路径。私有基运行时在当次 Workspace 和 Session 中执行工具，并在 Session flush 后由 `publicEvents` 提供可公开内容，由 `trustedTaskChecks` 提供已与真实工具调用及结果关联的检查回执。适配器合并两种投影。模型回复、工具参数和私有诊断字段不能充当可信检查回执。
+使用仓库自带的 Task 投影适配器时，将 `BENTO_DSH_BOOTSTRAP` 指向 `apps/worker/src/task-bootstrap.ts`，并将 `BENTO_DSH_BASE_BOOTSTRAP` 指向受信私有运行时的容器内绝对路径。私有基运行时在当次 Workspace 和 Session 中执行工具，并在 Session flush 后由 `publicEvents` 提供可公开内容，由 `trustedTaskChecks` 提供已与真实工具调用及结果关联的检查回执。适配器合并两种投影。模型回复、工具参数和私有诊断字段不能充当可信检查回执。
 
 真实结果交付验收使用 [WEB-A13](../docs/10-requirements/WEB-REQUIREMENTS.md#验收标准)，在已配置 HTTPS、独立测试身份、私有 S3 和真实 DSH/OpenShell Worker 的环境中执行。以受控环境变量提供 `BENTO_WEB_A13_URL` 和 `BENTO_WEB_A13_STORAGE_STATE`，取消设置 `BENTO_WEB_A13_LIST_ONLY`，运行：
 
@@ -285,7 +285,7 @@ node apps/workspace/workspace-web/scripts/verify-web-a02.mjs --quota
 
 ## Worker 正式运行时与复用验证
 
-前置：锁定依赖已安装，部署端已准备与沙盒环境相符的helper/node路径、独立SDK模块及受信模型factory。启动器仍负责容器/进程组隔离、信号与当次授权；Gateway管理凭据和mTLS留在Orchestrator。选择`BENTO_DSH_BOOTSTRAP=/app/apps/worker/base-bootstrap.ts`，将可信只读JSON绝对路径放入`BENTO_DSH_RUNTIME_CONFIG`。该入口导出正式base，既有launcher仍要求显式选择bootstrap。
+前置：锁定依赖已安装，部署端已准备与沙盒环境相符的helper/node路径、独立SDK模块及受信模型factory。启动器仍负责容器/进程组隔离、信号与当次授权；Gateway管理凭据和mTLS留在Orchestrator。选择`BENTO_DSH_BOOTSTRAP=/app/apps/worker/src/base-bootstrap.ts`，将可信只读JSON绝对路径放入`BENTO_DSH_RUNTIME_CONFIG`。该入口导出正式base，既有launcher仍要求显式选择bootstrap。
 
 ```json
 {
@@ -301,7 +301,7 @@ node apps/workspace/workspace-web/scripts/verify-web-a02.mjs --quota
 }
 ```
 
-九项字段均必填；示例helper路径须替换为部署沙盒内实际安装路径。SDK和factory须为Worker内现存绝对文件路径；SDK模块还需提供其锁定运行依赖，单独挂载index.js不足以完成装配；factory可挂载于Worker工程目录以解析其锁定依赖。factory契约见[ModelAdapterFactory](../apps/worker/base-bootstrap.ts)：每次只接收provider/model，返回新的官方LlmAdapter与异步disposer；请求、凭据和取消器按本轮持有，disposer须等待在途请求和连接关闭。禁止跨轮复用adapter或缓冲会话数据，base会拒绝单例。此接口仍依赖部署端信任和审核factory自身实现。
+九项字段均必填；示例helper路径须替换为部署沙盒内实际安装路径。SDK和factory须为Worker内现存绝对文件路径；SDK模块还需提供其锁定运行依赖，单独挂载index.js不足以完成装配；factory可挂载于Worker工程目录以解析其锁定依赖。factory契约见[ModelAdapterFactory](../apps/worker/src/base-bootstrap.ts)：每次只接收provider/model，返回新的官方LlmAdapter与异步disposer；请求、凭据和取消器按本轮持有，disposer须等待在途请求和连接关闭。禁止跨轮复用adapter或缓冲会话数据，base会拒绝单例。此接口仍依赖部署端信任和审核factory自身实现。
 
 base每轮新Context/SessionStore/provider，回执前依次关闭Agent、root fiber、SDK transport和模型资源；清理异常使本轮失败并沿原warm池策略退出补位。recover不创建SDK或模型；Task公共事件投影当前不由此base提供，缺投影的Task请求返回review。实际Task交付仍需满足上文投影与可信检查契约。
 

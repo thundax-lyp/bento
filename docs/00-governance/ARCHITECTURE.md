@@ -18,7 +18,7 @@
 
 - 个人端和管理端各有独立的认证前端、业务前端和 API，分别使用独立的 Keycloak Realm。各端 API 管理业务会话和授权，以内部服务身份调用 Orchestrator。个人端 API 由单个 Go 进程提供 HTTP、认证会话和业务接口，并直接访问 MySQL。
 - 单一 Go Orchestrator 持有 Run 权威账本，负责 Temporal 编排、槽位、Worker 生命周期、执行授权和故障恢复。Temporal 保存编排历史，Orchestrator 管理业务状态。
-- DSH Worker 独立运行，使用当次授权调用 OpenShell 执行接口。受信停启观察、管理凭据和账本写入由 Orchestrator 管理。
+- DSH Worker 独立运行，使用当次授权调用 OpenShell 执行接口。受信停启观察、管理凭据和账本写入由 Orchestrator 管理。Worker 源码位于 `apps/worker/src/`，测试位于 `apps/worker/tests/`。
 
 ## 当前实现接线
 
