@@ -5,7 +5,7 @@ import type { Http2Server, Http2Session } from 'node:http2';
 import { performance } from 'node:perf_hooks';
 import { DatabaseSync } from 'node:sqlite';
 import type { PreparedSdk } from '@/apps/orchestrator/orchestrator-execution-host/tests/openshell/binding-grants/sdk.ts';
-import type { WorkerRequest } from '@/apps/worker/src/protocol.ts';
+import type { WorkerRequest } from '@worker/protocol.ts';
 
 export const sha256 = (value: string | Uint8Array) =>
     createHash('sha256').update(value).digest('hex');

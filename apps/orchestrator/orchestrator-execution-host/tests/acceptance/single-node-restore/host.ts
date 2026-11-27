@@ -1,5 +1,5 @@
-import { commandHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/command-host.ts';
-import { serveExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
+import { commandHost } from '@orchestrator/execution-service/command-host.ts';
+import { serveExecution } from '@orchestrator/execution-service/service.ts';
 
 /** Reuses the production command adapter and execution service without localHost. */
 export async function startAcceptanceHost(options: {

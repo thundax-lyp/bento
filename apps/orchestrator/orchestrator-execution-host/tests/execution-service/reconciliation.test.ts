@@ -4,9 +4,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
-import { serveExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
-import { type ExecutionHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/types.ts';
+import { localHost } from '@orchestrator/execution-service/local.ts';
+import { serveExecution } from '@orchestrator/execution-service/service.ts';
+import { type ExecutionHost } from '@orchestrator/execution-service/types.ts';
 import {
     testToken,
     readme,

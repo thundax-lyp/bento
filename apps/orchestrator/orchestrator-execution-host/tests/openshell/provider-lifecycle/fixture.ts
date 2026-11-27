@@ -14,8 +14,8 @@ import { createUserMessage, type GenerateOptions } from '@deepseek-ai/dsh-llm';
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
 import type { SessionHandle } from '@deepseek-ai/dsh-session-persistence';
 import { createOfficialRuntime } from './runtime.ts';
-import { remoteSessionPersistence } from '@/apps/worker/src/runtime/remote-session.ts';
-import { SingleHostExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/openshell/single-host.ts';
+import { remoteSessionPersistence } from '@worker/runtime/remote-session.ts';
+import { SingleHostExecution } from '@orchestrator/openshell/single-host.ts';
 
 type Row = Record<string, SQLOutputValue>;
 type PersistedSnapshot = {

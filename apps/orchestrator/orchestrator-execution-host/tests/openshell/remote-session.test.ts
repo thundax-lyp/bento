@@ -11,13 +11,13 @@ import { Context } from '@deepseek-ai/cordis';
 import {
     reconcileSessionPersistence,
     remoteSessionPersistence,
-} from '@/apps/worker/src/runtime/remote-session.ts';
+} from '@worker/runtime/remote-session.ts';
 import {
     HistoryCheckpointUnavailable,
     SessionHistory,
     type VerifiedStopProof,
-} from '@/apps/orchestrator/orchestrator-execution-host/src/openshell/session-history.ts';
-import { PersistenceFence } from '@/apps/orchestrator/orchestrator-execution-host/src/openshell/persistence-fence.ts';
+} from '@orchestrator/openshell/session-history.ts';
+import { PersistenceFence } from '@orchestrator/openshell/persistence-fence.ts';
 
 test('reconciliation retries with the same writer after a dropped RPC', async () => {
     const ctx = new Context();

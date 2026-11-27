@@ -10,13 +10,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { promisify } from 'node:util';
-import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
-import { snapshotSha256 } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
+import { localHost } from '@orchestrator/execution-service/local.ts';
+import { snapshotSha256 } from '@orchestrator/execution-service/service.ts';
 import {
     executionBindingDigest,
     type ExecutionHost,
     type WorkerRequest,
-} from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/types.ts';
+} from '@orchestrator/execution-service/types.ts';
 import { until, start } from './fixtures/service.ts';
 
 import { frame, bounded } from '../openshell/binding-grants/fixture.ts';

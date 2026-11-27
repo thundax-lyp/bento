@@ -21,7 +21,7 @@ import {
     operationId,
     reserveOperation,
     writeTaskProjection,
-} from '@/apps/worker/src/protocol.ts';
+} from '@bento/worker/protocol.ts';
 import {
     TaskRestoreEvidenceConflict,
     executionBindingDigest,

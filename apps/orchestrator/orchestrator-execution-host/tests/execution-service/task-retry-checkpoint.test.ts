@@ -5,14 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
-import { Store } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/store/index.ts';
-import { snapshotSha256 } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
+import { localHost } from '@orchestrator/execution-service/local.ts';
+import { Store } from '@orchestrator/execution-service/store/index.ts';
+import { snapshotSha256 } from '@orchestrator/execution-service/service.ts';
 import {
     executionBindingDigest,
     type ExecutionHost,
     type WorkerRequest,
-} from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/types.ts';
+} from '@orchestrator/execution-service/types.ts';
 import { testToken, barrier, until, rpc, start } from './fixtures/service.ts';
 import {
     taskRetryTestClient,

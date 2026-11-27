@@ -1,7 +1,7 @@
-import { mockAccounts } from './src/account-store.ts';
-import { demoAccounts, sessionAuth } from './src/auth.ts';
-import { mockBackend } from './src/mock.ts';
-import { taskEntryServer } from './src/server.ts';
+import { mockAccounts } from '@workspace-api-fixture/account-store.ts';
+import { demoAccounts, sessionAuth } from '@workspace-api-fixture/auth.ts';
+import { mockBackend } from '@workspace-api-fixture/mock.ts';
+import { taskEntryServer } from '@workspace-api-fixture/server.ts';
 
 const port = Number(process.env.BENTO_ONE_PORT ?? 4186);
 const origin = new URL(process.env.BENTO_ONE_ORIGIN ?? 'http://127.0.0.1:4185');

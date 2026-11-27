@@ -1,18 +1,11 @@
-import type {
-    DiffView,
-    TaskRun,
-} from '@/apps/workspace/workspace-web/src/api.ts';
+import type { DiffView, TaskRun } from '@workspace-web/api.ts';
 import {
     ApiError,
     request,
     taskDiffUrl,
     taskResultQuery,
-} from '@/apps/workspace/workspace-web/src/api.ts';
-import {
-    Button,
-    DiffPreview,
-    ReadFailure,
-} from '@/apps/workspace/workspace-web/src/ui.tsx';
+} from '@workspace-web/api.ts';
+import { Button, DiffPreview, ReadFailure } from '@workspace-web/ui.tsx';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { checkLabels } from '../labels.ts';

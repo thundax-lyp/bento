@@ -4,10 +4,10 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
-import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
-import { type WorkerRequest } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/types.ts';
-import { processWorker } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/worker.ts';
-import { reserveOperation } from '@/apps/worker/src/protocol.ts';
+import { localHost } from '@orchestrator/execution-service/local.ts';
+import { type WorkerRequest } from '@orchestrator/execution-service/types.ts';
+import { processWorker } from '@orchestrator/execution-service/worker.ts';
+import { reserveOperation } from '@worker/protocol.ts';
 import { fixtureSdk, rpc, start } from './service.ts';
 
 const testFile = fileURLToPath(import.meta.url);

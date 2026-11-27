@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, test, type Page } from '@playwright/test';
-import type { Task, TaskRun } from '@/apps/workspace/workspace-web/src/api.ts';
+import type { Task, TaskRun } from '@workspace-web/api.ts';
 import { startTaskSubmissionFixture } from './task-submission-fixture.ts';
 
 let fixture: Awaited<ReturnType<typeof startTaskSubmissionFixture>>;

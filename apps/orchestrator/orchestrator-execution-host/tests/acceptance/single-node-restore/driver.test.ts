@@ -14,7 +14,7 @@ import { test } from 'node:test';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import type { Binding } from '@/apps/worker/src/protocol.ts';
+import type { Binding } from '@worker/protocol.ts';
 import { backupSqlite } from './backup.ts';
 import { assertSameLedger, readLedger, type Ledger } from './audit.ts';
 import {

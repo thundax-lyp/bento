@@ -1,4 +1,4 @@
-import { publicTaskEventBatch } from '@/apps/worker/src/protocol.ts';
+import { publicTaskEventBatch } from '@bento/worker/protocol.ts';
 import type { Store } from './store/index.ts';
 import type { WorkerRequest } from './types.ts';
 

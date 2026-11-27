@@ -1,10 +1,6 @@
-import type { Session } from '@/apps/workspace/workspace-web/src/api.ts';
-import {
-    ApiError,
-    logout,
-    sessionQuery,
-} from '@/apps/workspace/workspace-web/src/api.ts';
-import { Button, Notice } from '@/apps/workspace/workspace-web/src/ui.tsx';
+import type { Session } from '@workspace-web/api.ts';
+import { ApiError, logout, sessionQuery } from '@workspace-web/api.ts';
+import { Button, Notice } from '@workspace-web/ui.tsx';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
     Link,

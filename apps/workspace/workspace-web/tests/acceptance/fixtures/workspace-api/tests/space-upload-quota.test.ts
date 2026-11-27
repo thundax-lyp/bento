@@ -3,7 +3,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { spaceObjectKey, spaceStorage } from '../src/space/storage.ts';
+import {
+    spaceObjectKey,
+    spaceStorage,
+} from '@workspace-api-fixture/space/storage.ts';
 import {
     recoveryDownload,
     spaceFixtureOrigin,

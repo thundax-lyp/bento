@@ -1,9 +1,5 @@
-import {
-    ApiError,
-    login,
-    sessionQuery,
-} from '@/apps/workspace/workspace-web/src/api.ts';
-import { Button, Notice } from '@/apps/workspace/workspace-web/src/ui.tsx';
+import { ApiError, login, sessionQuery } from '@workspace-web/api.ts';
+import { Button, Notice } from '@workspace-web/ui.tsx';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import type { FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router';

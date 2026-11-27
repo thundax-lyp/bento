@@ -4,13 +4,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
-import { completedTurn } from '@/apps/worker/src/runtime/dsh-worker.ts';
-import { snapshotSha256 } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
+import { localHost } from '@orchestrator/execution-service/local.ts';
+import { completedTurn } from '@worker/runtime/dsh-worker.ts';
+import { snapshotSha256 } from '@orchestrator/execution-service/service.ts';
 import {
     type ExecutionHost,
     type WorkerRequest,
-} from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/types.ts';
+} from '@orchestrator/execution-service/types.ts';
 import { testToken, barrier, until, start } from './fixtures/service.ts';
 
 test('DSH completion and UNKNOWN use the structured event shapes', () => {

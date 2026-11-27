@@ -1,8 +1,8 @@
-import { Store } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/store/index.ts';
+import { Store } from '@orchestrator/execution-service/store/index.ts';
 import { setTimeout as delay } from 'node:timers/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { TestContext } from 'node:test';
-import { snapshotSha256 } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
+import { snapshotSha256 } from '@orchestrator/execution-service/service.ts';
 import {
     captureBusiness,
     assertOriginal,

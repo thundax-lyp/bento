@@ -9,8 +9,8 @@ import { createInterface } from 'node:readline';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { localEnvironmentVersion } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
-import { commandHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/command-host.ts';
+import { localEnvironmentVersion } from '@orchestrator/execution-service/local.ts';
+import { commandHost } from '@orchestrator/execution-service/command-host.ts';
 import { testToken, client, until } from './fixtures/service.ts';
 import {
     taskRetryTestClient,

@@ -9,25 +9,28 @@ import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
+import { localHost } from '@orchestrator/execution-service/local.ts';
 import {
     serveExecution,
     snapshotSha256,
-} from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
+} from '@orchestrator/execution-service/service.ts';
 import test from 'node:test';
-import { mockAccounts } from '../src/account-store.ts';
-import { sessionAuth } from '../src/auth.ts';
-import { httpBackend } from '../src/execution-service-http.ts';
-import { mockBackend } from '../src/mock.ts';
+import { mockAccounts } from '@workspace-api-fixture/account-store.ts';
+import { sessionAuth } from '@workspace-api-fixture/auth.ts';
+import { httpBackend } from '@workspace-api-fixture/execution-service-http.ts';
+import { mockBackend } from '@workspace-api-fixture/mock.ts';
 import {
     oidcFixtureClient,
     oidcFixtureEmail,
     startOidcFixture,
 } from './fixtures/oidc-fixture.ts';
-import { keycloakAuth } from '../src/oidc.ts';
-import { taskEntryServer } from '../src/server.ts';
-import { mySpace } from '../src/space/index.ts';
-import { spaceObjectKey, spaceStorage } from '../src/space/storage.ts';
+import { keycloakAuth } from '@workspace-api-fixture/oidc.ts';
+import { taskEntryServer } from '@workspace-api-fixture/server.ts';
+import { mySpace } from '@workspace-api-fixture/space/index.ts';
+import {
+    spaceObjectKey,
+    spaceStorage,
+} from '@workspace-api-fixture/space/storage.ts';
 
 test('built auth pages retain the OIDC login, logout and account closure contract', async (t) => {
     const fixture = await startOidcFixture();

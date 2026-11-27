@@ -11,8 +11,8 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
-import { commandHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/command-host.ts';
-import { serveExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
+import { commandHost } from '@orchestrator/execution-service/command-host.ts';
+import { serveExecution } from '@orchestrator/execution-service/service.ts';
 
 const [hostConfig, sdkRaw, state] = process.argv.slice(2);
 assert(

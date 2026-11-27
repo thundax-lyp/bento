@@ -6,19 +6,16 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
-import { mockAccounts } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/account-store.ts';
-import {
-    demoAccounts,
-    sessionAuth,
-} from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/auth.ts';
-import { mockBackend } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/mock.ts';
-import type { Backend } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/protocol.ts';
-import { taskEntryServer } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/server.ts';
+import { mockAccounts } from '@workspace-api-fixture/account-store.ts';
+import { demoAccounts, sessionAuth } from '@workspace-api-fixture/auth.ts';
+import { mockBackend } from '@workspace-api-fixture/mock.ts';
+import type { Backend } from '@workspace-api-fixture/protocol.ts';
+import { taskEntryServer } from '@workspace-api-fixture/server.ts';
 import {
     spaceObjectKey,
     spaceStorage,
-} from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/space/storage.ts';
-import { mySpace } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/space/index.ts';
+} from '@workspace-api-fixture/space/storage.ts';
+import { mySpace } from '@workspace-api-fixture/space/index.ts';
 
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type Row = Record<string, SQLOutputValue>;

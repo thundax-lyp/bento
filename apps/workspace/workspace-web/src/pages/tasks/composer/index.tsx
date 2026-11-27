@@ -3,8 +3,8 @@ import {
     createTask,
     taskListQuery,
     taskUrl,
-} from '@/apps/workspace/workspace-web/src/api.ts';
-import { Button, Notice } from '@/apps/workspace/workspace-web/src/ui.tsx';
+} from '@workspace-web/api.ts';
+import { Button, Notice } from '@workspace-web/ui.tsx';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';

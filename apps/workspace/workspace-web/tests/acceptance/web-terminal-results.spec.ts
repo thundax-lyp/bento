@@ -7,7 +7,7 @@ import type {
     TaskEvent,
     TaskResult,
     TaskRun,
-} from '@/apps/workspace/workspace-web/src/api.ts';
+} from '@workspace-web/api.ts';
 import {
     privateCanary,
     startTerminalResultsFixture,

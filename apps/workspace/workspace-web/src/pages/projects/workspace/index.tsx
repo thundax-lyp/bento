@@ -1,10 +1,6 @@
-import {
-    ApiError,
-    createProject,
-    projectsQuery,
-} from '@/apps/workspace/workspace-web/src/api.ts';
-import { SpaceList } from '@/apps/workspace/workspace-web/src/space/index.tsx';
-import { Button, Notice } from '@/apps/workspace/workspace-web/src/ui.tsx';
+import { ApiError, createProject, projectsQuery } from '@workspace-web/api.ts';
+import { SpaceList } from '@workspace-web/space/index.tsx';
+import { Button, Notice } from '@workspace-web/ui.tsx';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { FormEvent } from 'react';
 import { Link, useOutletContext, useParams } from 'react-router';

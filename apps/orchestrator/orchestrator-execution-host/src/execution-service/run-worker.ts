@@ -1,1 +1,1 @@
-import '@/apps/worker/src/run-worker.ts';
+import '@bento/worker/run-worker.ts';

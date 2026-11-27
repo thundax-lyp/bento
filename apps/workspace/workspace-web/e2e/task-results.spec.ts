@@ -8,9 +8,9 @@ test('Task routes retain idempotency, history, and versioned results across brow
     browser,
     baseURL,
 }) => {
-    type TaskFixture = import('../src/api.ts').Task;
-    type RunFixture = import('../src/api.ts').TaskRun;
-    type EventFixture = import('../src/api.ts').TaskEvent;
+    type TaskFixture = import('@workspace-web/api.ts').Task;
+    type RunFixture = import('@workspace-web/api.ts').TaskRun;
+    type EventFixture = import('@workspace-web/api.ts').TaskEvent;
     const createdAt = new Date().toISOString();
     const sourceId = randomUUID();
     const fileId = randomUUID();
@@ -329,7 +329,7 @@ test('Task terminal result states distinguish empty patches, failures and four c
 }) => {
     const taskId = randomUUID();
     const at = new Date().toISOString();
-    const runs: import('../src/api.ts').TaskRun[] = [
+    const runs: import('@workspace-web/api.ts').TaskRun[] = [
         'succeeded',
         'succeeded',
         'failed',
@@ -339,7 +339,7 @@ test('Task terminal result states distinguish empty patches, failures and four c
         taskId,
         sequence: index + 1,
         prompt: '终态样例' + index,
-        status: status as import('../src/api.ts').TaskRun['status'],
+        status: status as import('@workspace-web/api.ts').TaskRun['status'],
         retryOf: null,
         canContinue: false,
         canCancel: false,
@@ -349,7 +349,7 @@ test('Task terminal result states distinguish empty patches, failures and four c
         createdAt: at,
         updatedAt: at,
     }));
-    const checks: import('../src/api.ts').TaskCheck[] = [
+    const checks: import('@workspace-web/api.ts').TaskCheck[] = [
         { name: '匹配', status: 'passed', output: '安全通过摘要' },
         { name: '不匹配', status: 'failed', output: '安全失败摘要' },
         { name: '跳过', status: 'not_run', output: null },

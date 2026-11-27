@@ -4,9 +4,9 @@ import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { httpBackend } from '../src/execution-service-http.ts';
-import { mockBackend } from '../src/mock.ts';
-import { RequestError } from '../src/protocol.ts';
+import { httpBackend } from '@workspace-api-fixture/execution-service-http.ts';
+import { mockBackend } from '@workspace-api-fixture/mock.ts';
+import { RequestError } from '@workspace-api-fixture/protocol.ts';
 
 test('file delete hold uses the private HTTP methods and validates the receipt', async () => {
     const requests: unknown[] = [];

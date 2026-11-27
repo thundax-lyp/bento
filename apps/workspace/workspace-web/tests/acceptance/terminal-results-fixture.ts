@@ -3,17 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
-import { serveExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
-import { Store } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/store/index.ts';
-import { projectTaskChecks } from '@/apps/worker/src/task/task-projection.ts';
-import { mockAccounts } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/account-store.ts';
-import {
-    demoAccounts,
-    sessionAuth,
-} from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/auth.ts';
-import { httpBackend } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/execution-service-http.ts';
-import { taskEntryServer } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/server.ts';
+import { localHost } from '@orchestrator/execution-service/local.ts';
+import { serveExecution } from '@orchestrator/execution-service/service.ts';
+import { Store } from '@orchestrator/execution-service/store/index.ts';
+import { projectTaskChecks } from '@worker/task/task-projection.ts';
+import { mockAccounts } from '@workspace-api-fixture/account-store.ts';
+import { demoAccounts, sessionAuth } from '@workspace-api-fixture/auth.ts';
+import { httpBackend } from '@workspace-api-fixture/execution-service-http.ts';
+import { taskEntryServer } from '@workspace-api-fixture/server.ts';
 
 // Synthetic execution and identity only. HTTP, DTO mapping and SQLite are production code.
 export const privateCanary = 'synthetic-terminal-private-diagnostic';

@@ -3,9 +3,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { Authority } from '@/apps/orchestrator/orchestrator-execution-host/src/openshell/authority.ts';
-import { SandboxManagement } from '@/apps/orchestrator/orchestrator-execution-host/src/openshell/management.ts';
-import { SingleHostExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/openshell/single-host.ts';
+import { Authority } from '@orchestrator/openshell/authority.ts';
+import { SandboxManagement } from '@orchestrator/openshell/management.ts';
+import { SingleHostExecution } from '@orchestrator/openshell/single-host.ts';
 
 const binding = {
     tenant: 'tenant',

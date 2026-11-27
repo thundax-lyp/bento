@@ -23,7 +23,7 @@ import { SystemPrompt } from '@deepseek-ai/dsh-system-prompt';
 import { ToolRuntime } from '@deepseek-ai/dsh-tools';
 import * as checkpointPolicy from '@deepseek-ai/dsh-session-checkpoint-policy';
 import { SessionOwnershipLostError } from '@deepseek-ai/dsh-session-persistence';
-import type { DshWorkerBootstrap } from '@/apps/worker/src/runtime/dsh-worker.ts';
+import type { DshWorkerBootstrap } from '@worker/runtime/dsh-worker.ts';
 
 type WorkerRuntime = Awaited<ReturnType<DshWorkerBootstrap>>;
 type WorkerAgent = Parameters<WorkerRuntime['flush']>[0];
