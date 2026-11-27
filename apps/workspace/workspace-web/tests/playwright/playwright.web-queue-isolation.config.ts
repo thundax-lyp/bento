@@ -1,7 +1,9 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
-    testDir: './tests/acceptance',
+    testDir: '../acceptance',
+    outputDir: '../../test-results',
     testMatch: '**/web-queue-isolation.spec.ts',
     workers: 1,
     retries: 0,
@@ -15,6 +17,7 @@ export default defineConfig({
     },
     webServer: {
         command: 'pnpm dev --host 127.0.0.1 --port 4364 --strictPort',
+        cwd: fileURLToPath(new URL('../../', import.meta.url)),
         url: 'http://127.0.0.1:4364',
         env: { BENTO_API_TARGET: 'http://127.0.0.1:4363' },
         reuseExistingServer: false,

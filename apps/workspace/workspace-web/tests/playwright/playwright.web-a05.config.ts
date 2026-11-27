@@ -17,7 +17,8 @@ if (
     );
 
 export default defineConfig({
-    testDir: './tests/acceptance',
+    testDir: '../acceptance',
+    outputDir: '../../test-results',
     testMatch: '**/web-a05.spec.ts',
     workers: 1,
     retries: 0,

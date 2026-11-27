@@ -6,7 +6,8 @@ if (configured !== origin && !process.argv.includes('--list'))
     throw new Error('A5 requires its isolated loopback candidate');
 
 export default defineConfig({
-    testDir: './tests/acceptance',
+    testDir: '../acceptance',
+    outputDir: '../../test-results',
     testMatch: 'a5-*.spec.ts',
     workers: 1,
     retries: 0,

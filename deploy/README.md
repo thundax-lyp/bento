@@ -232,10 +232,10 @@ Task 的 execute 请求含可选 `publicEventsUrl`，与当次 grant 一起交�
 真实结果交付验收使用 [WEB-A13](../docs/10-requirements/WEB-REQUIREMENTS.md#验收标准)，在已配置 HTTPS、独立测试身份、私有 S3 和真实 DSH/OpenShell Worker 的环境中执行。以受控环境变量提供 `BENTO_WEB_A13_URL` 和 `BENTO_WEB_A13_STORAGE_STATE`，取消设置 `BENTO_WEB_A13_LIST_ONLY`，运行：
 
 ```sh
-pnpm --filter @bento/workspace-web exec playwright test --config playwright.web-a13.config.ts --workers=1
+pnpm --filter @bento/workspace-web exec playwright test --config tests/playwright/playwright.web-a13.config.ts --workers=1
 ```
 
-该配置仅选择 WEB-A13。WEB-05 独占 runner 使用 `playwright.web05.config.ts` 和对应的 B 环境。
+该配置仅选择 WEB-A13。WEB-05 独占 runner 使用 `tests/playwright/playwright.web05.config.ts` 和对应的 B 环境。
 
 ## Temporal 配置
 
