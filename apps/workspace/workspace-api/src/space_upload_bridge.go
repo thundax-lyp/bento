@@ -13,13 +13,23 @@ import (
 func registerSpaceUploadBridge(mux *http.ServeMux, db *sql.DB, storage *spaceStorage, backend projectService) {
 	service := spaceUploads{db: db, storage: storage, now: time.Now}
 	mux.HandleFunc("POST /internal/space/upload/{action}", func(w http.ResponseWriter, r *http.Request) {
-		if err := service.uploadBridge(w, r, spaceFileDeletion{db: db, storage: storage, hold: backend.fileHold}); err != nil {
+		if err := service.uploadBridge(w, r, spaceFileDeletion{db: db, storage: storage, hold: backend.fileHold},
+			spaceSnapshots{db: db, read: storage.read}); err != nil {
+			var failure *snapshotFailure
+			if errors.As(err, &failure) {
+				body := map[string]any{"code": failure.code, "message": failure.message}
+				if len(failure.Issues) != 0 {
+					body["issues"] = failure.Issues
+				}
+				authJSON(w, failure.status, map[string]any{"error": body})
+				return
+			}
 			authFailure(w, err)
 		}
 	})
 }
 
-func (s spaceUploads) uploadBridge(w http.ResponseWriter, r *http.Request, deletion spaceFileDeletion) error {
+func (s spaceUploads) uploadBridge(w http.ResponseWriter, r *http.Request, deletion spaceFileDeletion, snapshots spaceSnapshots) error {
 	fields, err := readProjectJSON(w, r, 64*1024)
 	if err != nil {
 		return err
@@ -53,6 +63,13 @@ func (s spaceUploads) uploadBridge(w http.ResponseWriter, r *http.Request, delet
 	id, _ := projectString(fields["id"])
 	if !taskUUID.MatchString(id) {
 		return notFound
+	}
+	if action == "freeze-snapshot" {
+		if err := snapshots.freeze(ctx, owner, id); err != nil {
+			return err
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return nil
 	}
 	row, err := loadSpaceUpload(ctx, s.db, id)
 	if errors.Is(err, sql.ErrNoRows) {

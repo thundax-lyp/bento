@@ -1,3 +1,4 @@
+import type { goSpaceUpload } from './index.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { SnapshotIssue as Issue } from './execution.ts';
 import type { DatabaseSync } from 'node:sqlite';
@@ -41,6 +42,7 @@ export function spaceTaskInputs({
     files,
     draining,
     confirmedDraining,
+    goUpload,
 }: {
     db: DatabaseSync;
     backend: Backend;
@@ -52,6 +54,7 @@ export function spaceTaskInputs({
     files: (owner: string, spaceId: string) => Input[];
     draining: ReadonlySet<string>;
     confirmedDraining: ReadonlySet<string>;
+    goUpload?: typeof goSpaceUpload;
 }) {
     db.exec(`
         CREATE TABLE IF NOT EXISTS space_tasks (
@@ -178,6 +181,10 @@ export function spaceTaskInputs({
     }
 
     async function freezeTask(row: TaskIntent) {
+        if (goUpload) {
+            await goUpload('freeze-snapshot', { owner: row.owner, id: row.id });
+            return;
+        }
         const selected = taskFiles(
             row.owner,
             row.spaceId,

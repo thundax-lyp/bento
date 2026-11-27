@@ -54,37 +54,55 @@ const execution = createServer(async (req, res) => {
         for await (const chunk of req) chunks.push(chunk);
         const payload = JSON.parse(chunks.join(''));
         const { name, inputDigest } = payload;
-        if (
-            !req.headers['user-agent']?.startsWith('Go-http-client/') ||
-            req.headers['idempotency-key'] !==
-                '00000000-0000-4000-8000-000000000010' ||
-            name !== 'Smoke Task' ||
-            inputDigest !== createHash('sha256').update('[]').digest('hex') ||
-            payload.id !== null ||
-            payload.sourceSpaceId !== null ||
-            !Array.isArray(payload.inputFiles) ||
-            payload.inputFiles.length !== 0 ||
-            !Array.isArray(payload.inputManifest) ||
-            payload.inputManifest.length !== 0
-        ) {
+        const snapshot = payload.sourceSpaceId !== null;
+        const blank =
+            !snapshot &&
+            req.headers['user-agent']?.startsWith('Go-http-client/') &&
+            req.headers['idempotency-key'] ===
+                '00000000-0000-4000-8000-000000000010' &&
+            name === 'Smoke Task' &&
+            inputDigest === createHash('sha256').update('[]').digest('hex') &&
+            payload.id === null &&
+            Array.isArray(payload.inputFiles) &&
+            payload.inputFiles.length === 0 &&
+            Array.isArray(payload.inputManifest) &&
+            payload.inputManifest.length === 0;
+        const frozen =
+            snapshot &&
+            req.headers['idempotency-key'] ===
+                '00000000-0000-4000-8000-000000000023' &&
+            name === 'Smoke Snapshot' &&
+            payload.sourceSpaceId === '00000000-0000-4000-8000-000000000020' &&
+            JSON.stringify(
+                payload.inputFiles.map(({ path, text }) => ({ path, text })),
+            ) === '[{"path":"empty.txt","text":""}]' &&
+            inputDigest ===
+                createHash('sha256')
+                    .update('[{"path":"empty.txt","text":""}]')
+                    .digest('hex') &&
+            payload.inputManifest[0]?.fileId ===
+                '00000000-0000-4000-8000-000000000022';
+        if (!blank && !frozen) {
             res.writeHead(500).end('{}');
             return;
         }
         res.writeHead(202).end(
             JSON.stringify({
                 task: {
-                    id: '00000000-0000-4000-8000-000000000011',
+                    id: snapshot
+                        ? payload.id
+                        : '00000000-0000-4000-8000-000000000011',
                     name,
                     inputDigest,
-                    sourceSpaceId: null,
+                    sourceSpaceId: payload.sourceSpaceId,
                     environmentVersion: 'sha256:' + '0'.repeat(64),
-                    status: 'preparing',
+                    status: snapshot ? 'ready' : 'preparing',
                     prepareError: null,
                     closedReason: null,
                     reconciliation: null,
                     createdAt: '2026-11-27T00:00:00Z',
                     updatedAt: '2026-11-27T00:00:00Z',
-                    inputs: [],
+                    inputs: payload.inputManifest,
                 },
             }),
         );
@@ -128,7 +146,7 @@ const objectStore = createServer((req, res) => {
         res.writeHead(404).end();
         return;
     }
-    if (req.method === 'HEAD') {
+    if (req.method === 'HEAD' || req.method === 'GET') {
         res.writeHead(emptyUploadWritten ? 200 : 404, {
             'Content-Length': '0',
         }).end();
@@ -692,6 +710,26 @@ async function checkSpaceReads() {
         );
         assert.equal((await finished.json()).state, 'saved');
         assert.ok(emptyUploadWritten);
+        const frozen = await status(
+            request('/api/tasks', {
+                method: 'POST',
+                headers: {
+                    ...uploadHeaders,
+                    'Idempotency-Key': '00000000-0000-4000-8000-000000000023',
+                },
+                body: JSON.stringify({
+                    name: 'Smoke Snapshot',
+                    source: {
+                        kind: 'space_snapshot',
+                        spaceId: project,
+                        fileIds: [emptyFile],
+                    },
+                }),
+            }),
+            202,
+            'Go freezes the uploaded file snapshot',
+        );
+        assert.equal((await frozen.json()).task.sourceSpaceId, project);
         const deleteRequest = () =>
             request('/api/space/files/' + emptyFile, {
                 method: 'DELETE',

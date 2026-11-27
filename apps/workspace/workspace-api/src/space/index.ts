@@ -56,7 +56,8 @@ export async function goSpaceUpload<T>(
         | 'parts'
         | 'sign'
         | 'delete'
-        | 'advance-delete',
+        | 'advance-delete'
+        | 'freeze-snapshot',
     input: object,
 ): Promise<T> {
     const response = await fetch(
@@ -74,7 +75,14 @@ export async function goSpaceUpload<T>(
     const failure = object(object(data).error);
     if (typeof failure.code !== 'string' || typeof failure.message !== 'string')
         throw new Error('Invalid Go upload response');
-    throw new RequestError(response.status, failure.code, failure.message);
+    throw new RequestError(
+        response.status,
+        failure.code,
+        failure.message,
+        Array.isArray(failure.issues)
+            ? (failure.issues as RequestError['issues'])
+            : undefined,
+    );
 }
 
 export function mySpace(
@@ -117,6 +125,7 @@ export function mySpace(
         backend,
         storage.read,
         requireWritableProject,
+        goUpload,
     );
     const active = new Set<string>();
     let sweeping: Promise<void> | undefined;
