@@ -57,7 +57,9 @@ export async function goSpaceUpload<T>(
         | 'sign'
         | 'delete'
         | 'advance-delete'
-        | 'freeze-snapshot',
+        | 'freeze-snapshot'
+        | 'purge-file'
+        | 'purge-metadata',
     input: object,
 ): Promise<T> {
     const response = await fetch(
@@ -767,7 +769,14 @@ export function mySpace(
                     (row.state !== 'saved' && row.signedUntil > Date.now())
                 )
                     return false;
-                await locked(row.id, async () => {
+                const purged = await locked(row.id, async () => {
+                    if (goUpload) {
+                        const result = await goUpload<{ complete: boolean }>(
+                            'purge-file',
+                            { owner, id: row.id },
+                        );
+                        return result.complete;
+                    }
                     if (row.size > 0)
                         await storage.abort(
                             key(row),
@@ -785,7 +794,16 @@ export function mySpace(
                             'DELETE FROM space_uploads WHERE id=? AND owner=?',
                         ).run(row.id, owner);
                     });
+                    return true;
                 });
+                if (!purged) return false;
+            }
+            if (goUpload) {
+                const result = await goUpload<{ complete: boolean }>(
+                    'purge-metadata',
+                    { owner },
+                );
+                return result.complete;
             }
             db.exec('BEGIN IMMEDIATE');
             try {

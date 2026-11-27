@@ -55,7 +55,7 @@ func openSpaceDB(database, mode string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	dsn := url.URL{Scheme: "file", Path: absolute, RawQuery: "mode=" + mode + "&_pragma=busy_timeout(5000)"}
+	dsn := url.URL{Scheme: "file", Path: absolute, RawQuery: "mode=" + mode + "&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"}
 	db, err := sql.Open("sqlite", dsn.String())
 	if err != nil {
 		return nil, err

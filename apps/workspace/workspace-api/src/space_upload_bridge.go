@@ -60,6 +60,14 @@ func (s spaceUploads) uploadBridge(w http.ResponseWriter, r *http.Request, delet
 		authJSON(w, 200, map[string]string{"id": row.ID})
 		return nil
 	}
+	if action == "purge-metadata" {
+		complete, err := s.purgeAccountMetadata(ctx, owner)
+		if err != nil {
+			return err
+		}
+		authJSON(w, http.StatusOK, map[string]bool{"complete": complete})
+		return nil
+	}
 	id, _ := projectString(fields["id"])
 	if !taskUUID.MatchString(id) {
 		return notFound
@@ -82,6 +90,13 @@ func (s spaceUploads) uploadBridge(w http.ResponseWriter, r *http.Request, delet
 		return notFound
 	}
 	switch action {
+	case "purge-file":
+		complete, err := s.purgeAccountObject(ctx, row)
+		if err != nil {
+			return err
+		}
+		authJSON(w, http.StatusOK, map[string]bool{"complete": complete})
+		return nil
 	case "delete":
 		status, err := deletion.request(ctx, owner, id)
 		if err != nil {
