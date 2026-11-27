@@ -279,7 +279,7 @@ importers:
         specifier: 0.1.0-rc.1
         version: 0.1.0-rc.1(152ef9edd9cd0236d610b87115ffe4cf)
 
-  apps/workspace/api:
+  apps/workspace/workspace-api:
     dependencies:
       '@aws-sdk/client-s3':
         specifier: 3.1164.0
@@ -291,9 +291,9 @@ importers:
         specifier: 6.8.9
         version: 6.8.9
 
-  apps/workspace/auth: {}
+  apps/workspace/workspace-auth: {}
 
-  apps/workspace/web:
+  apps/workspace/workspace-web:
     dependencies:
       '@radix-ui/react-slot':
         specifier: ^1.2.4

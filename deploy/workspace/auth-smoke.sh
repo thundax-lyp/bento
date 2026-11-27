@@ -46,9 +46,9 @@ run_smoke() {
         --env BENTO_MYSQL_USER=bento --env BENTO_MYSQL_DATABASE=bento \
         --env BENTO_MYSQL_PASSWORD=fixture-only \
         --mount "type=bind,source=$PWD/deploy/workspace/auth-smoke.mjs,target=/tmp/bento-auth-smoke/auth-smoke.mjs,readonly" \
-        --mount "type=bind,source=$PWD/apps/workspace/api/tests/fixtures/oidc-fixture.ts,target=/tmp/bento-auth-smoke/oidc-fixture.ts,readonly" \
+        --mount "type=bind,source=$PWD/apps/workspace/workspace-api/tests/fixtures/oidc-fixture.ts,target=/tmp/bento-auth-smoke/oidc-fixture.ts,readonly" \
         "$@" --entrypoint node bento-web:local /tmp/bento-auth-smoke/auth-smoke.mjs "$mode"
 }
 
 run_smoke "$prefix-web" --normal
-run_smoke "$prefix-missing" --missing-artifacts --tmpfs /app/apps/workspace/auth/dist
+run_smoke "$prefix-missing" --missing-artifacts --tmpfs /app/apps/workspace/workspace-auth/dist

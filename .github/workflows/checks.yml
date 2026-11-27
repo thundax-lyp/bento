@@ -54,15 +54,15 @@ jobs:
                       while IFS= read -r -d '' path; do
                           case "$path" in
                               *.md|assets/*|public-files.json) ;;
-                              apps/workspace/web/acceptance/web-space-integrity.spec.ts|apps/workspace/web/acceptance/space-integrity-fixture.ts|apps/workspace/web/playwright.web-space-integrity.config.ts)
+                              apps/workspace/workspace-web/acceptance/web-space-integrity.spec.ts|apps/workspace/workspace-web/acceptance/space-integrity-fixture.ts|apps/workspace/workspace-web/playwright.web-space-integrity.config.ts)
                                   workspace=true
                                   space=true
                                   ;;
-                              apps/workspace/web/acceptance/web-queue-isolation.spec.ts|apps/workspace/web/acceptance/queue-*-fixture.ts|apps/workspace/web/playwright.web-queue-isolation.config.ts)
+                              apps/workspace/workspace-web/acceptance/web-queue-isolation.spec.ts|apps/workspace/workspace-web/acceptance/queue-*-fixture.ts|apps/workspace/workspace-web/playwright.web-queue-isolation.config.ts)
                                   workspace=true
                                   queue=true
                                   ;;
-                              apps/workspace/web/e2e/*|apps/workspace/web/playwright.config.ts)
+                              apps/workspace/workspace-web/e2e/*|apps/workspace/workspace-web/playwright.config.ts)
                                   workspace=true
                                   browser=true
                                   ;;
@@ -280,12 +280,12 @@ jobs:
                   # Retain the runner's HTTPS fallback mirrors, excluding slow HTTP entries.
                   sudo sed -i '/^http:\/\//d' /etc/apt/apt-mirrors.txt
                   grep '^https://' /etc/apt/apt-mirrors.txt
-            - run: pnpm --filter @bento/web exec playwright install --with-deps --only-shell chromium
-            - run: pnpm --filter @bento/web test:e2e
+            - run: pnpm --filter @bento/workspace-web exec playwright install --with-deps --only-shell chromium
+            - run: pnpm --filter @bento/workspace-web test:e2e
               if: ${{ needs.changes.outputs.browser == 'true' }}
-            - run: pnpm --filter @bento/web test:space-integrity
+            - run: pnpm --filter @bento/workspace-web test:space-integrity
               if: ${{ needs.changes.outputs.space == 'true' }}
-            - run: pnpm --filter @bento/web test:queue-isolation
+            - run: pnpm --filter @bento/workspace-web test:queue-isolation
               if: ${{ needs.changes.outputs.queue == 'true' }}
 
     temporal:

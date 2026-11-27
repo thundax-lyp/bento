@@ -9,5 +9,5 @@ DRAFT.md
 .idea/
 **/cache/
 
-apps/workspace/web/playwright-report/
-apps/workspace/web/test-results/
+apps/workspace/workspace-web/playwright-report/
+apps/workspace/workspace-web/test-results/

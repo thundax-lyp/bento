@@ -14,9 +14,9 @@
 
 | 目录                                                                                            | 当前职责                                                               |
 | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| [`apps/workspace/auth`](apps/workspace/auth/package.json)                                       | 个人端独立构建的认证页面，由个人端 API 提供                            |
-| [`apps/workspace/web`](apps/workspace/web/README.md)                                            | 个人端 `/` 工作区，包含本地启动和浏览器验收命令                        |
-| [`apps/workspace/api`](apps/workspace/api/README.md)                                            | 个人端 HTTP API，Go 提供入口和 MySQL 账号仓储，TypeScript 处理业务请求 |
+| [`apps/workspace/workspace-auth`](apps/workspace/workspace-auth/package.json)                   | 个人端独立构建的认证页面，由个人端 API 提供                            |
+| [`apps/workspace/workspace-web`](apps/workspace/workspace-web/README.md)                        | 个人端 `/` 工作区，包含本地启动和浏览器验收命令                        |
+| [`apps/workspace/workspace-api`](apps/workspace/workspace-api/README.md)                        | 个人端 HTTP API，Go 提供入口和 MySQL 账号仓储，TypeScript 处理业务请求 |
 | [`apps/orchestrator`](apps/orchestrator/go.mod)                                                 | Go Temporal 编排模块                                                   |
 | [`apps/worker`](apps/worker/run-worker.ts)                                                      | DSH Worker 进程入口                                                    |
 | [`apps/orchestrator/src/execution-service`](apps/orchestrator/src/execution-service/service.ts) | 当前的执行 HTTP 服务和 Run 权威账本                                    |

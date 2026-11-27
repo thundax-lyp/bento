@@ -14,7 +14,7 @@ import {
 
 const origin = 'http://127.0.0.1:8080';
 const accounts = 'http://127.0.0.1:4103/internal/accounts';
-const assets = '/app/apps/workspace/auth/';
+const assets = '/app/apps/workspace/workspace-auth/';
 const missing = process.argv[2] === '--missing-artifacts';
 const subject = 'fixture-subject';
 const fixture = await startOidcFixture();
