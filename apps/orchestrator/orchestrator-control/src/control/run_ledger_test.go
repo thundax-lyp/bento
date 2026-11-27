@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/thundax-lyp/bento/apps/orchestrator/src/ledger"
+	"github.com/thundax-lyp/bento/apps/orchestrator/orchestrator-control/src/ledger"
 )
 
 func TestGoLedgerDispatchRetainsReservationWhenPublishUnconfirmed(t *testing.T) {

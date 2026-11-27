@@ -1,10 +1,10 @@
 FROM golang:1.25-bookworm AS go-build
 WORKDIR /build
-COPY apps/orchestrator/go.mod apps/orchestrator/go.sum ./
+COPY apps/orchestrator/orchestrator-control/go.mod apps/orchestrator/orchestrator-control/go.sum ./
 RUN --mount=type=cache,id=bento-go-mod-1.25,target=/go/pkg/mod \
     go mod download
-COPY apps/orchestrator/src/control/main.go apps/orchestrator/src/control/temporal.go apps/orchestrator/src/control/dispatch.go apps/orchestrator/src/control/authority.go apps/orchestrator/src/control/business.go apps/orchestrator/src/control/run_ledger.go apps/orchestrator/src/control/recovery_owner.go ./src/control/
-COPY apps/orchestrator/src/ledger/ledger.go apps/orchestrator/src/ledger/tasks.go ./src/ledger/
+COPY apps/orchestrator/orchestrator-control/src/control/main.go apps/orchestrator/orchestrator-control/src/control/temporal.go apps/orchestrator/orchestrator-control/src/control/dispatch.go apps/orchestrator/orchestrator-control/src/control/authority.go apps/orchestrator/orchestrator-control/src/control/business.go apps/orchestrator/orchestrator-control/src/control/run_ledger.go apps/orchestrator/orchestrator-control/src/control/recovery_owner.go ./src/control/
+COPY apps/orchestrator/orchestrator-control/src/ledger/ledger.go apps/orchestrator/orchestrator-control/src/ledger/tasks.go ./src/ledger/
 RUN --mount=type=cache,id=bento-go-mod-1.25,target=/go/pkg/mod \
     --mount=type=cache,id=bento-go-build-1.25,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -trimpath -o /out/bento-orchestrator ./src/control

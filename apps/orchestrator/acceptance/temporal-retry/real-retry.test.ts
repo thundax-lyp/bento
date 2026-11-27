@@ -120,7 +120,7 @@ test(
                     './src/control',
                 ],
                 {
-                    cwd: join(root, 'apps/orchestrator'),
+                    cwd: join(root, 'apps/orchestrator/orchestrator-control'),
                     env: {
                         ...process.env,
                         BENTO_TEST_DISPATCH_TEMPORAL_ADDRESS: server.address,

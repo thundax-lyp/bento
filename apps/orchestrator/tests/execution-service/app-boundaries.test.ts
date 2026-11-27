@@ -38,7 +38,9 @@ async function localFixture(t: TestContext): Promise<AppFixture> {
         process.env.BENTO_TEST_GO_CONTROL ?? join(state, 'bento-orchestrator');
     if (!process.env.BENTO_TEST_GO_CONTROL)
         execFileSync('go', ['build', '-o', goControl, './src/control'], {
-            cwd: fileURLToPath(new URL('../../', import.meta.url)),
+            cwd: fileURLToPath(
+                new URL('../../orchestrator-control/', import.meta.url),
+            ),
             timeout: 120_000,
         });
     const options = {

@@ -15,7 +15,9 @@ test('TS commands are persisted by the Go Run ledger controller', async (t) => {
     const binary = join(dir, 'bento-orchestrator');
     const path = join(dir, 'go-runs.sqlite');
     execFileSync('go', ['build', '-o', binary, './src/control'], {
-        cwd: fileURLToPath(new URL('../../', import.meta.url)),
+        cwd: fileURLToPath(
+            new URL('../../orchestrator-control/', import.meta.url),
+        ),
         timeout: 120_000,
     });
     const first = await connectGoRunLedger(path, binary);

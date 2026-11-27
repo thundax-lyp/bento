@@ -365,7 +365,7 @@ export async function buildControl(
         'go',
         ['build', '-mod=readonly', '-o', control, './src/control'],
         {
-            cwd: join(root, 'apps/orchestrator'),
+            cwd: join(root, 'apps/orchestrator/orchestrator-control'),
             env: process.env,
             timeoutMs: 120000,
             signal,
@@ -519,15 +519,9 @@ export async function buildBinaries(
     const probe = join(directory, 'temporal-probe');
     await runCommand(
         'go',
-        [
-            'build',
-            '-mod=readonly',
-            '-o',
-            probe,
-            './acceptance/temporal-retry/probe',
-        ],
+        ['build', '-mod=readonly', '-o', probe, './tests/temporal-probe'],
         {
-            cwd: join(root, 'apps/orchestrator'),
+            cwd: join(root, 'apps/orchestrator/orchestrator-control'),
             env: process.env,
             timeoutMs: 120000,
             signal,

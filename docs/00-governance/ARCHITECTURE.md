@@ -24,7 +24,7 @@
 
 [统一 Compose](../../deploy/compose.yaml)部署个人端、MySQL、Keycloak、PostgreSQL 和 Orchestrator，通过 `admin` profile 启用管理端。开发用 Temporal 与 Mailpit 在同一文件启用。执行服务调用受信 OpenShell 适配器，外部沙盒、模型与对象存储由部署环境提供。
 
-个人端 API 读取独立构建的认证页面和样式。管理端使用独立 Realm 和服务凭据提交 Workspace 诊断。单宿主部署由 Go `business` 与 `authority` 命令执行 Run 与授权账本的权威事务，TS 执行宿主管理 HTTP 和运行适配。当前 TypeScript 执行服务位于 `apps/orchestrator/src/execution-service/`，受信 OpenShell 控制面位于 `apps/orchestrator/src/openshell/`。TypeScript 公共入口保留在 `apps/orchestrator/index.ts`，TypeScript 测试按模块放在 `apps/orchestrator/tests/`。Go Temporal 控制端位于 `apps/orchestrator/src/control/`，同包 Go 测试随控制端源码放置。
+个人端 API 读取独立构建的认证页面和样式。管理端使用独立 Realm 和服务凭据提交 Workspace 诊断。单宿主部署由 Go `business` 与 `authority` 命令执行 Run 与授权账本的权威事务，TS 执行宿主管理 HTTP 和运行适配。当前 TypeScript 执行服务位于 `apps/orchestrator/src/execution-service/`，受信 OpenShell 控制面位于 `apps/orchestrator/src/openshell/`。TypeScript 公共入口保留在 `apps/orchestrator/index.ts`，TypeScript 测试按模块放在 `apps/orchestrator/tests/`。Go Temporal 控制端位于 `apps/orchestrator/orchestrator-control/src/control/`，同包 Go 测试随控制端源码放置。
 
 - Run 编排已接入 Temporal [单执行宿主模式](../../deploy/README.md#temporal-配置)。Temporal 持有调度历史，Bento 在 SQLite 持久化 Run 状态、Session、Workspace 绑定和执行授权。Activity 重投以持久 Run 状态决定派发或恢复。账号身份、密码哈希与注销清理状态使用 MySQL；执行宿主的 Run、Session、Workspace 和授权账本继续使用持久 SQLite。
 - [Web 部署](../../deploy/README.md#启动与检查)由 NGINX 同域提供静态前端并代理 Go Web API 入口。Go 提供 MySQL 账号仓储，TypeScript task-entry 位于 `apps/workspace/workspace-api/src/`，负责业务 API 与会话认证，通过 Node 公开 HTTP API 监听回环地址，对应测试位于 `apps/workspace/workspace-api/tests/`。浏览器直传 S3。

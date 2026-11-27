@@ -35,12 +35,14 @@ const sources = [
     'tool.ts',
     'process.ts',
     'control-proxy.mjs',
-    'probe/main.go',
     'host.ts',
     'evidence.ts',
     'real-retry.test.ts',
     'check-package.mjs',
 ].map((name) => 'apps/orchestrator/acceptance/temporal-retry/' + name);
+sources.push(
+    'apps/orchestrator/orchestrator-control/tests/temporal-probe/main.go',
+);
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 assert.deepEqual(
     manifest.files,
@@ -87,10 +89,10 @@ assert.equal(new Set(files).size, files.length);
 for (const path of [
     'package.json',
     'register-paths.mjs',
-    'apps/orchestrator/src/control/temporal.go',
-    'apps/orchestrator/src/control/dispatch.go',
-    'apps/orchestrator/src/control/dispatch_test.go',
-    'apps/orchestrator/go.mod',
+    'apps/orchestrator/orchestrator-control/src/control/temporal.go',
+    'apps/orchestrator/orchestrator-control/src/control/dispatch.go',
+    'apps/orchestrator/orchestrator-control/src/control/dispatch_test.go',
+    'apps/orchestrator/orchestrator-control/go.mod',
     'apps/orchestrator/src/execution-service/service.ts',
     ...sources,
 ])

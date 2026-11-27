@@ -11,7 +11,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/thundax-lyp/bento/apps/orchestrator/src/ledger"
+	"github.com/thundax-lyp/bento/apps/orchestrator/orchestrator-control/src/ledger"
 	"go.temporal.io/sdk/client"
 	"golang.org/x/sys/unix"
 )

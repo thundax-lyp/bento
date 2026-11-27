@@ -1,4 +1,4 @@
-module github.com/thundax-lyp/bento/apps/orchestrator
+module github.com/thundax-lyp/bento/apps/orchestrator/orchestrator-control
 
 go 1.25.3
 

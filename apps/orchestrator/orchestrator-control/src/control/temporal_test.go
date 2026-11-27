@@ -60,7 +60,7 @@ func TestTemporalRetryAfterCompletedRun(t *testing.T) {
 	cmd := exec.CommandContext(ctx, "node", "--import", "../../register-paths.mjs",
 		"--experimental-strip-types", "--test", "--test-reporter=tap",
 		"--test-name-pattern=^"+name+"$", "tests/execution-service/reconciliation.test.ts")
-	cmd.Dir = "../.."
+	cmd.Dir = "../../.."
 	cmd.Env = append(os.Environ(), "BENTO_TEST_TEMPORAL_BINARY="+binary)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
