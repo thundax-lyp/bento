@@ -8,9 +8,9 @@ import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session';
 import type { AgentHandle } from '@deepseek-ai/dsh-agent';
-import { runDshWorker } from '@/apps/worker/dsh-worker.ts';
-import { remoteSessionPersistence } from '@/apps/worker/remote-session.ts';
-import type { Binding, WorkerRequest } from '@/apps/worker/protocol.ts';
+import { runDshWorker } from '@/apps/worker/src/dsh-worker.ts';
+import { remoteSessionPersistence } from '@/apps/worker/src/remote-session.ts';
+import type { Binding, WorkerRequest } from '@/apps/worker/src/protocol.ts';
 import { SingleHostExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/openshell/single-host.ts';
 import {
     createOfficialRuntime,

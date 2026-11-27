@@ -7,7 +7,7 @@ import { after, before, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import type { PreparedSdk } from '@/apps/orchestrator/orchestrator-execution-host/tests/openshell/binding-grants/sdk.ts';
 import { prepareReuseSdk } from '@/apps/orchestrator/orchestrator-execution-host/tests/acceptance/worker-reuse/sdk.ts';
-import { createRunSdkTransport } from './sdk-transport.ts';
+import { createRunSdkTransport } from '../src/sdk-transport.ts';
 
 let sdk: PreparedSdk;
 let createClient: (run: ReturnType<typeof createRunSdkTransport>) => {

@@ -15,7 +15,7 @@ for (const specifier of ['./api', '../draft.test', '@/shared/text-snapshot']) {
     ]) {
         test(`rejects ${source}`, async () => {
             const [result] = await eslint.lintText(source, {
-                filePath: 'apps/worker/import-probe.ts',
+                filePath: 'apps/worker/src/import-probe.ts',
             });
             assert(result.messages.some((item) => item.message === message));
         });
@@ -30,7 +30,7 @@ test('accepts explicit source and asset extensions and package imports', async (
         type Value = import('./module.ts').Value;
         import 'node:fs'; import '@tanstack/react-query';
     `,
-        { filePath: 'apps/worker/import-probe.ts' },
+        { filePath: 'apps/worker/src/import-probe.ts' },
     );
     assert(!result.messages.some((item) => item.message === message));
 });

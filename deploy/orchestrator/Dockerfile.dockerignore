@@ -32,6 +32,7 @@
 !apps/orchestrator/orchestrator-execution-host/src/openshell/*.ts
 !apps/worker/
 !apps/worker/package.json
-!apps/worker/*.ts
+!apps/worker/src/
+!apps/worker/src/*.ts
 !shared/
 !shared/text-snapshot.ts

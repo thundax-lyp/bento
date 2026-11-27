@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
 import { type WorkerRequest } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/types.ts';
 import { processWorker } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/worker.ts';
-import { reserveOperation } from '@/apps/worker/protocol.ts';
+import { reserveOperation } from '@/apps/worker/src/protocol.ts';
 import { fixtureSdk, rpc, start } from './service.ts';
 
 const testFile = fileURLToPath(import.meta.url);

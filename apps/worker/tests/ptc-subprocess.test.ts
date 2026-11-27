@@ -7,14 +7,14 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { createClient } from '@connectrpc/connect';
 import { prepareReuseSdk } from '@/apps/orchestrator/orchestrator-execution-host/tests/acceptance/worker-reuse/sdk.ts';
-import { createRunSdkTransport } from './sdk-transport.ts';
+import { createRunSdkTransport } from '../src/sdk-transport.ts';
 import {
     openPtcProcess,
     PtcFrameReader,
     ptcFrame,
     ptcFrameBytes,
     type PtcSdk,
-} from './ptc-subprocess.ts';
+} from '../src/ptc-subprocess.ts';
 
 const nonce = Buffer.alloc(16, 1);
 

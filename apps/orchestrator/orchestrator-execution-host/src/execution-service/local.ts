@@ -21,7 +21,7 @@ import {
     operationId,
     reserveOperation,
     writeTaskProjection,
-} from '@/apps/worker/protocol.ts';
+} from '@/apps/worker/src/protocol.ts';
 import {
     TaskRestoreEvidenceConflict,
     executionBindingDigest,

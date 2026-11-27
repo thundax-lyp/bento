@@ -169,13 +169,13 @@ OpenShell Gateway interceptor 的固定源码白名单可以管理部分一元�
 
 ## Worker 正式 base 与每轮资源所有权
 
-[A6-05](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a6-05-bad-case-跨会话池重用)的正式装配入口为[base-bootstrap.ts](../../apps/worker/base-bootstrap.ts)，由既有[run-worker.ts](../../apps/worker/run-worker.ts)加载；预热模式仍每次请求创建新的官方Context、Agent/SessionStore、AgentLoop、checkpoint和OpenShell provider，正常回执后保留进程，review或异常沿原warmSlot策略退出补位。长期复用验收状态以[Readiness](../40-readiness/CURRENT-READINESS.md)为准，源码接线与单轮单测不能代替四项长期隔离证据。
+[A6-05](../10-requirements/APPLICATION-BOUNDARIES-REQUIREMENTS.md#a6-05-bad-case-跨会话池重用)的正式装配入口为[base-bootstrap.ts](../../apps/worker/src/base-bootstrap.ts)，由既有[run-worker.ts](../../apps/worker/src/run-worker.ts)加载；预热模式仍每次请求创建新的官方Context、Agent/SessionStore、AgentLoop、checkpoint和OpenShell provider，正常回执后保留进程，review或异常沿原warmSlot策略退出补位。长期复用验收状态以[Readiness](../40-readiness/CURRENT-READINESS.md)为准，源码接线与单轮单测不能代替四项长期隔离证据。
 
 可信只读配置`BENTO_DSH_RUNTIME_CONFIG`按代码中的BaseBootstrapConfig校验完整字段；SDK模块和模型factory为可信部署文件，tenant/Session/Run/generation/sandbox及grant仅来自本次WorkerRequest。模型factory仅收到provider/model，返回新的官方LlmAdapter和disposer，不能替换ctx/runtime/provider或复用单例；静态WeakSet拒绝重复adapter实例，不强持有其凭据。恢复不创建SDK连接或模型adapter。base没有通用工具目录或publicEvents，Task缺投影沿原Worker门禁返回review，不用空投影冒充结果。
 
-每轮[sdk-transport.ts](../../apps/worker/sdk-transport.ts)只接生产回环`http://127.0.0.1:<port>`，逐请求使用该轮grant，管理凭据和mTLS仍归Orchestrator。官方SandboxClient使用此transport；底层session由Worker显式持有，关闭先拒绝新RPC并以HTTP2 CANCEL结束在途stream，再等真实session close，截止后残留是失败。不能假定固定官方OpenShellClient存在close接口，不能以调用destroy或状态标志代替真实关闭。
+每轮[sdk-transport.ts](../../apps/worker/src/sdk-transport.ts)只接生产回环`http://127.0.0.1:<port>`，逐请求使用该轮grant，管理凭据和mTLS仍归Orchestrator。官方SandboxClient使用此transport；底层session由Worker显式持有，关闭先拒绝新RPC并以HTTP2 CANCEL结束在途stream，再等真实session close，截止后残留是失败。不能假定固定官方OpenShellClient存在close接口，不能以调用destroy或状态标志代替真实关闭。
 
-资源清理按AgentHandle完整dispose→注销adapter→root fiber/provider/持久化清理→SDK关闭→模型disposer依次执行，失败仍尝试其余阶段并聚合错误；回执必须在清理之后。官方factory也持有结构所有权，base先等显式handle清理结算才卸root，沿其共享teardown避免重复关闭。Agent快照保留原事件，仅断言Worker实际消费的turn/end.reason.kind及tool/result.error.code，不改写request/header.reason或伪称全事件类型兼容。单轮与故障清理验证见[base单测](../../apps/worker/base-bootstrap.test.ts)，其中SDK helper/model是受控fixture，不代表真实沙盒文件系统或生产模型。
+资源清理按AgentHandle完整dispose→注销adapter→root fiber/provider/持久化清理→SDK关闭→模型disposer依次执行，失败仍尝试其余阶段并聚合错误；回执必须在清理之后。官方factory也持有结构所有权，base先等显式handle清理结算才卸root，沿其共享teardown避免重复关闭。Agent快照保留原事件，仅断言Worker实际消费的turn/end.reason.kind及tool/result.error.code，不改写request/header.reason或伪称全事件类型兼容。单轮与故障清理验证见[base单测](../../apps/worker/tests/base-bootstrap.test.ts)，其中SDK helper/model是受控fixture，不代表真实沙盒文件系统或生产模型。
 
 长期验收沿[real-reuse.test.ts](../../apps/orchestrator/orchestrator-execution-host/tests/acceptance/worker-reuse/real-reuse.test.ts)正式prewarmedWorker→run-worker --warm→runDshWorkerLoop→runDshWorker→base链路。默认长时模式为1个reference与64测量Session、8tenant同原生PID运行至少315秒；PR CI使用连续模式，保留相同64轮与隔离断言但不主动补足每轮5秒间隔，main CI仍运行长时模式。连续模式仅验证轮次复用，不代替长时间驻留证据。两种模式每轮持久历史/模型请求独立，凭据/监听器/连接/文件namespace分项负测。旧Context事件在下一base创建之前触发，避免当轮合法200ms批次刷盘干扰归属；父端有界IPC与真实server计数同时覆盖SDK/模型及persistence/operation，整轮与轮间继续查迟到旧身份请求。观测包装不替代生产清理。
 

@@ -6,7 +6,7 @@ import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SingleHostExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/openshell/single-host.ts';
-import type { Binding, Grant } from '@/apps/worker/protocol.ts';
+import type { Binding, Grant } from '@/apps/worker/src/protocol.ts';
 import { snapshot } from './state.ts';
 
 export type Actor = 'A' | 'B';

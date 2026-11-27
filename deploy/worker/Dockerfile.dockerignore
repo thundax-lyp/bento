@@ -6,4 +6,5 @@
 !apps/
 !apps/worker/
 !apps/worker/package.json
-!apps/worker/*.ts
+!apps/worker/src/
+!apps/worker/src/*.ts

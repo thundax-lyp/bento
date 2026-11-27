@@ -6,7 +6,7 @@ import { mkdtemp, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import type { Binding } from '@/apps/worker/protocol.ts';
+import type { Binding } from '@/apps/worker/src/protocol.ts';
 import {
     assertSameInventory,
     backupWorkspace,

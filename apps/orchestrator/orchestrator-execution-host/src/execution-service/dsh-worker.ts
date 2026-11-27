@@ -1,1 +1,1 @@
-export * from '@/apps/worker/dsh-worker.ts';
+export * from '@/apps/worker/src/dsh-worker.ts';

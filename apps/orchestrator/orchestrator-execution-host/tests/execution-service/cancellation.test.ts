@@ -10,7 +10,7 @@ import {
     type ExecutionHost,
     type WorkerRequest,
 } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/types.ts';
-import { reserveOperation } from '@/apps/worker/protocol.ts';
+import { reserveOperation } from '@/apps/worker/src/protocol.ts';
 import {
     barrier,
     client,

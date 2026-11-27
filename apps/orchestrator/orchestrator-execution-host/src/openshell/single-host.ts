@@ -1,4 +1,4 @@
-import { maxTaskEventBatchBytes } from '@/apps/worker/protocol.ts';
+import { maxTaskEventBatchBytes } from '@/apps/worker/src/protocol.ts';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { Authority } from './authority.ts';

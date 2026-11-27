@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { SingleHostExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/openshell/single-host.ts';
-import type { Binding } from '@/apps/worker/protocol.ts';
+import type { Binding } from '@/apps/worker/src/protocol.ts';
 
 test('reopening a single-host ledger preserves existing Session bindings', async (t) => {
     const path = await mkdtemp(join(tmpdir(), 'bento-existing-volume-'));
