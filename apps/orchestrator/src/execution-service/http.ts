@@ -21,7 +21,7 @@ import {
     diagnosticPrompt,
     type AdminDiagnostics,
 } from './admin-diagnostics.ts';
-import type { ProjectDeletionReceipt, Store } from './store.ts';
+import type { ProjectDeletionReceipt, Store } from './store/index.ts';
 
 const digest = (value: string) => createHash('sha256').update(value).digest();
 const maxProjectBody = 6 * 1024 * 1024 + 3 * 1024 * 1024;

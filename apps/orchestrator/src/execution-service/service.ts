@@ -12,7 +12,7 @@ import { unifiedDiff } from './diff.ts';
 import { executionHttp, RetryUnavailable } from './http.ts';
 import { conflict, missing, textSnapshot } from './input.ts';
 import { snapshotSha256 } from './snapshot.ts';
-import { projectBinding, Store, type ProjectDeletionReceipt } from './store.ts';
+import { projectBinding, Store, type ProjectDeletionReceipt } from './store/index.ts';
 import { taskRetryRecovery } from './task-retry-recovery.ts';
 import { taskRunViews } from './task-run-view.ts';
 import type { TemporalRunOptions, temporalRuns } from './temporal.ts';

@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
-import { Store } from '@/apps/orchestrator/src/execution-service/store.ts';
+import { Store } from '@/apps/orchestrator/src/execution-service/store/index.ts';
 import { snapshotSha256 } from '@/apps/orchestrator/src/execution-service/service.ts';
 import {
     executionBindingDigest,

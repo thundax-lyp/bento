@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { executionHttp } from '@/apps/orchestrator/src/execution-service/http.ts';
 import { dockerOpenShellPurge } from '@/apps/orchestrator/src/execution-service/docker-openshell-purge.ts';
 import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
-import { Store } from '@/apps/orchestrator/src/execution-service/store.ts';
+import { Store } from '@/apps/orchestrator/src/execution-service/store/index.ts';
 import { serveExecution } from '@/apps/orchestrator/src/execution-service/service.ts';
 import {
     type Binding,
