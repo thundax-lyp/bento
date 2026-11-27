@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { assertCandidatePaths } from './run.mjs';
 
-const spec = 'apps/workspace/web/acceptance/web-a10.spec.ts';
+const spec = 'apps/workspace/workspace-web/acceptance/web-a10.spec.ts';
 
 test('accepts a candidate with no changed paths', () => {
     assert.doesNotThrow(() => assertCandidatePaths([]));

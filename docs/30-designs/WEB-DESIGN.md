@@ -8,7 +8,7 @@
 
 ## Web 组件树
 
-路由由 `apps/workspace/web/src/main.tsx` 注册。Task 与执行项目 Run 各有详情入口。
+路由由 `apps/workspace/workspace-web/src/main.tsx` 注册。Task 与执行项目 Run 各有详情入口。
 
 ```text
 个人端 Web
@@ -170,7 +170,7 @@ Task 使用稳定详情地址，按事件 sequence 恢复历史和持续读取�
 - 新私有 `POST /v1/task-sources/{spaceId}/files/{fileId}/deletion-holds/{operationId}` 取 hold，`DELETE` 释放，同源路由只由 Space 调用，认证使用 Bearer + 可信 owner header。两者都无正文，不再额外需要 K。可选 `legacyProjectId=<id>` 仅来自 Space 的既有已验证文件关联。二者均回 `200 {state:"held"|"denied"|"released"}`，scope 或关联不符为 404，原键更改 legacyProjectId 为 409 idempotency_conflict。
 - Store `task_input_delete_holds(owner,spaceId,fileId,operationId,legacyProjectId,state)` 的主键为前四字段，legacyProjectId 可空，state 为 held/denied/released。acquireTaskInputDeleteHold 的 Store.write 先回读同 owner/source/file/key receipt，关联字段变化报 409 idempotency_conflict。新取时总按 (owner,spaceId) 检查 source deletion，无需 legacyProjectId。source 为 held/committing 时记 denied 并回 200 denied，已 deleted 时回 404 not_found；owner 已 drain 时回 409 owner_closed。再校验请求给出的旧项目 owner 及原项目门禁，并检查引用该文件的 Task 是否 preparing、有活跃 Run 或持门禁的 retry attempt。任一引用繁忙则持久 denied，否则持久 held。项目取门禁也在同一 Store.write 检查该 source 的 held 文件门禁，故两个动作按同账本事务提交顺序线性化。
 - Space 在保存 checking 前于空间 SQLite 验证 owner/space/file、saved 状态和 pin。受信调用经此验证，Orchestrator 以 header owner 限定查询；零 Task 引用且无 legacyProjectId 是有效空集合，走同一 source/owner 检查并在无阻断时持久 held。held 期间引用该文件的 Task 新 Run、retry 和重准备，以及关联旧项目写入均拒绝 project_busy。不相关文件无影响。同键重放已有 held/denied/released 在 owner drain 后照常回原状态。release 先回读同键，held 转 released，denied/released 回 released；缺记录写 released tombstone（source 已删回 404），迟到的 acquire 不能复活。release 允许已 drain 的 owner 收敛原操作。
-- `apps/workspace/api/src/space/file-deletion.ts` 中 `deleteFile` 的 SQLite 事务先检查 pin，再保存原 `space_file_deletions` receipt 为 checking，即使无旧执行项目也发新 hold。快照创建只接受没有删除 receipt 的已保存文件。若已有 pin，则拒绝删除，不派发 hold。若已有 checking，则拒绝新来源 pin。先入队时，hold 被拒绝并保留原文件；先取 hold 时，入队拒绝。活跃引用门禁由持久 Run/attempt 状态派生，终态原子解除，无内存计数。Space 在 held 后进入 deleting，确认对象已删除才进入 releasing，原键 release 确认后持久 deleted。任一回包未知按同一 receipt 和 phase 续作；未确认取 hold 前不得删对象。denied 后回收 checking intent 并返回 project_busy。新取明确收到 owner_closed 或 not_found 时也回收 checking intent 并转发对应错误，保留对象且不发送 release；未知结果继续原键查询。终态后删源文件，不影响未来从已冻副本续聊。
+- `apps/workspace/workspace-api/src/space/file-deletion.ts` 中 `deleteFile` 的 SQLite 事务先检查 pin，再保存原 `space_file_deletions` receipt 为 checking，即使无旧执行项目也发新 hold。快照创建只接受没有删除 receipt 的已保存文件。若已有 pin，则拒绝删除，不派发 hold。若已有 checking，则拒绝新来源 pin。先入队时，hold 被拒绝并保留原文件；先取 hold 时，入队拒绝。活跃引用门禁由持久 Run/attempt 状态派生，终态原子解除，无内存计数。Space 在 held 后进入 deleting，确认对象已删除才进入 releasing，原键 release 确认后持久 deleted。任一回包未知按同一 receipt 和 phase 续作；未确认取 hold 前不得删对象。denied 后回收 checking intent 并返回 project_busy。新取明确收到 owner_closed 或 not_found 时也回收 checking intent 并转发对应错误，保留对象且不发送 release；未知结果继续原键查询。终态后删源文件，不影响未来从已冻副本续聊。
 
 #### blocked 重试的可信结案
 
@@ -199,7 +199,7 @@ Task 使用稳定详情地址，按事件 sequence 恢复历史和持续读取�
 
 - 服务端从 Cookie 解析 owner，并校验空间项目、文件、执行项目和 Run 的关系。错误、操作日志及远端验收记录不记录邀请码、签名 URL、私有路径和原始用户文件。空间和执行的持久状态保留稳定 ID 供对账。
 - 针对运维记录上传和初始化阶段、重试次数、预占字节、删除待清理时长和稳定错误分类。任务仍使用执行侧的 Run ID 与状态对账。
-- 真实部署保留现有 Origin 校验、HTTPS 和私有桶。对象存储凭证及执行服务凭证仅供任务入口使用。配置见 [任务入口说明](../../apps/workspace/api/README.md)。
+- 真实部署保留现有 Origin 校验、HTTPS 和私有桶。对象存储凭证及执行服务凭证仅供任务入口使用。配置见 [任务入口说明](../../apps/workspace/workspace-api/README.md)。
 
 ## 验收
 
@@ -288,7 +288,7 @@ Task 使用稳定详情地址，按事件 sequence 恢复历史和持续读取�
 ### 安全与可观测性
 
 - 使用私有桶和最小权限存储凭据。账号和父子资源关系由服务端校验。越权访问使用与资源不存在一致的响应。下载、预览和传输签名只为已授权的单个对象或分块发放。
-- 对象存储 CORS 限制到 Web origin、分块 PUT 所需方法和请求头。文本预览使用同一 Web origin 的受控 GET。反向代理保留 Origin，部署使用 HTTPS。配置见 [个人端 API](../../apps/workspace/api/README.md)。
+- 对象存储 CORS 限制到 Web origin、分块 PUT 所需方法和请求头。文本预览使用同一 Web origin 的受控 GET。反向代理保留 Origin，部署使用 HTTPS。配置见 [个人端 API](../../apps/workspace/workspace-api/README.md)。
 - 诊断按上传 ID、项目 ID、状态、失败类别、预占量和滞留时长定位。目标监控覆盖过期清理积压、合并对账失败和额度不一致。日志省略签名 URL、凭据和用户文件内容。
 
 ### 验收
@@ -315,7 +315,7 @@ Task 使用稳定详情地址，按事件 sequence 恢复历史和持续读取�
 
 ## 源码职责与监听生命周期
 
-个人端 API 的 `http-listener.ts` 通过 Node 公开 API 在创建监听器时设置接收期限；`server.ts` 保持认证、路由与账号清理协调职责。关闭监听后，未完成请求仍受接收期限约束，完整请求等待处理结束。空间 API 入口位于 `apps/workspace/api/src/space/index.ts`。同目录的 `project-deletion.ts` 共用入口提供的连接、事务和执行来源服务。空间页面和上传规划位于 `apps/workspace/web/src/space/`。
+个人端 API 的 `http-listener.ts` 通过 Node 公开 API 在创建监听器时设置接收期限；`server.ts` 保持认证、路由与账号清理协调职责。关闭监听后，未完成请求仍受接收期限约束，完整请求等待处理结束。空间 API 入口位于 `apps/workspace/workspace-api/src/space/index.ts`。同目录的 `project-deletion.ts` 共用入口提供的连接、事务和执行来源服务。空间页面和上传规划位于 `apps/workspace/workspace-web/src/space/`。
 
 Orchestrator 的 `service.ts` 组合执行服务。`task-retry-recovery.ts` 管理 Task 停止证据复验与恢复推进；`task-run-view.ts` 生成 Task Run 视图及重试原因。`store/index.ts` 提供执行账本入口，`store/task-evidence.ts` 负责证据、检查点和关闭审计，复用 Store 的 SQLite 连接及事务函数，不引入独立数据库或事务边界。
 

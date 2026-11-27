@@ -4,13 +4,13 @@
 
 ## WEB-A08 实栈证据
 
-2026-11-18，B 独占 Compose 候选 `ff15b38` 使用真实 DeepSeek 和 OpenShell。[Chromium 验收配置](../../../apps/workspace/web/playwright.web-a08.config.ts)随 `d062a90` 提交，在隔离 Chromium 容器运行 `node node_modules/@playwright/test/cli.js test --config playwright.web-a08.config.ts --reporter=line --output=/tmp/web-a08`，1/1 通过。
+2026-11-18，B 独占 Compose 候选 `ff15b38` 使用真实 DeepSeek 和 OpenShell。[Chromium 验收配置](../../../apps/workspace/workspace-web/playwright.web-a08.config.ts)随 `d062a90` 提交，在隔离 Chromium 容器运行 `node node_modules/@playwright/test/cli.js test --config playwright.web-a08.config.ts --reporter=line --output=/tmp/web-a08`，1/1 通过。
 
 三位受邀用户顺序从 Web 上传各自的文本项目并提交。三次原 Run 均在关页时仍处于排队状态，随后在后台成功。重新登录后，三人各自从任务列表找回同一 Run，补丁预览与下载字节一致，应用到各自原文件后与预期内容一致。六个有向跨账号组合读取任务、Run、结果和补丁均返回 404。1 MiB + 1 字节的文本可保存并按原字节下载，选作任务输入时返回 413，页面显示 1 MiB 限制。
 
 ## WEB-A09 队列与上传隔离证据
 
-2026-11-19，以生产基线 `abfc850`、fixture提交 `681a527`、完整场景提交 `da0e51c`、CI接线提交 `c28f431` 验证。`pnpm --filter @bento/web test:queue-isolation` Chromium 1/1通过（T4场景9.8秒，命令10.9秒），无skip。三个独立浏览器context真实邀请注册、密码登录和cookie会话，经过生产 taskEntryServer → httpBackend → Orchestrator HTTP → Store/SQLite；mySpace使用独立SQLite，受控签名对象HTTP实际接收PUT并将分块与合并对象落盘。执行使用生产localHost和可释放gate，直接统计实际worker进入/退出并与SQLite槽位查询对照，不以HTTP受理替代执行证据。未修改生产实现。
+2026-11-19，以生产基线 `abfc850`、fixture提交 `681a527`、完整场景提交 `da0e51c`、CI接线提交 `c28f431` 验证。`pnpm --filter @bento/workspace-web test:queue-isolation` Chromium 1/1通过（T4场景9.8秒，命令10.9秒），无skip。三个独立浏览器context真实邀请注册、密码登录和cookie会话，经过生产 taskEntryServer → httpBackend → Orchestrator HTTP → Store/SQLite；mySpace使用独立SQLite，受控签名对象HTTP实际接收PUT并将分块与合并对象落盘。执行使用生产localHost和可释放gate，直接统计实际worker进入/退出并与SQLite槽位查询对照，不以HTTP受理替代执行证据。未修改生产实现。
 
 - **租户容量与拒绝原子性**：配置单执行槽、每租户排队上限2。A0实际running，A1/A2 queued，A3页面提交429 `tenant_queue_full`；A的Run=3、user_message=3、创建receipt=4、retryAttempt=0及worker进入历史均不变，原Task与输入仍可见。B/C从各自页面提交各202、各queued1，跨账号读取Task/Run均404。运行Run占执行槽，queued Run及既有接口规定的未完成retry预留计排队容量；本场景没有制造retry预留。
 - **容量复用与幂等**：满额时原A1键重放200、原Run不变；释放A0后A1实际进入，A队列降为1，原A3被拒绝键首次受理202，随后同键重放200、异正文409 `idempotency_conflict`。A3恰1个Run/1条user_message。最后A=4、B=1、C=1共6个Run全部succeeded、每Run实际进入worker恰一次、peakWorkers=1、最终activeWorkers/occupied/queued全0。

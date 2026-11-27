@@ -23,10 +23,10 @@ const root = fileURLToPath(
 const leasePath = join(root, 'lease.json');
 const project = 'bento-worker-a-web-a10';
 const candidates = [
-    'apps/workspace/web/src/pages/tasks/details/index.tsx',
-    'apps/workspace/web/playwright.web-a10.config.ts',
-    'apps/workspace/web/acceptance/web-a10.spec.ts',
-    'apps/workspace/web/acceptance/web-a10-hook.ts',
+    'apps/workspace/workspace-web/src/pages/tasks/details/index.tsx',
+    'apps/workspace/workspace-web/playwright.web-a10.config.ts',
+    'apps/workspace/workspace-web/acceptance/web-a10.spec.ts',
+    'apps/workspace/workspace-web/acceptance/web-a10-hook.ts',
     'apps/orchestrator/acceptance/web-a10/run.mjs',
     'apps/orchestrator/acceptance/web-a10/run.test.mjs',
 ];

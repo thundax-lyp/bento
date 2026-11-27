@@ -1,8 +1,8 @@
 packages:
     - apps/orchestrator
-    - apps/workspace/api
-    - apps/workspace/auth
-    - apps/workspace/web
+    - apps/workspace/workspace-api
+    - apps/workspace/workspace-auth
+    - apps/workspace/workspace-web
     - apps/worker
 
 allowBuilds:

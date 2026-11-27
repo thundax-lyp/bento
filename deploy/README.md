@@ -232,7 +232,7 @@ Task 的 execute 请求含可选 `publicEventsUrl`，与当次 grant 一起交�
 真实结果交付验收使用 [WEB-A13](../docs/10-requirements/WEB-REQUIREMENTS.md#验收标准)，在已配置 HTTPS、独立测试身份、私有 S3 和真实 DSH/OpenShell Worker 的环境中执行。以受控环境变量提供 `BENTO_WEB_A13_URL` 和 `BENTO_WEB_A13_STORAGE_STATE`，取消设置 `BENTO_WEB_A13_LIST_ONLY`，运行：
 
 ```sh
-pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config.ts --workers=1
+pnpm --filter @bento/workspace-web exec playwright test --config playwright.web-a13.config.ts --workers=1
 ```
 
 该配置仅选择 WEB-A13。WEB-05 独占 runner 使用 `playwright.web05.config.ts` 和对应的 B 环境。
@@ -273,10 +273,10 @@ pnpm --dir apps/orchestrator test:temporal-retry
 在同一独立开发栈独占测试账号，确认 Web 和私有对象存储均可从 Chromium 访问。使用空测试空间，服务端应返回 100,000,000 字节单文件上限、200,000,000 字节账号额度及 16 MiB 分块。按顺序运行：
 
 ```sh
-node apps/workspace/web/scripts/verify-web-a02.mjs --check
-node apps/workspace/web/scripts/verify-web-a02.mjs --small
-node apps/workspace/web/scripts/verify-web-a02.mjs
-node apps/workspace/web/scripts/verify-web-a02.mjs --quota
+node apps/workspace/workspace-web/scripts/verify-web-a02.mjs --check
+node apps/workspace/workspace-web/scripts/verify-web-a02.mjs --small
+node apps/workspace/workspace-web/scripts/verify-web-a02.mjs
+node apps/workspace/workspace-web/scripts/verify-web-a02.mjs --quota
 ```
 
 通过受控环境注入 Web 和存储 origin（`BENTO_A02_ORIGIN`、`BENTO_A02_STORAGE_ORIGIN`）、测试账号（`BENTO_A02_LOGIN`、`BENTO_A02_PASSWORD`），以及只读检查器路径 `BENTO_A02_STORAGE_CHECK`。检查器接收 `saved` 或 `absent` 和 `space/{uploadId}`，并确认该键无 multipart 残留。`saved` 模式可接收第三个参数 `expectedBytes`，HEAD 字节数必须等于该值，缺省为 100,000,000。两块预检传入 16,777,217。`absent` 模式确认对象不存在。满足条件时退出 0。
