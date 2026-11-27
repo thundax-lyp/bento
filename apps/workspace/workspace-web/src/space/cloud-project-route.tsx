@@ -1,35 +1,25 @@
 import {
     droppedChoices,
-    hasReleasedPath,
     planUpload,
     type UploadChoice,
-    type UploadItem,
-    type UploadRow,
 } from './upload-plan.ts';
 import { FilePreview, savedFileTree, SavedFiles } from './files.tsx';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import type { ChangeEvent, DragEvent, FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router';
 import {
-    cancelUpload,
-    createSpaceProject,
     deleteSpaceFile,
-    deleteSpaceProject,
-    getProjectDeletionImpact,
-    getUpload,
     prepareWorkspace,
     spaceProjectQuery,
     spaceQuery,
-    transferFile,
 } from './api.ts';
-import type { Space, Upload } from './api.ts';
+import type { Upload } from './api.ts';
 import { ApiError, createTask, taskListQuery, taskUrl } from '../api.ts';
 import { Button, Notice } from '../ui.tsx';
-
-function message(error: unknown) {
-    return error instanceof Error ? error.message : '操作失败，请稍后重试。';
-}
+import { message } from './error-message.ts';
+import { useProjectDeletion } from './project-deletion.ts';
+import { useProjectUploads } from './project-uploads.ts';
 
 const fileIssueMessages = new Map([
     ['invalid_utf8', '不是有效的 UTF-8 文本'],
@@ -49,81 +39,6 @@ function FileIssues({ issues }: { issues?: ApiError['issues'] }) {
             )
         );
     });
-}
-
-export function SpaceList() {
-    const account = useOutletContext<string>();
-    const query = useQuery(spaceQuery(account));
-    const client = useQueryClient();
-    const navigate = useNavigate();
-    const [draft, setDraft] = useState({ name: '', id: '' });
-    const create = useMutation({
-        mutationFn: ({ id, name }: typeof draft) =>
-            createSpaceProject(id, name),
-        async onSuccess(result) {
-            await client.invalidateQueries({
-                queryKey: spaceQuery(account).queryKey,
-            });
-            await navigate('/space/' + encodeURIComponent(result.id));
-        },
-    });
-    if (query.error) return <Notice message={message(query.error)} />;
-    if (!query.data) return null;
-    const { saved, reserved, quota, projects } = query.data;
-    function submit(event: FormEvent<HTMLFormElement>) {
-        event.preventDefault();
-        const payload = {
-            name: draft.name.trim(),
-            id: draft.id || crypto.randomUUID(),
-        };
-        setDraft(payload);
-        create.mutate(payload);
-    }
-    return (
-        <section className="space-y-3 rounded-xl border border-zinc-200 p-5">
-            <h2 className="text-lg font-semibold">云端空间</h2>
-            <p className="text-sm text-zinc-600">
-                已用 {((saved + reserved) / 1e6).toFixed(2)} / {quota / 1e6}{' '}
-                MB，包含上传预占。
-            </p>
-            <ul className="divide-y divide-zinc-200">
-                {projects.map((project) => (
-                    <li key={project.id} className="py-2">
-                        <Link
-                            className="underline"
-                            to={'/space/' + encodeURIComponent(project.id)}
-                        >
-                            {project.name}
-                        </Link>
-                        {project.state === 'deleting' && (
-                            <span className="ml-2">正在删除项目</span>
-                        )}
-                    </li>
-                ))}
-            </ul>
-            <form onSubmit={submit} className="flex flex-wrap items-end gap-3">
-                <label>
-                    空间项目名称
-                    <input
-                        className="mt-1 block"
-                        required
-                        maxLength={120}
-                        value={draft.name}
-                        onChange={(event) =>
-                            setDraft({ name: event.target.value, id: '' })
-                        }
-                    />
-                </label>
-                <Button
-                    primary
-                    disabled={create.isPending || !draft.name.trim()}
-                >
-                    新建空间项目
-                </Button>
-            </form>
-            {create.error && <Notice message={message(create.error)} />}
-        </section>
-    );
 }
 
 const executionLabels = {
@@ -162,87 +77,25 @@ function CloudProject({ account, id }: { account: string; id: string }) {
     const legacyEnabled = !taskEnabled;
 
     const navigate = useNavigate();
-    const deletionKey = JSON.stringify(['bento:project-delete', account, id]);
-    const [confirmProject, setConfirmProject] = useState(false);
-    const [confirmedProject, setConfirmedProject] = useState(
-        () => sessionStorage.getItem(deletionKey) === '1',
-    );
-    const [projectAccepted, setProjectAccepted] = useState(false);
-    const checkedMissing = useRef(false);
-    const impact = useQuery({
-        queryKey: ['account', account, 'project-deletion-impact', id],
-        queryFn: ({ signal }) => getProjectDeletionImpact(id, signal),
-        enabled: confirmProject || confirmedProject,
-        retry: false,
-    });
-    const rememberDeletion = () => {
-        sessionStorage.setItem(deletionKey, '1');
-        setConfirmedProject(true);
-    };
-    const forgetDeletion = () => {
-        sessionStorage.removeItem(deletionKey);
-        setConfirmedProject(false);
-    };
-    const deleteProject = useMutation({
-        mutationFn: () => deleteSpaceProject(id),
-        async onSuccess(state) {
-            if (state === 'deleted') {
-                forgetDeletion();
-                setProjectAccepted(false);
-                await client.invalidateQueries({
-                    queryKey: spaceQuery(account).queryKey,
-                });
-                await navigate('/workspaces');
-                return;
-            }
-            setProjectAccepted(true);
-            setConfirmProject(false);
-            await refresh();
-        },
-        async onError(error) {
-            if (error instanceof ApiError && error.status === 409) {
-                forgetDeletion();
-                setProjectAccepted(false);
-                setConfirmProject(true);
-            }
-            if (!(error instanceof ApiError) || error.status !== 404) {
-                await Promise.all([refresh(), impact.refetch()]);
-            }
-        },
-    });
-    const serverDeleting = project.data?.state === 'deleting';
-    const missing = [project.error, impact.error].some(
-        (error) => error instanceof ApiError && error.status === 404,
-    );
-    useEffect(() => {
-        if (serverDeleting) {
-            sessionStorage.setItem(deletionKey, '1');
-        }
-    }, [serverDeleting, deletionKey]);
-    const { mutate: checkDeletion, isPending: deletingRequest } = deleteProject;
-    useEffect(() => {
-        if (!missing) {
-            checkedMissing.current = false;
-            return;
-        }
-        if (
-            deletingRequest ||
-            checkedMissing.current ||
-            (!confirmedProject && sessionStorage.getItem(deletionKey) !== '1')
-        )
-            return;
-        checkedMissing.current = true;
-        checkDeletion();
-    }, [
+    const {
+        confirmProject,
+        setConfirmProject,
+        confirmedProject,
+        projectAccepted,
+        deleteProject,
+        impact,
+        serverDeleting,
         missing,
         deletingRequest,
-        confirmedProject,
-        deletionKey,
         checkDeletion,
-    ]);
-    const [uploadRows, setUploadRows] = useState<UploadRow[]>([]);
-    const [fileChoices, setFileChoices] = useState<UploadChoice[]>([]);
-    const [folderChoices, setFolderChoices] = useState<UploadChoice[]>([]);
+        rememberDeletion,
+    } = useProjectDeletion(
+        account,
+        id,
+        project.data?.state,
+        project.error,
+        refresh,
+    );
     const [files, setFiles] = useState<string[]>([]);
     const [previewId, setPreviewId] = useState<string>();
     const [deleteTarget, setDeleteTarget] = useState<{
@@ -259,123 +112,16 @@ function CloudProject({ account, id }: { account: string; id: string }) {
             }),
         ]);
     }
-    function updateUploadRow(
-        path: string,
-        status: string,
-        parts?: UploadRow['parts'],
-    ): void {
-        setUploadRows((rows) =>
-            rows.map((row) =>
-                row.path === path
-                    ? { ...row, status, ...(parts ? { parts } : {}) }
-                    : row,
-            ),
-        );
-    }
-    const upload = useMutation({
-        async mutationFn({
-            selected,
-            config,
-        }: {
-            selected: UploadItem[];
-            config: Space;
-        }) {
-            let signedOut = false;
-            for (const { path, file, uploadId } of selected) {
-                if (signedOut) {
-                    updateUploadRow(path, '未开始，请重新登录后重选文件。');
-                    continue;
-                }
-                updateUploadRow(path, '正在准备上传…');
-                const key = JSON.stringify([
-                    'bento:upload',
-                    account,
-                    id,
-                    path,
-                    file.size,
-                ]);
-                try {
-                    let cached = uploadId ? null : sessionStorage.getItem(key);
-                    if (
-                        cached &&
-                        !config.uploads.some((item) => item.id === cached)
-                    ) {
-                        const status = await getUpload(cached).catch(
-                            (error: unknown) => {
-                                if (
-                                    error instanceof ApiError &&
-                                    error.status === 401
-                                )
-                                    throw error;
-                                return undefined;
-                            },
-                        );
-                        if (status?.state === 'deleted') cached = null;
-                    }
-                    const ended =
-                        cached &&
-                        config.uploads.some(
-                            (item) =>
-                                item.id === cached &&
-                                hasReleasedPath(item.state),
-                        );
-                    const currentId =
-                        uploadId ??
-                        (ended ? null : cached) ??
-                        crypto.randomUUID();
-                    sessionStorage.setItem(key, currentId);
-                    await transferFile(
-                        id,
-                        currentId,
-                        file,
-                        path,
-                        config.partSize,
-                        (status) => {
-                            switch (status.phase) {
-                                case 'checking':
-                                    updateUploadRow(path, '正在校验文件…');
-                                    break;
-                                case 'transferring':
-                                    updateUploadRow(path, '上传中', {
-                                        confirmedParts: status.confirmedParts,
-                                        totalParts: status.totalParts,
-                                    });
-                                    break;
-                                case 'completing':
-                                    updateUploadRow(path, '正在确认上传结果…');
-                                    break;
-                            }
-                        },
-                    );
-                    updateUploadRow(path, '已保存');
-                    try {
-                        if (sessionStorage.getItem(key) === currentId)
-                            sessionStorage.removeItem(key);
-                    } catch {
-                        // A cache failure cannot change the server's saved result.
-                    }
-                } catch (error) {
-                    signedOut =
-                        error instanceof ApiError && error.status === 401;
-                    updateUploadRow(
-                        path,
-                        signedOut
-                            ? '登录已过期，请重新登录。'
-                            : '本次上传未确认：' + message(error),
-                    );
-                }
-            }
-        },
-        onSuccess() {
-            setFileChoices([]);
-            setFolderChoices([]);
-        },
-        onSettled: refresh,
-    });
-    const cancel = useMutation({
-        mutationFn: cancelUpload,
-        onSettled: refresh,
-    });
+    const {
+        uploadRows,
+        fileChoices,
+        setFileChoices,
+        folderChoices,
+        setFolderChoices,
+        setUploadRows,
+        upload,
+        cancel,
+    } = useProjectUploads(account, id, refresh);
     const remove = useMutation({
         mutationFn: deleteSpaceFile,
         onSuccess(_result, fileId) {
