@@ -40,7 +40,8 @@ apps/workspace/workspace-api/go/*_test.go
 !shared/text-snapshot.ts
 !apps/admin/
 !apps/admin/admin-api/
-!apps/admin/admin-api/main.go
+!apps/admin/admin-api/src/
+!apps/admin/admin-api/src/main.go
 !apps/admin/admin-api/go.mod
 !apps/admin/admin-api/go.sum
 !apps/admin/admin-auth/
