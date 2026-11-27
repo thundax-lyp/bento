@@ -101,6 +101,43 @@ const execution = createServer(async (req, res) => {
 execution.listen(0, '127.0.0.1');
 await once(execution, 'listening');
 const executionOrigin = 'http://127.0.0.1:' + execution.address().port;
+const emptyUploadPath =
+    '/fixture-bucket/space/00000000-0000-4000-8000-000000000022';
+let emptyUploadWritten = false;
+const objectStore = createServer((req, res) => {
+    if (req.url?.split('?', 1)[0] !== emptyUploadPath) {
+        res.writeHead(404).end();
+        return;
+    }
+    if (req.method === 'HEAD') {
+        res.writeHead(emptyUploadWritten ? 200 : 404, {
+            'Content-Length': '0',
+        }).end();
+        return;
+    }
+    if (
+        req.method === 'PUT' &&
+        req.headers['user-agent']?.startsWith('aws-sdk-go-v2/') &&
+        req.headers['content-length'] === '0' &&
+        req.headers['if-none-match'] === '*'
+    ) {
+        emptyUploadWritten = true;
+        res.writeHead(200).end();
+        return;
+    }
+    console.error(
+        'unexpected object fixture request',
+        req.method,
+        req.headers['content-length'],
+        req.headers['if-none-match'],
+        req.headers['user-agent']?.split(' ')[0],
+    );
+    res.writeHead(400).end();
+});
+objectStore.listen(0, '127.0.0.1');
+await once(objectStore, 'listening');
+const objectStoreOrigin = 'http://127.0.0.1:' + objectStore.address().port;
+
 let entry;
 
 async function startEntry() {
@@ -125,7 +162,7 @@ async function startEntry() {
                     ...(spaceConfigured
                         ? {
                               BENTO_SPACE_DB: spaceDb,
-                              BENTO_SPACE_S3_ENDPOINT: 'http://127.0.0.1:9199',
+                              BENTO_SPACE_S3_ENDPOINT: objectStoreOrigin,
                               BENTO_SPACE_S3_BUCKET: 'fixture-bucket',
                               AWS_ACCESS_KEY_ID: 'fixture-access-key',
                               AWS_SECRET_ACCESS_KEY: 'fixture-secret-key',
@@ -599,6 +636,38 @@ async function checkSpaceReads() {
                     "attachment; filename*=UTF-8''readme.txt",
                 );
         }
+
+        const emptyFile = '00000000-0000-4000-8000-000000000022';
+        const uploadHeaders = {
+            ...headers,
+            Origin: origin,
+            'Content-Type': 'application/json',
+        };
+        const reserved = await status(
+            request('/api/space/projects/' + project + '/uploads', {
+                method: 'POST',
+                headers: uploadHeaders,
+                body: JSON.stringify({
+                    id: emptyFile,
+                    path: 'empty.txt',
+                    size: 0,
+                    checksums: [],
+                }),
+            }),
+            200,
+            'Go reserves empty upload',
+        );
+        assert.equal((await reserved.json()).state, 'uploading');
+        const finished = await status(
+            request('/api/space/uploads/' + emptyFile + '/complete', {
+                method: 'POST',
+                headers: uploadHeaders,
+            }),
+            200,
+            'Go completes the stored empty upload',
+        );
+        assert.equal((await finished.json()).state, 'saved');
+        assert.ok(emptyUploadWritten);
         db.prepare(
             'INSERT INTO space_project_deletions (spaceId,owner,operationId,phase) VALUES (?,?,?,?)',
         ).run(project, owner, 'fixture-deletion', 'holding');
@@ -639,6 +708,7 @@ try {
         await stopEntry();
     } finally {
         execution.close();
+        objectStore.close();
         await fixture.close();
     }
 }

@@ -4,7 +4,7 @@ import { keycloakAuth, WorkspaceAuthArtifactsError } from './oidc.ts';
 import { mockBackend } from './mock.ts';
 import { taskEntryServer } from './server.ts';
 import { httpBackend } from './execution-service-http.ts';
-import { mySpace } from './space/index.ts';
+import { goSpaceUpload, mySpace } from './space/index.ts';
 import { spaceStorage } from './space/storage.ts';
 import { RequestError } from './protocol.ts';
 import type { IncomingMessage } from 'node:http';
@@ -165,6 +165,7 @@ async function main() {
                 env.AWS_REGION ?? 'us-east-1',
             ),
             backend,
+            goAuth && mode === 'http' ? goSpaceUpload : undefined,
         );
     }
     const server = await taskEntryServer({

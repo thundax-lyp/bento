@@ -47,10 +47,33 @@ function view(row: Upload) {
     return { id, project, path, size, state, expires };
 }
 
+export async function goSpaceUpload<T>(
+    action: 'reserve' | 'prepare' | 'finish' | 'clean' | 'parts' | 'sign',
+    input: object,
+): Promise<T> {
+    const response = await fetch(
+        'http://127.0.0.1:4103/internal/space/upload/' + action,
+        {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            redirect: 'error',
+            body: JSON.stringify(input),
+        },
+    );
+    if (response.status === 204) return undefined as T;
+    const data: unknown = await response.json();
+    if (response.ok) return data as T;
+    const failure = object(object(data).error);
+    if (typeof failure.code !== 'string' || typeof failure.message !== 'string')
+        throw new Error('Invalid Go upload response');
+    throw new RequestError(response.status, failure.code, failure.message);
+}
+
 export function mySpace(
     dbPath: string,
     storage: ReturnType<typeof spaceStorage>,
     backend: Backend,
+    goUpload?: typeof goSpaceUpload,
 ) {
     const db = new DatabaseSync(dbPath);
     db.exec(`
@@ -185,8 +208,16 @@ export function mySpace(
         }
     }
 
-    function reserve(owner: string, project: string, data: unknown) {
+    async function reserve(owner: string, project: string, data: unknown) {
         const input = object(data);
+        if (goUpload)
+            return (
+                await goUpload<{ id: string }>('reserve', {
+                    owner,
+                    project,
+                    input,
+                })
+            ).id;
         const uploadId = id(input.id);
         const path = input.path;
         const size = input.size;
@@ -303,6 +334,10 @@ export function mySpace(
 
     async function prepare(row: Upload) {
         if (row.state !== 'preparing') return row;
+        if (goUpload) {
+            await goUpload('prepare', { owner: row.owner, id: row.id });
+            return upload(row.owner, row.id);
+        }
         if (row.expires <= Date.now()) throw conflict('上传已过期。');
         // Remove any orphan from a prior initiation whose response was lost.
         if (row.size > 0) await storage.abort(key(row));
@@ -315,6 +350,11 @@ export function mySpace(
 
     async function parts(row: Upload): Promise<CompletedPart[] | null> {
         if (!row.storageId) return [];
+        if (goUpload)
+            return goUpload<CompletedPart[] | null>('parts', {
+                owner: row.owner,
+                id: row.id,
+            });
         const checksums = manifest(row);
         const existing = await storage.parts(key(row), row.storageId);
         return (
@@ -343,6 +383,10 @@ export function mySpace(
 
     async function finish(row: Upload) {
         if (row.state === 'saved') return row;
+        if (goUpload) {
+            await goUpload('finish', { owner: row.owner, id: row.id });
+            return upload(row.owner, row.id);
+        }
         if (!['uploading', 'completing'].includes(row.state))
             throw conflict('此上传无法完成。');
         if (row.state === 'uploading') {
@@ -384,6 +428,10 @@ export function mySpace(
     }
 
     async function clean(row: Upload, outcome: NonNullable<Upload['cleanup']>) {
+        if (goUpload) {
+            await goUpload('clean', { owner: row.owner, id: row.id, outcome });
+            return;
+        }
         if (row.state !== 'cleaning') {
             db.prepare(
                 "UPDATE space_uploads SET state = 'cleaning', cleanup = ? WHERE id = ?",
@@ -585,7 +633,7 @@ export function mySpace(
             return execution.start(owner, resource, key, await read());
         }
         if (group === 'projects' && action === 'uploads' && method === 'POST') {
-            const uploadId = reserve(owner, resource, await read());
+            const uploadId = await reserve(owner, resource, await read());
             return locked(uploadId, async () =>
                 view(await prepare(upload(owner, uploadId))),
             );
@@ -662,6 +710,12 @@ export function mySpace(
                     throw invalid('分块编号无效。');
                 const checksum = checksums[n - 1];
                 if (!checksum) throw invalid('分块摘要无效。');
+                if (goUpload)
+                    return goUpload<{ url: string; checksum: string }>('sign', {
+                        owner,
+                        id: row.id,
+                        number: n,
+                    });
                 const url = await storage.signPart(
                     key(row),
                     row.storageId,

@@ -168,11 +168,13 @@ func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store 
 			if err != nil {
 				return nil, errors.New("could not initialize Workspace object storage")
 			}
-			space, err = openSpaceReader(database, storage)
+			db, err := openSpaceDB(database, "rw")
 			if err != nil {
 				return nil, errors.New("could not initialize Workspace space reader")
 			}
+			space = &spaceReader{db: db, storage: storage}
 			space.routes(public, sessions, backend)
+			registerSpaceUploadBridge(internal, db, storage)
 		}
 	}
 	internal.HandleFunc("GET /internal/session", func(w http.ResponseWriter, r *http.Request) {

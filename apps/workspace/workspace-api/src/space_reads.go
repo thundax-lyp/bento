@@ -43,17 +43,25 @@ type spaceOverview struct {
 }
 
 func openSpaceReader(database string, storage *spaceStorage) (*spaceReader, error) {
+	db, err := openSpaceDB(database, "ro")
+	if err != nil {
+		return nil, err
+	}
+	return &spaceReader{db: db, storage: storage}, nil
+}
+
+func openSpaceDB(database, mode string) (*sql.DB, error) {
 	absolute, err := filepath.Abs(database)
 	if err != nil {
 		return nil, err
 	}
-	dsn := url.URL{Scheme: "file", Path: absolute, RawQuery: "mode=ro&_pragma=busy_timeout(5000)"}
+	dsn := url.URL{Scheme: "file", Path: absolute, RawQuery: "mode=" + mode + "&_pragma=busy_timeout(5000)"}
 	db, err := sql.Open("sqlite", dsn.String())
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(4)
-	return &spaceReader{db: db, storage: storage}, nil
+	return db, nil
 }
 
 func (s *spaceReader) overview(ctx context.Context, owner string) (spaceOverview, error) {
