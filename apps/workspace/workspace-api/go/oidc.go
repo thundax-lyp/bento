@@ -9,7 +9,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"strings"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -34,6 +35,7 @@ type oidcAccounts interface {
 type oidcOptions struct {
 	origin, issuer, clientID, clientSecret, organization string
 	spaceRequired                                        bool
+	assetsDir                                            string
 }
 
 type loginTransaction struct {
@@ -50,9 +52,32 @@ type keycloak struct {
 	verifier     *oidc.IDTokenVerifier
 	client       *http.Client
 	logoutURL    *url.URL
+	issuerOrigin string
+	assets       authArtifacts
 	cookieName   string
 	mu           sync.Mutex
 	transactions map[[32]byte]loginTransaction
+}
+
+type authArtifacts struct {
+	login, account, style []byte
+}
+
+func loadAuthArtifacts(directory string) (authArtifacts, error) {
+	if directory == "" {
+		return authArtifacts{}, errors.New("Workspace auth build artifacts are unavailable")
+	}
+	var assets authArtifacts
+	for name, target := range map[string]*[]byte{
+		"login.html": &assets.login, "account.html": &assets.account, "style.css": &assets.style,
+	} {
+		content, err := os.ReadFile(filepath.Join(directory, name))
+		if err != nil {
+			return authArtifacts{}, errors.New("Workspace auth build artifacts are unavailable")
+		}
+		*target = content
+	}
+	return assets, nil
 }
 
 func secureOIDCURL(raw string, local bool) (*url.URL, error) {
@@ -84,6 +109,10 @@ func newKeycloak(ctx context.Context, options oidcOptions, store oidcAccounts, s
 	issuer, err := secureOIDCURL(options.issuer, local)
 	if err != nil || issuer.RawQuery != "" {
 		return nil, errors.New("invalid Keycloak issuer")
+	}
+	assets, err := loadAuthArtifacts(options.assetsDir)
+	if err != nil {
+		return nil, err
 	}
 	client := &http.Client{
 		Timeout:       8 * time.Second,
@@ -118,6 +147,7 @@ func newKeycloak(ctx context.Context, options oidcOptions, store oidcAccounts, s
 	}
 	return &keycloak{
 		options: options, store: store, sessions: sessions, client: client, logoutURL: logout, cookieName: name,
+		issuerOrigin: (&url.URL{Scheme: issuer.Scheme, Host: issuer.Host}).String(), assets: assets,
 		config: oauth2.Config{
 			ClientID: options.clientID, ClientSecret: options.clientSecret, Endpoint: endpoint,
 			RedirectURL: options.origin + "/api/oidc/callback", Scopes: []string{"openid", "email", "organization:*"},
@@ -307,6 +337,7 @@ func (k *keycloak) routes(mux *http.ServeMux) {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("Referrer-Policy", "no-referrer")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
 			if r.Method == "POST" && (len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != k.options.origin) {
 				authFailure(w, &requestFailure{400, "invalid_origin", "请从任务入口提交请求。"})
 				return
@@ -316,6 +347,26 @@ func (k *keycloak) routes(mux *http.ServeMux) {
 			}
 		})
 	}
+	register("GET /auth", func(w http.ResponseWriter, r *http.Request) error {
+		_, err := k.sessions.current(r)
+		page := k.assets.account
+		if errors.Is(err, errLoginRequired) {
+			page = k.assets.login
+		} else if err != nil {
+			return err
+		}
+		w.Header().Set("Referrer-Policy", "same-origin")
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'none'; style-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self' "+k.issuerOrigin)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(page)
+		return nil
+	})
+	register("GET /auth/style.css", func(w http.ResponseWriter, _ *http.Request) error {
+		w.Header().Set("Content-Type", "text/css; charset=utf-8")
+		_, _ = w.Write(k.assets.style)
+		return nil
+	})
 	register("GET /api/oidc/start", func(w http.ResponseWriter, r *http.Request) error { return k.start(w, r, nil) })
 	register("GET /api/oidc/callback", k.callback)
 	register("POST /api/oidc/logout", func(w http.ResponseWriter, r *http.Request) error {
@@ -339,7 +390,7 @@ func (k *keycloak) routes(mux *http.ServeMux) {
 			return oidcDenied
 		}
 		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 128))
-		if err != nil || strings.TrimSpace(string(body)) != "confirmed=yes" {
+		if err != nil || string(body) != "confirmed=yes" {
 			return oidcDenied
 		}
 		return k.start(w, r, session)
