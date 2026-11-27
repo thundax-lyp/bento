@@ -6,7 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath, URL } from 'node:url';
 import { join, posix } from 'node:path';
 
-const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
 const expectedFiles = [
     'register-paths.mjs',
     'shared/text-snapshot.ts',
@@ -47,7 +47,7 @@ const sources = [
     'check-package.mjs',
 ].map(
     (name) =>
-        'apps/orchestrator/orchestrator-execution-host/acceptance/single-node-restore/' +
+        'apps/orchestrator/orchestrator-execution-host/tests/acceptance/single-node-restore/' +
         name,
 );
 const storeDirectory =
@@ -71,7 +71,7 @@ const publication = JSON.parse(
     readFileSync(join(root, 'public-files.json'), 'utf8'),
 );
 assert.deepEqual(publication.patterns, [
-    'apps/orchestrator/index.ts',
+    'apps/orchestrator/orchestrator-execution-host/src/index.ts',
     'apps/orchestrator/orchestrator-execution-host/src/execution-service/*.ts',
     'apps/orchestrator/orchestrator-execution-host/src/openshell/*.ts',
 ]);
@@ -155,7 +155,7 @@ const localTests = [
 const localCommand =
     'node --import ../../../register-paths.mjs --experimental-strip-types --test ' +
     localTests
-        .map((name) => 'acceptance/single-node-restore/' + name)
+        .map((name) => 'tests/acceptance/single-node-restore/' + name)
         .join(' ');
 assert.equal(
     orchestrator.scripts['test:single-node-restore:local'],
@@ -169,7 +169,7 @@ assert(
 assert(!/real-restore|adapter\.test/.test(localCommand));
 assert.equal(
     orchestrator.scripts['test:single-node-restore'],
-    'node acceptance/single-node-restore/run.mjs',
+    'node tests/acceptance/single-node-restore/run.mjs',
 );
 for (const path of files) {
     assert(

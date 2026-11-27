@@ -16,7 +16,7 @@ test('TS commands are persisted by the Go Run ledger controller', async (t) => {
     const path = join(dir, 'go-runs.sqlite');
     execFileSync('go', ['build', '-o', binary, './src/control'], {
         cwd: fileURLToPath(
-            new URL('../../../orchestrator-control/', import.meta.url),
+            new URL('../../../../orchestrator-control/', import.meta.url),
         ),
         timeout: 120_000,
     });

@@ -17,7 +17,7 @@ export type HostConfig = {
     taskQueue: string;
     mode: 'pass' | 'drop';
 };
-const root = fileURLToPath(new URL('../../../../../', import.meta.url));
+const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
 async function main() {
     const config = JSON.parse(
         await readFile(process.argv[2]!, 'utf8'),
@@ -46,7 +46,7 @@ async function main() {
                 process.execPath,
                 join(
                     root,
-                    'apps/orchestrator/orchestrator-execution-host/acceptance/temporal-retry/control-proxy.mjs',
+                    'apps/orchestrator/orchestrator-execution-host/tests/acceptance/temporal-retry/control-proxy.mjs',
                 ),
             ]
                 .map(quote)

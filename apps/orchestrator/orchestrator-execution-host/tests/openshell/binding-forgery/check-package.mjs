@@ -50,7 +50,7 @@ const publication = JSON.parse(
     readFileSync(join(root, 'public-files.json'), 'utf8'),
 );
 assert.deepEqual(publication.patterns, [
-    'apps/orchestrator/index.ts',
+    'apps/orchestrator/orchestrator-execution-host/src/index.ts',
     'apps/orchestrator/orchestrator-execution-host/src/execution-service/*.ts',
     'apps/orchestrator/orchestrator-execution-host/src/openshell/*.ts',
 ]);

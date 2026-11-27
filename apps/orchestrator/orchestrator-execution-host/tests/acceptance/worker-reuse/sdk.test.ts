@@ -90,7 +90,7 @@ test(
         try {
             await fs.symlink(fixture.input, link);
             const repo = fileURLToPath(
-                new URL('../../../../../', import.meta.url),
+                new URL('../../../../../../', import.meta.url),
             );
             for (const input of [
                 '',

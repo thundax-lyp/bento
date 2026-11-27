@@ -21,7 +21,7 @@ import { readWorkerProcesses, sha256 } from './observer.ts';
 import { createTraceReader, traceFailureCode } from './trace.ts';
 
 const root = resolve(
-    fileURLToPath(new URL('../../../../../', import.meta.url)),
+    fileURLToPath(new URL('../../../../../../', import.meta.url)),
 );
 const here = dirname(fileURLToPath(import.meta.url));
 let sdk: PreparedSdk;
