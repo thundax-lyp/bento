@@ -31,11 +31,10 @@ apps/workspace/workspace-web/src/**/*.test.tsx
 !deploy/workspace/
 !deploy/workspace/nginx.conf
 !deploy/workspace/start.sh
-!apps/workspace/workspace-api/go/
-!apps/workspace/workspace-api/go/*.go
-!apps/workspace/workspace-api/go/go.mod
-!apps/workspace/workspace-api/go/go.sum
-apps/workspace/workspace-api/go/*_test.go
+!apps/workspace/workspace-api/src/*.go
+!apps/workspace/workspace-api/go.mod
+!apps/workspace/workspace-api/go.sum
+apps/workspace/workspace-api/src/*_test.go
 !shared/
 !shared/text-snapshot.ts
 !apps/admin/
