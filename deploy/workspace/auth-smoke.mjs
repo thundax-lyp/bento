@@ -8,6 +8,7 @@ import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
+import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
     oidcFixtureClient,
@@ -19,7 +20,8 @@ const origin = 'http://127.0.0.1:8080';
 const accounts = 'http://127.0.0.1:4103/internal/accounts';
 const assets = '/app/apps/workspace/workspace-auth/';
 const missing = process.argv[2] === '--missing-artifacts';
-const subject = 'fixture-subject';
+const spaceConfigured = process.argv[2] === '--space-reads';
+const subject = spaceConfigured ? 'fixture-space-subject' : 'fixture-subject';
 const fixture = await startOidcFixture();
 const execution = createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
@@ -103,6 +105,7 @@ let entry;
 
 async function startEntry() {
     const directory = await mkdtemp(join(tmpdir(), 'bento-auth-entry-'));
+    const spaceDb = join(directory, 'space.sqlite');
     const stdoutPath = join(directory, 'stdout.log');
     const stderrPath = join(directory, 'stderr.log');
     let stdoutFile;
@@ -119,6 +122,16 @@ async function startEntry() {
                     BENTO_ONE_MODE: 'http',
                     BENTO_ONE_TWO_URL: executionOrigin,
                     BENTO_ONE_TWO_BEARER: 'fixture-execution',
+                    ...(spaceConfigured
+                        ? {
+                              BENTO_SPACE_DB: spaceDb,
+                              BENTO_SPACE_S3_ENDPOINT: 'http://127.0.0.1:9199',
+                              BENTO_SPACE_S3_BUCKET: 'fixture-bucket',
+                              AWS_ACCESS_KEY_ID: 'fixture-access-key',
+                              AWS_SECRET_ACCESS_KEY: 'fixture-secret-key',
+                              AWS_EC2_METADATA_DISABLED: 'true',
+                          }
+                        : {}),
                     BENTO_AUTH_MODE: 'keycloak',
                     BENTO_ONE_ORIGIN: origin,
                     BENTO_OIDC_ISSUER: fixture.issuer,
@@ -143,7 +156,7 @@ async function startEntry() {
             .finally(() => rm(directory, { recursive: true, force: true }));
         // The readiness or shutdown path consumes the settled result.
         void result.catch(() => {});
-        return { child, result };
+        return { child, result, spaceDb };
     } catch (error) {
         await rm(directory, { recursive: true, force: true });
         throw error;
@@ -228,7 +241,15 @@ async function waitReady() {
                     return response.status;
                 }),
             );
-            if (statuses.join(',') === '200,401,200') return;
+            const legacy = await globalThis.fetch(
+                'http://127.0.0.1:4101/api/space',
+                {
+                    signal: globalThis.AbortSignal.timeout(1000),
+                },
+            );
+            await legacy.body?.cancel();
+            if (statuses.join(',') === '200,401,200' && legacy.status === 401)
+                return;
         } catch {
             // The loopback listeners may still be starting.
         }
@@ -363,8 +384,8 @@ async function login(grant) {
                 },
             }),
         }),
-        503,
-        'Snapshot bridge retains the existing missing-space response',
+        spaceConfigured ? 404 : 503,
+        'Snapshot bridge retains the existing unavailable-source response',
     );
     return value;
 }
@@ -521,6 +542,76 @@ async function checkRuntime() {
     await checkOwner(ownerId, true);
 }
 
+async function checkSpaceReads() {
+    await waitReady();
+    const value = await login(
+        await authorize(request('/api/oidc/start'), 'space-reads'),
+    );
+    const owner = await binding();
+    const project = '00000000-0000-4000-8000-000000000020';
+    const file = '00000000-0000-4000-8000-000000000021';
+    const db = new DatabaseSync(entry.spaceDb);
+    try {
+        db.prepare(
+            'INSERT INTO space_projects (id,owner,name) VALUES (?,?,?)',
+        ).run(project, owner, 'Smoke Space');
+        db.prepare(
+            'INSERT INTO space_uploads (id,project,owner,path,size,manifest,state,expires) VALUES (?,?,?,?,?,?,?,?)',
+        ).run(
+            file,
+            project,
+            owner,
+            'readme.txt',
+            100,
+            '[]',
+            'saved',
+            Date.now() + 60_000,
+        );
+        const headers = { Cookie: value };
+        const overview = await status(
+            request('/api/space', { headers }),
+            200,
+            'Go SQLite space overview',
+        );
+        const result = await overview.json();
+        assert.equal(result.saved, 100);
+        assert.deepEqual(result.projects, [
+            { id: project, name: 'Smoke Space' },
+        ]);
+        assert.equal(result.uploads[0].id, file);
+        for (const action of ['preview', 'download']) {
+            const response = await status(
+                request('/api/space/files/' + file + '/' + action, { headers }),
+                302,
+                'Signed file redirect',
+            );
+            const target = location(response);
+            assert.equal(target.pathname, '/fixture-bucket/space/' + file);
+            assert.equal(target.searchParams.get('X-Amz-Expires'), '300');
+            if (action === 'preview')
+                assert.equal(
+                    target.searchParams.get('response-cache-control'),
+                    'no-store',
+                );
+            else
+                assert.equal(
+                    target.searchParams.get('response-content-disposition'),
+                    "attachment; filename*=UTF-8''readme.txt",
+                );
+        }
+        db.prepare(
+            'INSERT INTO space_project_deletions (spaceId,owner,operationId,phase) VALUES (?,?,?,?)',
+        ).run(project, owner, 'fixture-deletion', 'holding');
+        await status(
+            request('/api/space/files/' + file + '/preview', { headers }),
+            404,
+            'Deleting space hides file',
+        );
+    } finally {
+        db.close();
+    }
+}
+
 try {
     entry = await startEntry();
     if (missing) {
@@ -532,6 +623,11 @@ try {
             /^(?:\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2} )?Workspace auth build artifacts are unavailable$/m,
         );
         console.log('Missing auth artifacts rejected at image startup');
+    } else if (spaceConfigured) {
+        await checkSpaceReads();
+        console.log(
+            'SQLite space overview, signed read redirects and deletion protection passed',
+        );
     } else {
         await checkRuntime();
         console.log(

@@ -63,8 +63,12 @@ func run() error {
 		store := accounts{db: db}
 		store.register(internalMux)
 		if os.Getenv("BENTO_GO_AUTH") == "1" {
-			if err := registerGoAuth(ctx, mux, internalMux, store, proxy); err != nil {
+			space, err := registerGoAuth(ctx, mux, internalMux, store, proxy)
+			if err != nil {
 				return err
+			}
+			if space != nil {
+				defer space.db.Close()
 			}
 		}
 		internal := &http.Server{Handler: internalMux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second}
@@ -104,18 +108,19 @@ func run() error {
 	}
 }
 
-func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store accounts, legacy http.Handler) error {
+func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store accounts, legacy http.Handler) (*spaceReader, error) {
+	var space *spaceReader
 	origin := strings.TrimSuffix(os.Getenv("BENTO_ONE_ORIGIN"), "/")
 	if origin == "" {
 		origin = "http://127.0.0.1:4101"
 	}
 	publicURL, err := secureOIDCURL(origin, true)
 	if err != nil || publicURL.Path != "" || publicURL.RawQuery != "" {
-		return errors.New("invalid Workspace origin")
+		return nil, errors.New("invalid Workspace origin")
 	}
 	issuer := os.Getenv("BENTO_OIDC_ISSUER")
 	if issuer == "" && os.Getenv("BENTO_AUTH_MODE") == "keycloak" {
-		return errors.New("Keycloak issuer is required")
+		return nil, errors.New("Keycloak issuer is required")
 	}
 	spaceRequired := os.Getenv("BENTO_SPACE_S3_ENDPOINT") != ""
 	sessions := newWebSessions(store, publicURL.Scheme == "https", issuer != "")
@@ -131,9 +136,9 @@ func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store 
 		}, store, sessions)
 		if err != nil {
 			if errors.Is(err, errAuthArtifacts) {
-				return errAuthArtifacts
+				return nil, errAuthArtifacts
 			}
-			return errors.New("could not initialize Workspace OIDC")
+			return nil, errors.New("could not initialize Workspace OIDC")
 		}
 		identity.routes(public)
 		password.sessionRoutes(public)
@@ -150,10 +155,25 @@ func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store 
 	if os.Getenv("BENTO_ONE_MODE") == "http" {
 		backend, err := workspaceProjectBackend()
 		if err != nil {
-			return err
+			return nil, err
 		}
 		backend.routes(public, sessions, origin)
 		backend.taskRoutes(public, sessions, origin, legacy)
+		database, endpoint, bucket := os.Getenv("BENTO_SPACE_DB"), os.Getenv("BENTO_SPACE_S3_ENDPOINT"), os.Getenv("BENTO_SPACE_S3_BUCKET")
+		if database != "" || endpoint != "" || bucket != "" {
+			if database == "" || database == ":memory:" || endpoint == "" || bucket == "" {
+				return nil, errors.New("incomplete space configuration")
+			}
+			storage, err := newSpaceStorage(ctx, strings.TrimSuffix(endpoint, "/"), bucket, os.Getenv("AWS_REGION"))
+			if err != nil {
+				return nil, errors.New("could not initialize Workspace object storage")
+			}
+			space, err = openSpaceReader(database, storage)
+			if err != nil {
+				return nil, errors.New("could not initialize Workspace space reader")
+			}
+			space.routes(public, sessions, backend)
+		}
 	}
 	internal.HandleFunc("GET /internal/session", func(w http.ResponseWriter, r *http.Request) {
 		session, err := sessions.current(r)
@@ -163,7 +183,7 @@ func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store 
 		}
 		authJSON(w, 200, map[string]string{"ownerId": session.Owner, "account": session.Name})
 	})
-	return nil
+	return space, nil
 }
 
 func workspaceProjectBackend() (projectService, error) {

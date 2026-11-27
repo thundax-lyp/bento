@@ -241,3 +241,17 @@ func (s *spaceStorage) download(ctx context.Context, key, name string) (string, 
 	}
 	return signed.URL, nil
 }
+
+func (s *spaceStorage) preview(ctx context.Context, key string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, s3Timeout)
+	defer cancel()
+	signed, err := s.signer.PresignGetObject(ctx, &s3.GetObjectInput{
+		Bucket: &s.bucket, Key: &key,
+		ResponseContentType:  aws.String("application/octet-stream"),
+		ResponseCacheControl: aws.String("no-store"),
+	}, s3.WithPresignExpires(downloadURLLifetime))
+	if err != nil {
+		return "", err
+	}
+	return signed.URL, nil
+}
