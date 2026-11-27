@@ -319,6 +319,8 @@ node apps/orchestrator/acceptance/worker-reuse/check-package.mjs
 
 ## 管理端诊断入口
 
+[管理端镜像](admin.Dockerfile)从 `admin-api/src/` 构建 Go API，将 `admin-auth/src/` 和 `admin-web/src/` 分别复制到容器的 `/app/auth/` 和 `/app/web/`。
+
 为管理端准备独立 Keycloak Realm 和启用授权码流程的机密客户端，注册精确回调 `<管理端 HTTPS origin>/auth/callback`。在同一部署配置中设置 `BENTO_ADMIN_PUBLIC_ORIGIN`、`BENTO_ADMIN_OIDC_ISSUER`、`BENTO_ADMIN_OIDC_CLIENT`、`BENTO_ADMIN_OIDC_SECRET`、`BENTO_ADMIN_SERVICE_BEARER` 和 `BENTO_ADMIN_WORKSPACE_GRANTS`。管理服务凭据须与个人端执行服务凭据不同。授权条目格式见[应用 API 与 Orchestrator](../docs/20-interfaces/APP-ORCHESTRATOR-INTERFACE.md)。
 
 从仓库根目录使用 `docker compose -f deploy/compose.yaml --profile admin up -d --build` 启用管理端。将管理域名的 HTTPS 反向代理接到宿主回环端口 `BENTO_ADMIN_PORT`，默认 8081。用获授权账号登录，从列表选择已有执行 Workspace，提交诊断后打开独立 Run 状态页。无法登录时核对 Realm、回调和反向代理。收到拒绝时核对管理员 subject、Workspace 和 owner 绑定，以及 API 和 Orchestrator 的配置一致性。停用入口时停止 `bento-admin` 并移除管理服务凭据和授权配置，再重建 Orchestrator 应用配置。

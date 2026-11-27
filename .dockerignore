@@ -45,7 +45,9 @@ apps/workspace/workspace-api/go/*_test.go
 !apps/admin/admin-api/go.mod
 !apps/admin/admin-api/go.sum
 !apps/admin/admin-auth/
-!apps/admin/admin-auth/login.html
+!apps/admin/admin-auth/src/
+!apps/admin/admin-auth/src/login.html
 !apps/admin/admin-web/
-!apps/admin/admin-web/index.html
+!apps/admin/admin-web/src/
+!apps/admin/admin-web/src/index.html
 !deploy/admin.Dockerfile

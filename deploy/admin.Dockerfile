@@ -8,7 +8,7 @@ RUN CGO_ENABLED=0 go build -trimpath -o /out/bento-admin ./src
 FROM scratch
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /out/bento-admin /usr/local/bin/bento-admin
-COPY apps/admin/admin-auth/ /app/auth/
-COPY apps/admin/admin-web/ /app/web/
+COPY apps/admin/admin-auth/src/ /app/auth/
+COPY apps/admin/admin-web/src/ /app/web/
 USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/bento-admin"]
