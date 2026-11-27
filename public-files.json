@@ -96,6 +96,8 @@
         "apps/workspace/web/e2e/upload-intake.spec.ts",
         "apps/workspace/web/e2e/upload-progress.spec.ts",
         "apps/workspace/web/scripts/verify-web-a02.mjs",
+        "apps/workspace/web/scripts/web-a02-quota.mjs",
+        "apps/workspace/web/scripts/web-a02-fixtures.mjs",
         "apps/workspace/web/eslint.config.mjs",
         "apps/workspace/web/index.html",
         "apps/workspace/web/package.json",
