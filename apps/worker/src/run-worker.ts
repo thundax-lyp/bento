@@ -4,7 +4,7 @@ import {
     runDshWorkerLoop,
     runDshWorkerStdio,
     type DshWorkerBootstrap,
-} from './dsh-worker.ts';
+} from './runtime/dsh-worker.ts';
 
 async function main() {
     const path = process.env.BENTO_DSH_BOOTSTRAP;

@@ -1,4 +1,4 @@
-import { installOpenShellProvider } from './provider.ts';
+import { installOpenShellProvider } from '../openshell/provider.ts';
 import {
     reconcileSessionPersistence,
     remoteSessionPersistence,
@@ -9,8 +9,8 @@ import {
     type PublicWorkerEvent,
     type WorkerRequest,
     type WorkerResult,
-} from './protocol.ts';
-import { workerFrames } from './worker-frames.ts';
+} from '../protocol.ts';
+import { workerFrames } from '../worker-frames.ts';
 
 type Context = Parameters<typeof installOpenShellProvider>[0];
 type Provider = Parameters<typeof installOpenShellProvider>[1];

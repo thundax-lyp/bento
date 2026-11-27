@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
 import { serveExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
 import { Store } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/store/index.ts';
-import { projectTaskChecks } from '@/apps/worker/src/task-projection.ts';
+import { projectTaskChecks } from '@/apps/worker/src/task/task-projection.ts';
 import { mockAccounts } from '@/apps/workspace/workspace-web/acceptance/fixtures/workspace-api/src/account-store.ts';
 import {
     demoAccounts,

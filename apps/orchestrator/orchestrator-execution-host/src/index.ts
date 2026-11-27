@@ -9,8 +9,8 @@ export { createSshIngress } from './openshell/ssh-ingress.ts';
 export { createPersistenceIngress } from './openshell/persistence-ingress.ts';
 export { SandboxManagement } from './openshell/management.ts';
 
-export { installOpenShellProvider } from '@/apps/worker/src/provider.ts';
-export type { OpenShellProviderConfig } from '@/apps/worker/src/provider.ts';
+export { installOpenShellProvider } from '@/apps/worker/src/openshell/provider.ts';
+export type { OpenShellProviderConfig } from '@/apps/worker/src/openshell/provider.ts';
 
 export { SingleHostExecution } from './openshell/single-host.ts';
 export type {
@@ -23,4 +23,4 @@ export type { SdkIngressOptions } from './openshell/sdk-ingress.ts';
 export {
     remoteSessionPersistence,
     reconcileSessionPersistence,
-} from '@/apps/worker/src/remote-session.ts';
+} from '@/apps/worker/src/runtime/remote-session.ts';

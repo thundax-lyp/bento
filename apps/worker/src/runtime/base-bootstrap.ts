@@ -23,13 +23,13 @@ import {
     ptcHelper,
     ptcFrameBytes,
     type PtcSdk,
-} from './ptc-subprocess.ts';
+} from '../openshell/ptc-subprocess.ts';
 import type { DshWorkerBootstrap } from './dsh-worker.ts';
-import type { OpenShellProviderConfig } from './provider.ts';
-import { createRunSdkTransport } from './sdk-transport.ts';
+import type { OpenShellProviderConfig } from '../openshell/provider.ts';
+import { createRunSdkTransport } from '../openshell/sdk-transport.ts';
 import { bindWorkerSession } from './remote-session.ts';
-import type { PublicWorkerEvent } from './protocol.ts';
-import type { TrustedTaskCheck } from './task-projection.ts';
+import type { PublicWorkerEvent } from '../protocol.ts';
+import type { TrustedTaskCheck } from '../task/task-projection.ts';
 
 export type BaseBootstrapConfig = {
     schema: 1;

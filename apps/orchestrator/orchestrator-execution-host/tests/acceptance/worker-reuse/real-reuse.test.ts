@@ -10,9 +10,9 @@ import { after, before, test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
-import type { BaseBootstrapConfig } from '@/apps/worker/src/base-bootstrap.ts';
+import type { BaseBootstrapConfig } from '@/apps/worker/src/runtime/base-bootstrap.ts';
 import type { WorkerRequest } from '@/apps/worker/src/protocol.ts';
-import { createRunSdkTransport } from '@/apps/worker/src/sdk-transport.ts';
+import { createRunSdkTransport } from '@/apps/worker/src/openshell/sdk-transport.ts';
 import { prewarmedWorker } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/warm-worker.ts';
 import type { PreparedSdk } from '@/apps/orchestrator/orchestrator-execution-host/tests/openshell/binding-grants/sdk.ts';
 import { prepareReuseSdk } from './sdk.ts';
@@ -175,7 +175,7 @@ async function harness(
             PATH: process.env.PATH ?? '',
             BENTO_DSH_BOOTSTRAP: observed
                 ? join(here, 'observed-bootstrap.ts')
-                : join(root, 'apps/worker/src/base-bootstrap.ts'),
+                : join(root, 'apps/worker/src/runtime/base-bootstrap.ts'),
             BENTO_DSH_RUNTIME_CONFIG: configPath,
             BENTO_REUSE_MODEL_URL: 'http://127.0.0.1:' + address.port,
             BENTO_REUSE_TRACE: trace,
@@ -821,7 +821,7 @@ test(
                     PATH: process.env.PATH ?? '',
                     BENTO_DSH_BOOTSTRAP: join(
                         root,
-                        'apps/worker/src/base-bootstrap.ts',
+                        'apps/worker/src/runtime/base-bootstrap.ts',
                     ),
                     BENTO_DSH_RUNTIME_CONFIG: config,
                     BENTO_REUSE_MODEL_URL: h.modelUrl,

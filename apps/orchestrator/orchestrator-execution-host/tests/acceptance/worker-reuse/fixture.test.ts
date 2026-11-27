@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import type { PreparedSdk } from '@/apps/orchestrator/orchestrator-execution-host/tests/openshell/binding-grants/sdk.ts';
 import type { WorkerRequest } from '@/apps/worker/src/protocol.ts';
-import { createRunSdkTransport } from '@/apps/worker/src/sdk-transport.ts';
+import { createRunSdkTransport } from '@/apps/worker/src/openshell/sdk-transport.ts';
 import { createReuseFixture } from './fixture.ts';
 import { sha256 } from './observer.ts';
 import { prepareReuseSdk } from './sdk.ts';
