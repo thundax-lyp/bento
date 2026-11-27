@@ -167,6 +167,8 @@
         "apps/workspace/api/tests/oidc.test.ts",
         "apps/workspace/api/tests/fixtures/oidc-fixture.ts",
         "apps/workspace/api/src/protocol.ts",
+        "apps/workspace/api/src/task-protocol.ts",
+        "apps/workspace/api/src/protocol-values.ts",
         "apps/workspace/api/src/server.ts",
         "apps/workspace/api/src/space-execution.ts",
         "apps/workspace/api/tests/fixtures/space-integrity-fixture.ts",
