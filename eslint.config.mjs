@@ -1,6 +1,7 @@
 import js from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import prettier from 'eslint-config-prettier';
+import imports from './scripts/import-rules.mjs';
 
 export default tseslint.config(
     {
@@ -17,35 +18,11 @@ export default tseslint.config(
     tseslint.configs.recommended,
     prettier,
     {
-        files: ['**/*.{ts,tsx,mts,cts}'],
+        files: ['**/*.{ts,tsx,mts,cts,js,mjs,cjs}'],
+        plugins: { bento: imports },
         rules: {
-            'no-restricted-imports': [
-                'error',
-                {
-                    patterns: [
-                        {
-                            regex: '^\\.\\./\\.\\.(?:/|$)',
-                            message:
-                                'Use @/ for imports that cross two or more parent directories.',
-                        },
-                    ],
-                },
-            ],
-            'no-restricted-syntax': [
-                'error',
-                {
-                    selector:
-                        ':matches(ImportDeclaration, ExportNamedDeclaration, ExportAllDeclaration, ImportExpression, TSImportType) > .source[value=/^(?:\\.\\.?\\/|@\\/)/]:not([value=/\\.(?:[cm]?[jt]sx?|json|css|svg|png|webp|woff2?)$/])',
-                    message:
-                        'Use an explicit file extension for repository imports.',
-                },
-                {
-                    selector:
-                        ':matches(ImportExpression > .source, TSImportType > .source)[value=/^\\.\\.\\/\\.\\.(?:\\/|$)/]',
-                    message:
-                        'Use @/ for imports that cross two or more parent directories.',
-                },
-            ],
+            'bento/public-workspace-imports': 'error',
+            'bento/repository-import-paths': 'error',
         },
     },
 );
