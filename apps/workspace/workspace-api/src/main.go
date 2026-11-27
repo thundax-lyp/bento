@@ -174,7 +174,7 @@ func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store 
 			}
 			space = &spaceReader{db: db, storage: storage}
 			space.routes(public, sessions, backend)
-			registerSpaceUploadBridge(internal, db, storage)
+			registerSpaceUploadBridge(internal, db, storage, backend)
 		}
 	}
 	internal.HandleFunc("GET /internal/session", func(w http.ResponseWriter, r *http.Request) {

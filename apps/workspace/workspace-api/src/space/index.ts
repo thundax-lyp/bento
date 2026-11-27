@@ -48,7 +48,15 @@ function view(row: Upload) {
 }
 
 export async function goSpaceUpload<T>(
-    action: 'reserve' | 'prepare' | 'finish' | 'clean' | 'parts' | 'sign',
+    action:
+        | 'reserve'
+        | 'prepare'
+        | 'finish'
+        | 'clean'
+        | 'parts'
+        | 'sign'
+        | 'delete'
+        | 'advance-delete',
     input: object,
 ): Promise<T> {
     const response = await fetch(
@@ -456,6 +464,7 @@ export function mySpace(
         active,
         execution,
         commitDeletionChange,
+        ...(goUpload ? { goUpload } : {}),
     });
 
     async function sweep() {

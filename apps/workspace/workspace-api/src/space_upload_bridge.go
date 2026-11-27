@@ -10,16 +10,16 @@ import (
 
 // During the cutover, the legacy router owns per-upload serialization across
 // uploads, deletion, and background cleanup. It holds that lock through this call.
-func registerSpaceUploadBridge(mux *http.ServeMux, db *sql.DB, storage *spaceStorage) {
+func registerSpaceUploadBridge(mux *http.ServeMux, db *sql.DB, storage *spaceStorage, backend projectService) {
 	service := spaceUploads{db: db, storage: storage, now: time.Now}
 	mux.HandleFunc("POST /internal/space/upload/{action}", func(w http.ResponseWriter, r *http.Request) {
-		if err := service.uploadBridge(w, r); err != nil {
+		if err := service.uploadBridge(w, r, spaceFileDeletion{db: db, storage: storage, hold: backend.fileHold}); err != nil {
 			authFailure(w, err)
 		}
 	})
 }
 
-func (s spaceUploads) uploadBridge(w http.ResponseWriter, r *http.Request) error {
+func (s spaceUploads) uploadBridge(w http.ResponseWriter, r *http.Request, deletion spaceFileDeletion) error {
 	fields, err := readProjectJSON(w, r, 64*1024)
 	if err != nil {
 		return err
@@ -65,6 +65,15 @@ func (s spaceUploads) uploadBridge(w http.ResponseWriter, r *http.Request) error
 		return notFound
 	}
 	switch action {
+	case "delete":
+		status, err := deletion.request(ctx, owner, id)
+		if err != nil {
+			return err
+		}
+		authJSON(w, http.StatusOK, map[string]int{"deleteStatus": status})
+		return nil
+	case "advance-delete":
+		err = deletion.advance(ctx, row)
 	case "prepare":
 		err = s.prepare(ctx, &row)
 	case "finish":

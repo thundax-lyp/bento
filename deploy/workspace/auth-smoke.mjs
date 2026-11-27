@@ -23,6 +23,8 @@ const missing = process.argv[2] === '--missing-artifacts';
 const spaceConfigured = process.argv[2] === '--space-reads';
 const subject = spaceConfigured ? 'fixture-space-subject' : 'fixture-subject';
 const fixture = await startOidcFixture();
+let fileDeleteHeld = false;
+let fileDeleteReleased = false;
 const execution = createServer(async (req, res) => {
     res.setHeader('Content-Type', 'application/json');
     if (
@@ -88,6 +90,23 @@ const execution = createServer(async (req, res) => {
         );
         return;
     }
+    if (
+        req.url?.startsWith(
+            '/v1/task-sources/00000000-0000-4000-8000-000000000020/files/00000000-0000-4000-8000-000000000022/deletion-holds/',
+        ) &&
+        req.headers['user-agent']?.startsWith('Go-http-client/')
+    ) {
+        if (req.method === 'POST') {
+            fileDeleteHeld = true;
+            res.end(JSON.stringify({ state: 'held' }));
+            return;
+        }
+        if (req.method === 'DELETE' && fileDeleteHeld && !emptyUploadWritten) {
+            fileDeleteReleased = true;
+            res.end(JSON.stringify({ state: 'released' }));
+            return;
+        }
+    }
     if (req.method === 'POST' && req.url === '/v1/account/drain') {
         res.writeHead(204).end();
         return;
@@ -123,6 +142,11 @@ const objectStore = createServer((req, res) => {
     ) {
         emptyUploadWritten = true;
         res.writeHead(200).end();
+        return;
+    }
+    if (req.method === 'DELETE' && fileDeleteHeld) {
+        emptyUploadWritten = false;
+        res.writeHead(204).end();
         return;
     }
     console.error(
@@ -668,6 +692,29 @@ async function checkSpaceReads() {
         );
         assert.equal((await finished.json()).state, 'saved');
         assert.ok(emptyUploadWritten);
+        const deleteRequest = () =>
+            request('/api/space/files/' + emptyFile, {
+                method: 'DELETE',
+                headers: uploadHeaders,
+            });
+        const deleting = await status(
+            deleteRequest(),
+            202,
+            'Go requests the file deletion hold',
+        );
+        assert.deepEqual(await deleting.json(), { state: 'deleting' });
+        assert.ok(fileDeleteHeld);
+        const cutoff = Date.now() + 35_000;
+        while (!fileDeleteReleased && Date.now() < cutoff) await delay(250);
+        assert.ok(
+            fileDeleteReleased,
+            'Go must release the hold after deleting the object',
+        );
+        await status(
+            deleteRequest(),
+            204,
+            'Go replays completed file deletion',
+        );
         db.prepare(
             'INSERT INTO space_project_deletions (spaceId,owner,operationId,phase) VALUES (?,?,?,?)',
         ).run(project, owner, 'fixture-deletion', 'holding');
