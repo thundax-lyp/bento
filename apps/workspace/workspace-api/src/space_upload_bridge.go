@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // During the cutover, the legacy router owns per-upload serialization across
@@ -15,7 +17,8 @@ func registerSpaceUploadBridge(mux *http.ServeMux, db *sql.DB, storage *spaceSto
 	locks := &spaceLocks{}
 	mux.HandleFunc("POST /internal/space/upload/{action}", func(w http.ResponseWriter, r *http.Request) {
 		if err := service.uploadBridge(w, r, spaceFileDeletion{db: db, storage: storage, hold: backend.fileHold},
-			spaceSnapshots{db: db, read: storage.read, backend: backend}, locks); err != nil {
+			spaceSnapshots{db: db, read: storage.read, backend: backend},
+			spaceProjectDeletion{db: db, storage: storage, backend: backend}, locks); err != nil {
 			var failure *snapshotFailure
 			if errors.As(err, &failure) {
 				body := map[string]any{"code": failure.code, "message": failure.message}
@@ -30,7 +33,7 @@ func registerSpaceUploadBridge(mux *http.ServeMux, db *sql.DB, storage *spaceSto
 	})
 }
 
-func (s spaceUploads) uploadBridge(w http.ResponseWriter, r *http.Request, deletion spaceFileDeletion, snapshots spaceSnapshots, locks *spaceLocks) error {
+func (s spaceUploads) uploadBridge(w http.ResponseWriter, r *http.Request, deletion spaceFileDeletion, snapshots spaceSnapshots, projects spaceProjectDeletion, locks *spaceLocks) error {
 	fields, err := readProjectJSON(w, r, 64*1024)
 	if err != nil {
 		return err
@@ -85,6 +88,30 @@ func (s spaceUploads) uploadBridge(w http.ResponseWriter, r *http.Request, delet
 	id, _ := projectString(fields["id"])
 	if !taskUUID.MatchString(id) {
 		return notFound
+	}
+	if action == "enroll-project-delete" {
+		if err := projects.enroll(ctx, owner, id); err != nil {
+			return err
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return nil
+	}
+	if action == "advance-project-delete" {
+		token, err := uuid.NewRandom()
+		if err != nil {
+			return err
+		}
+		lockID := "project:" + id
+		if !locks.acquire(lockID, token.String()) {
+			return projectDeleteUnconfirmed
+		}
+		defer locks.release(lockID, token.String())
+		status, err := projects.advance(ctx, owner, id)
+		if err != nil {
+			return err
+		}
+		authJSON(w, http.StatusOK, map[string]int{"deleteStatus": status})
+		return nil
 	}
 	token, _ := projectString(fields["token"])
 	switch action {

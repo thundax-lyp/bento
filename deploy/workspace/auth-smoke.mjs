@@ -125,6 +125,16 @@ const execution = createServer(async (req, res) => {
             return;
         }
     }
+    if (
+        req.method === 'DELETE' &&
+        req.url ===
+            '/v1/task-sources/00000000-0000-4000-8000-000000000020?phase=hold' &&
+        req.headers['user-agent']?.startsWith('Go-http-client/') &&
+        /^[a-f0-9-]{36}$/.test(req.headers['idempotency-key'] ?? '')
+    ) {
+        res.writeHead(204).end();
+        return;
+    }
     if (req.method === 'POST' && req.url === '/v1/account/drain') {
         res.writeHead(204).end();
         return;
@@ -760,6 +770,30 @@ async function checkSpaceReads() {
             request('/api/space/files/' + file + '/preview', { headers }),
             404,
             'Deleting space hides file',
+        );
+        db.prepare('DELETE FROM space_project_deletions WHERE spaceId=?').run(
+            project,
+        );
+        await status(
+            request('/api/space/projects/' + project, {
+                method: 'DELETE',
+                headers: uploadHeaders,
+            }),
+            204,
+            'Go confirms project deletion and clears metadata',
+        );
+        await status(
+            request('/api/space/projects/' + project, {
+                method: 'DELETE',
+                headers: uploadHeaders,
+            }),
+            204,
+            'Go replays a completed project deletion',
+        );
+        assert.ok(
+            db
+                .prepare('SELECT id FROM space_retired_upload_ids WHERE id=?')
+                .get(file),
         );
     } finally {
         db.close();

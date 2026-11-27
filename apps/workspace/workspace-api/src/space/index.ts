@@ -64,7 +64,9 @@ export async function goSpaceUpload<T>(
         | 'purge-file'
         | 'purge-metadata'
         | 'lock'
-        | 'unlock',
+        | 'unlock'
+        | 'enroll-project-delete'
+        | 'advance-project-delete',
     input: object,
 ): Promise<T> {
     const response = await fetch(
@@ -169,6 +171,7 @@ export function mySpace(
         requireWritableProject,
         setState,
         commitDeletionChange,
+        ...(goUpload ? { goUpload } : {}),
     });
 
     function commitDeletionChange(change: () => void) {
