@@ -523,15 +523,17 @@ export function mySpace(
     });
 
     async function sweep() {
-        const rows = db
-            .prepare(
-                `
+        const rows = goUpload
+            ? []
+            : (db
+                  .prepare(
+                      `
                 SELECT * FROM space_uploads WHERE state = 'completing'
                 OR (state = 'cleaning' AND signedUntil <= ?)
                 OR (state IN ('preparing','uploading') AND expires <= ?)
             `,
-            )
-            .all(Date.now(), Date.now()) as Upload[];
+                  )
+                  .all(Date.now(), Date.now()) as Upload[]);
         for (const row of rows) {
             if (closing) return;
             if (active.has(row.id)) continue;
@@ -548,11 +550,13 @@ export function mySpace(
                 // Keep the durable state for the next reconciliation attempt.
             });
         }
-        const deletions = db
-            .prepare(
-                'SELECT u.* FROM space_file_deletions d JOIN space_uploads u ON u.id=d.fileId',
-            )
-            .all() as Upload[];
+        const deletions = goUpload
+            ? []
+            : (db
+                  .prepare(
+                      'SELECT u.* FROM space_file_deletions d JOIN space_uploads u ON u.id=d.fileId',
+                  )
+                  .all() as Upload[]);
         for (const row of deletions) {
             if (closing) return;
             if (active.has(row.id)) continue;

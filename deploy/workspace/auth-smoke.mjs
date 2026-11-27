@@ -135,11 +135,19 @@ const execution = createServer(async (req, res) => {
         res.writeHead(204).end();
         return;
     }
-    if (req.method === 'POST' && req.url === '/v1/account/drain') {
+    if (
+        req.method === 'POST' &&
+        req.url === '/v1/account/drain' &&
+        req.headers['user-agent']?.startsWith('Go-http-client/')
+    ) {
         res.writeHead(204).end();
         return;
     }
-    if (req.method === 'POST' && req.url === '/v1/account/purge') {
+    if (
+        req.method === 'POST' &&
+        req.url === '/v1/account/purge' &&
+        req.headers['user-agent']?.startsWith('Go-http-client/')
+    ) {
         res.end(JSON.stringify({ complete: true }));
         return;
     }
@@ -629,6 +637,24 @@ async function checkRuntime() {
     const closed = await authorize(request('/api/oidc/start'), 'closed');
     await status(callback(closed), 401, 'Closed identity denied after restart');
     await checkOwner(ownerId, true);
+    const deadline = Date.now() + 15_000;
+    let purgePending = true;
+    while (purgePending && Date.now() < deadline) {
+        const response = await status(
+            globalThis.fetch('http://127.0.0.1:4103/internal/account-purges'),
+            200,
+            'Account purge queue',
+        );
+        purgePending = (await response.json()).some(
+            (item) => item.ownerId === ownerId,
+        );
+        if (purgePending) await delay(200);
+    }
+    assert.equal(
+        purgePending,
+        false,
+        'Go schedules and completes account purge',
+    );
 }
 
 async function checkSpaceReads() {

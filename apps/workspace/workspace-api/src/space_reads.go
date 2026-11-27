@@ -13,8 +13,10 @@ import (
 )
 
 type spaceReader struct {
-	db      *sql.DB
-	storage *spaceStorage
+	db                 *sql.DB
+	storage            *spaceStorage
+	stopReconciliation func()
+	locks              *spaceLocks
 }
 
 type spaceProjectView struct {

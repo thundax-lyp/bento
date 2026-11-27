@@ -12,9 +12,8 @@ import (
 
 // During the cutover, the legacy router owns per-upload serialization across
 // uploads, deletion, and background cleanup. It holds that lock through this call.
-func registerSpaceUploadBridge(mux *http.ServeMux, db *sql.DB, storage *spaceStorage, backend projectService) {
+func registerSpaceUploadBridge(mux *http.ServeMux, db *sql.DB, storage *spaceStorage, backend projectService, locks *spaceLocks) {
 	service := spaceUploads{db: db, storage: storage, now: time.Now}
-	locks := &spaceLocks{}
 	mux.HandleFunc("POST /internal/space/upload/{action}", func(w http.ResponseWriter, r *http.Request) {
 		if err := service.uploadBridge(w, r, spaceFileDeletion{db: db, storage: storage, hold: backend.fileHold},
 			spaceSnapshots{db: db, read: storage.read, backend: backend},

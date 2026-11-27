@@ -173,7 +173,9 @@ async function main() {
         origin: publicUrl.origin,
         backend,
         auth,
-        ...(goAuth ? { account: goAccount } : {}),
+        ...(goAuth
+            ? { account: goAccount, goAccountSweep: mode === 'http' }
+            : {}),
         ...(oidc ? { oidc } : {}),
         ...(space ? { space } : {}),
     });

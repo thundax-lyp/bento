@@ -69,6 +69,17 @@ func run() error {
 			}
 			if space != nil {
 				defer space.db.Close()
+				if space.stopReconciliation != nil {
+					defer space.stopReconciliation()
+				}
+			}
+			if os.Getenv("BENTO_ONE_MODE") == "http" {
+				backend, err := workspaceProjectBackend()
+				if err != nil {
+					return err
+				}
+				stopSweep := (accountSweep{store: store, backend: backend, space: space}).start(ctx)
+				defer stopSweep()
 			}
 		}
 		internal := &http.Server{Handler: internalMux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second}
@@ -174,7 +185,12 @@ func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store 
 			}
 			space = &spaceReader{db: db, storage: storage}
 			space.routes(public, sessions, backend)
-			registerSpaceUploadBridge(internal, db, storage, backend)
+			locks := &spaceLocks{}
+			space.locks = locks
+			uploads := spaceUploads{db: db, storage: storage, now: time.Now}
+			uploads.routes(public, sessions, backend, origin, locks)
+			space.stopReconciliation = uploads.startReconciliation(ctx, locks, backend)
+			registerSpaceUploadBridge(internal, db, storage, backend, locks)
 		}
 	}
 	internal.HandleFunc("GET /internal/session", func(w http.ResponseWriter, r *http.Request) {
