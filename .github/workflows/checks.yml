@@ -152,10 +152,6 @@ jobs:
             - run: pnpm check:worker
               if: ${{ needs.changes.outputs.worker == 'true' }}
             - run: pnpm lint
-              if: >-
-                  ${{ needs.changes.outputs.workspace == 'true' ||
-                      needs.changes.outputs.orchestrator == 'true' ||
-                      needs.changes.outputs.worker == 'true' }}
             - run: pnpm format:check
 
     workspace:

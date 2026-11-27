@@ -46,7 +46,7 @@ pnpm format
 
 认证前端可独立执行 `pnpm --filter @bento/workspace-auth build`。
 
-可按工程运行 `pnpm check:workspace`（个人端认证、API 和 Web）、`pnpm check:orchestrator`（Run 编排与执行宿主）或 `pnpm check:worker`（独立 Worker）。
+仓库级静态检查使用 `pnpm lint` 和 `pnpm format:check`。可按工程运行 `pnpm check:workspace`（个人端认证、API 和 Web）、`pnpm check:orchestrator`（Run 编排与执行宿主）或 `pnpm check:worker`（独立 Worker）。
 
 Orchestrator 的 TypeScript 测试按模块放在 [`apps/orchestrator/orchestrator-execution-host/tests/`](apps/orchestrator/orchestrator-execution-host/tests/)，可通过 `pnpm --filter @bento/orchestrator test` 运行。Go Temporal 控制端位于 `apps/orchestrator/orchestrator-control/cmd/control/`，从 `apps/orchestrator/orchestrator-control` 运行 `go build ./cmd/control` 构建。
 
