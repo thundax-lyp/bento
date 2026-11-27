@@ -1,3 +1,4 @@
+import { authorityOperations } from './authority-operations.ts';
 import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
@@ -39,6 +40,7 @@ const digest = (value: string) =>
 /** Trusted control-plane store. Only an authenticated controller may supply observations. */
 export class Authority {
     private readonly db: DatabaseSync;
+    private readonly operations: ReturnType<typeof authorityOperations>;
     private readonly path: string;
     private readonly goControl: string | undefined;
 
@@ -46,6 +48,13 @@ export class Authority {
         this.path = path;
         this.goControl = goControl;
         this.db = new DatabaseSync(path);
+        this.operations = authorityOperations(
+            this.db,
+            !!goControl,
+            (action, input) => this.command(action, input),
+            (token) => this.authorize(token),
+            (changes) => this.requireChange(changes),
+        );
         this.db.exec(`
             PRAGMA journal_mode=WAL;
             PRAGMA synchronous=FULL;
@@ -873,30 +882,7 @@ export class Authority {
 
     /** An UNKNOWN operation remains queryable and cannot be submitted again. */
     reserveOperation(token: string, id: string, input: string) {
-        const fingerprint = digest(input);
-        if (this.goControl) {
-            const grant = this.authorize(token);
-            return (
-                this.command('reserve-operation', {
-                    session: grant.session,
-                    generation: grant.generation,
-                    tokenDigest: digest(token),
-                    operationId: id,
-                    inputDigest: fingerprint,
-                }) === 'reserved'
-            );
-        }
-        const result = this.db
-            .prepare(
-                `
-            INSERT INTO operations(session,generation,id,digest,state)
-            SELECT session,generation,?,?,'UNKNOWN' FROM execution_sessions
-            WHERE capability=? AND state='RUNNING' AND expires>?
-            ON CONFLICT(session,id) DO NOTHING
-        `,
-            )
-            .run(id, fingerprint, digest(token), Date.now());
-        return Number(result.changes) === 1;
+        return this.operations.reserveOperation(token, id, input);
     }
 
     observeOperation(
@@ -905,41 +891,14 @@ export class Authority {
         id: string,
         outcome: 'SUCCEEDED' | 'FAILED',
     ) {
-        if (
-            this.command('observe-operation', {
-                session,
-                generation,
-                operationId: id,
-                outcome,
-            }) !== undefined
-        )
-            return;
-        this.requireChange(
-            this.db
-                .prepare(
-                    `
-            UPDATE operations SET state=? WHERE session=? AND generation=? AND id=? AND state='UNKNOWN'
-        `,
-                )
-                .run(outcome, session, generation, id).changes,
-        );
+        this.operations.observeOperation(session, generation, id, outcome);
     }
 
-    hasUnknownOperations(session: string, generation: number): boolean {
-        return (
-            this.db
-                .prepare(
-                    "SELECT 1 FROM operations WHERE session=? AND generation=? AND state='UNKNOWN' LIMIT 1",
-                )
-                .get(session, generation) !== undefined
-        );
+    hasUnknownOperations(session: string, generation: number) {
+        return this.operations.hasUnknownOperations(session, generation);
     }
 
     operation(session: string, generation: number, id: string) {
-        return this.db
-            .prepare(
-                'SELECT state,digest FROM operations WHERE session=? AND generation=? AND id=?',
-            )
-            .get(session, generation, id);
+        return this.operations.operation(session, generation, id);
     }
 }
