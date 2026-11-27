@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -65,6 +66,38 @@ func TestProjectCancellation(t *testing.T) {
 				if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil || result.Error.Code != tc.wantFailure {
 					t.Fatalf("unexpected error response: %s", response.Body)
 				}
+			}
+		})
+	}
+}
+
+func TestProjectInputContract(t *testing.T) {
+	for _, tc := range []struct {
+		body, code string
+	}{
+		{`{"name":"project","files":[]}`, ""},
+		{`{"name":"project","files":[{"path":"emoji.txt","text":"\ud83d\ude00"}]}`, ""},
+		{`{"name":"project","files":[{"path":"replacement.txt","text":"\ufffd"}]}`, ""},
+		{`{"name":"project","files":[{"path":"\ud800","text":""}]}`, "invalid_path"},
+		{`{"name":"project","files":[{"path":"text.txt","text":"\ud800"}]}`, "invalid_file"},
+		{`{"name":"project","files":[{"path":"dir","text":""},{"path":"dir/a","text":""}]}`, "path_conflict"},
+		{`{"Name":"project","files":[]}`, "invalid_project"},
+		{`{"name":"project","files":[null]}`, "invalid_input"},
+		{`[1,2]`, "invalid_input"},
+		{`{"name":`, "invalid_json"},
+	} {
+		t.Run(tc.body, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/projects", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json; charset=utf-8")
+			fields, err := readProjectJSON(httptest.NewRecorder(), req, maxProjectRequest)
+			if err == nil {
+				_, err = parseProjectInput(fields)
+			}
+			if tc.code == "" && err != nil {
+				t.Fatal(err)
+			}
+			if tc.code != "" && (err == nil || err.Error() != tc.code) {
+				t.Fatalf("error %v, want %s", err, tc.code)
 			}
 		})
 	}

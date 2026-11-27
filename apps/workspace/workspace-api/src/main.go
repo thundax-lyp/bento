@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -146,6 +147,13 @@ func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store 
 			})
 		}
 	}
+	if os.Getenv("BENTO_ONE_MODE") == "http" {
+		backend, err := workspaceProjectBackend()
+		if err != nil {
+			return err
+		}
+		backend.routes(public, sessions, origin)
+	}
 	internal.HandleFunc("GET /internal/session", func(w http.ResponseWriter, r *http.Request) {
 		session, err := sessions.current(r)
 		if err != nil {
@@ -155,6 +163,34 @@ func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store 
 		authJSON(w, 200, map[string]string{"ownerId": session.Owner, "account": session.Name})
 	})
 	return nil
+}
+
+func workspaceProjectBackend() (projectService, error) {
+	origin := strings.TrimSuffix(os.Getenv("BENTO_ONE_TWO_URL"), "/")
+	upstream, err := url.Parse(origin)
+	bearer := os.Getenv("BENTO_ONE_TWO_BEARER")
+	if err != nil || upstream.Hostname() == "" || upstream.User != nil ||
+		(upstream.Scheme != "http" && upstream.Scheme != "https") || upstream.Path != "" ||
+		upstream.RawQuery != "" || upstream.ForceQuery || upstream.Fragment != "" ||
+		bearer == "" || strings.ContainsFunc(bearer, func(r rune) bool {
+		return (r < 'A' || r > 'Z') && (r < 'a' || r > 'z') && (r < '0' || r > '9') && !strings.ContainsRune("._~+/=-", r)
+	}) {
+		return projectService{}, errors.New("missing or invalid execution service configuration")
+	}
+	timeout := 10000
+	if raw := os.Getenv("BENTO_ONE_TWO_TIMEOUT_MS"); raw != "" {
+		timeout, err = strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil || timeout < 1 || timeout > 30000 {
+			return projectService{}, errors.New("invalid BENTO_ONE_TWO_TIMEOUT_MS")
+		}
+	}
+	return projectService{
+		origin: origin, bearer: bearer,
+		spaceOrigin: strings.TrimSuffix(os.Getenv("BENTO_SPACE_S3_ENDPOINT"), "/"),
+		client: &http.Client{Timeout: time.Duration(timeout) * time.Millisecond, CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		}},
+	}, nil
 }
 
 func main() {

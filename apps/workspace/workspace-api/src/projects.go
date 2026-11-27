@@ -10,6 +10,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -19,9 +20,10 @@ import (
 const maxProjectRequest = 8 * 1024 * 1024
 
 type projectService struct {
-	origin string
-	bearer string
-	client *http.Client
+	origin      string
+	bearer      string
+	spaceOrigin string
+	client      *http.Client
 }
 
 type projectRoute struct {
@@ -53,62 +55,117 @@ func (r projectRoute) path() string {
 	return path
 }
 
-func readProjectJSON(w http.ResponseWriter, r *http.Request, maxBytes int64, dst any) error {
-	media, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if media != "application/json" {
-		return &requestFailure{400, "invalid_content_type", "请使用 application/json。"}
+func readProjectJSON(w http.ResponseWriter, r *http.Request, maxBytes int64) (map[string]json.RawMessage, error) {
+	media := strings.TrimSpace(strings.SplitN(r.Header.Get("Content-Type"), ";", 2)[0])
+	if !strings.EqualFold(media, "application/json") {
+		return nil, &requestFailure{400, "invalid_content_type", "请使用 application/json。"}
 	}
+	tooLarge := &requestFailure{413, "too_large", "请求超过大小限制。"}
 	if r.ContentLength > maxBytes {
-		return &requestFailure{413, "too_large", "请求超过大小限制。"}
+		return nil, tooLarge
 	}
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBytes))
 	var limit *http.MaxBytesError
 	if errors.As(err, &limit) {
-		return &requestFailure{413, "too_large", "请求超过大小限制。"}
+		return nil, tooLarge
 	}
-	if err != nil || !utf8.Valid(body) || !bytes.HasPrefix(bytes.TrimSpace(body), []byte("{")) ||
-		json.Unmarshal(body, dst) != nil {
-		return &requestFailure{400, "invalid_json", "请求内容必须是 UTF-8 JSON。"}
+	body = bytes.TrimPrefix(body, []byte{0xef, 0xbb, 0xbf})
+	if err != nil || !utf8.Valid(body) || !json.Valid(body) {
+		return nil, &requestFailure{400, "invalid_json", "请求内容必须是 UTF-8 JSON。"}
 	}
-	return nil
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(body, &fields) != nil || fields == nil {
+		return nil, &requestFailure{400, "invalid_input", "请求必须是 JSON 对象。"}
+	}
+	return fields, nil
+}
+
+type projectFile struct {
+	Path string `json:"path"`
+	Text string `json:"text"`
 }
 
 type projectInput struct {
-	Name  string `json:"name"`
-	Files []struct {
-		Path string  `json:"path"`
-		Text *string `json:"text"`
-	} `json:"files"`
+	Name  string        `json:"name"`
+	Files []projectFile `json:"files"`
 }
 
-func (p *projectInput) validate() error {
-	if strings.TrimSpace(p.Name) == "" || p.Files == nil {
-		return &requestFailure{400, "invalid_project", "请提供项目名称和文件列表。"}
+func projectString(raw json.RawMessage) (string, bool) {
+	var value string
+	valid := len(raw) != 0 && raw[0] == '"' && json.Unmarshal(raw, &value) == nil
+	return value, valid
+}
+
+func wellFormedProjectString(raw json.RawMessage) (string, bool) {
+	value, ok := projectString(raw)
+	if !ok {
+		return "", false
 	}
-	if len(p.Files) > 100 {
-		return &requestFailure{413, "too_many_files", "项目最多包含 100 个文件。"}
-	}
-	paths := make(map[string]bool, len(p.Files))
-	total := 0
-	for _, file := range p.Files {
-		if strings.Contains(file.Path, "\\") || strings.ContainsFunc(file.Path, unicode.IsControl) || paths[file.Path] {
-			return &requestFailure{400, "invalid_path", "文件路径无效或重复。"}
+	// encoding/json replaces unpaired UTF-16 surrogates. The HTTP contract rejects them in paths and file text.
+	for i := 0; i < len(raw); i++ {
+		if raw[i] != '\\' {
+			continue
 		}
-		for _, part := range strings.Split(file.Path, "/") {
+		i++
+		if raw[i] != 'u' {
+			continue
+		}
+		unit, _ := strconv.ParseUint(string(raw[i+1:i+5]), 16, 16)
+		i += 4
+		if unit < 0xd800 || unit > 0xdfff {
+			continue
+		}
+		if unit >= 0xdc00 || i+6 >= len(raw) || raw[i+1] != '\\' || raw[i+2] != 'u' {
+			return "", false
+		}
+		low, _ := strconv.ParseUint(string(raw[i+3:i+7]), 16, 16)
+		if low < 0xdc00 || low > 0xdfff {
+			return "", false
+		}
+		i += 6
+	}
+	return value, true
+}
+
+func parseProjectInput(fields map[string]json.RawMessage) (projectInput, error) {
+	name, ok := projectString(fields["name"])
+	var files []json.RawMessage
+	if !ok || strings.TrimSpace(name) == "" || json.Unmarshal(fields["files"], &files) != nil || files == nil {
+		return projectInput{}, &requestFailure{400, "invalid_project", "请提供项目名称和文件列表。"}
+	}
+	if len(files) > 100 {
+		return projectInput{}, &requestFailure{413, "too_many_files", "项目最多包含 100 个文件。"}
+	}
+	result := projectInput{Name: name, Files: make([]projectFile, 0, len(files))}
+	paths := make(map[string]bool, len(files))
+	total := 0
+	for _, raw := range files {
+		var file map[string]json.RawMessage
+		if json.Unmarshal(raw, &file) != nil || file == nil {
+			return projectInput{}, &requestFailure{400, "invalid_input", "请求必须是 JSON 对象。"}
+		}
+		path, ok := wellFormedProjectString(file["path"])
+		badPath := &requestFailure{400, "invalid_path", "文件路径无效或重复。"}
+		if !ok || strings.Contains(path, "\\") || strings.ContainsFunc(path, unicode.IsControl) || paths[path] {
+			return projectInput{}, badPath
+		}
+		for _, part := range strings.Split(path, "/") {
 			if part == "" || part == "." || part == ".." || part == ".git" {
-				return &requestFailure{400, "invalid_path", "文件路径无效或重复。"}
+				return projectInput{}, badPath
 			}
 		}
-		if file.Text == nil {
-			return &requestFailure{400, "invalid_file", "文件必须是 UTF-8 文本。"}
+		text, ok := wellFormedProjectString(file["text"])
+		if !ok {
+			return projectInput{}, &requestFailure{400, "invalid_file", "文件必须是 UTF-8 文本。"}
 		}
-		paths[file.Path] = true
-		total += len(*file.Text)
+		result.Files = append(result.Files, projectFile{Path: path, Text: text})
+		paths[path] = true
+		total += len(text)
 	}
 	for path := range paths {
 		for index := strings.IndexByte(path, '/'); index >= 0; {
 			if paths[path[:index]] {
-				return &requestFailure{400, "path_conflict", "文件路径和目录路径冲突。"}
+				return projectInput{}, &requestFailure{400, "path_conflict", "文件路径和目录路径冲突。"}
 			}
 			next := strings.IndexByte(path[index+1:], '/')
 			if next < 0 {
@@ -118,9 +175,9 @@ func (p *projectInput) validate() error {
 		}
 	}
 	if total > 1024*1024 {
-		return &requestFailure{413, "project_too_large", "项目文本内容最多 1 MiB。"}
+		return projectInput{}, &requestFailure{413, "project_too_large", "项目文本内容最多 1 MiB。"}
 	}
-	return nil
+	return result, nil
 }
 
 func projectResourceID(value string) bool {
@@ -305,9 +362,30 @@ func (s projectService) invoke(ctx context.Context, owner, key string, route pro
 	return status, result, err
 }
 
+func (s projectService) responseHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	connect := "'self'"
+	if s.spaceOrigin != "" {
+		connect += " " + s.spaceOrigin
+	}
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; connect-src "+connect+"; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+}
+
 func (s projectService) routes(mux *http.ServeMux, sessions *webSessions, origin string) {
 	register := func(pattern, kind string) {
 		mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+			s.responseHeaders(w)
+			if r.Method == http.MethodHead {
+				// ServeMux treats GET as matching HEAD. The Workspace API exposes GET only.
+				if _, err := sessions.current(r); err != nil {
+					authFailure(w, err)
+				} else {
+					authFailure(w, notFound)
+				}
+				return
+			}
 			if r.Method == "POST" && (r.Header.Get("Origin") != origin || len(r.Header.Values("Origin")) != 1) {
 				authFailure(w, &requestFailure{400, "invalid_origin", "请从任务入口提交请求。"})
 				return
@@ -341,11 +419,12 @@ func (s projectService) handle(w http.ResponseWriter, r *http.Request, owner, ki
 	var key string
 	switch kind {
 	case "createProject":
-		var project projectInput
-		if err := readProjectJSON(w, r, maxProjectRequest, &project); err != nil {
+		fields, err := readProjectJSON(w, r, maxProjectRequest)
+		if err != nil {
 			return err
 		}
-		if err := project.validate(); err != nil {
+		project, err := parseProjectInput(fields)
+		if err != nil {
 			return err
 		}
 		input = project
@@ -356,17 +435,16 @@ func (s projectService) handle(w http.ResponseWriter, r *http.Request, owner, ki
 			return &requestFailure{400, "invalid_key", "请提供一个有效的 Idempotency-Key。"}
 		}
 		key = keys[0]
-		var run struct {
-			Prompt string `json:"prompt"`
-		}
-		if err := readProjectJSON(w, r, 64*1024, &run); err != nil {
+		fields, err := readProjectJSON(w, r, 64*1024)
+		if err != nil {
 			return err
 		}
-		run.Prompt = strings.TrimSpace(run.Prompt)
-		if run.Prompt == "" || utf8.RuneCountInString(run.Prompt) > 8000 {
+		prompt, _ := projectString(fields["prompt"])
+		prompt = strings.TrimSpace(prompt)
+		if prompt == "" || utf8.RuneCountInString(prompt) > 8000 {
 			return &requestFailure{400, "invalid_prompt", "任务描述须为 1 至 8000 个字符。"}
 		}
-		input = run
+		input = map[string]string{"prompt": prompt}
 	}
 	status, result, err := s.invoke(r.Context(), owner, key, route, input)
 	if err != nil {

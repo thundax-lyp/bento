@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import console from 'node:console';
 import { access, mkdtemp, open, readFile, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import process from 'node:process';
@@ -18,6 +20,36 @@ const assets = '/app/apps/workspace/workspace-auth/';
 const missing = process.argv[2] === '--missing-artifacts';
 const subject = 'fixture-subject';
 const fixture = await startOidcFixture();
+const execution = createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (
+        req.headers.authorization !== 'Bearer fixture-execution' ||
+        !/^[a-f0-9]{48}$/.test(req.headers['x-bento-owner-id'] ?? '')
+    ) {
+        res.writeHead(401).end('{}');
+        return;
+    }
+    if (req.method === 'GET' && req.url === '/v1/projects') {
+        if (!req.headers['user-agent']?.startsWith('Go-http-client/')) {
+            res.writeHead(500).end('{}');
+            return;
+        }
+        res.end(JSON.stringify({ projects: [] }));
+        return;
+    }
+    if (req.method === 'POST' && req.url === '/v1/account/drain') {
+        res.writeHead(204).end();
+        return;
+    }
+    if (req.method === 'POST' && req.url === '/v1/account/purge') {
+        res.end(JSON.stringify({ complete: true }));
+        return;
+    }
+    res.writeHead(404).end('{}');
+});
+execution.listen(0, '127.0.0.1');
+await once(execution, 'listening');
+const executionOrigin = 'http://127.0.0.1:' + execution.address().port;
 let entry;
 
 async function startEntry() {
@@ -35,7 +67,9 @@ async function startEntry() {
             {
                 env: {
                     ...process.env,
-                    BENTO_ONE_MODE: 'mock',
+                    BENTO_ONE_MODE: 'http',
+                    BENTO_ONE_TWO_URL: executionOrigin,
+                    BENTO_ONE_TWO_BEARER: 'fixture-execution',
                     BENTO_AUTH_MODE: 'keycloak',
                     BENTO_ONE_ORIGIN: origin,
                     BENTO_OIDC_ISSUER: fixture.issuer,
@@ -107,7 +141,7 @@ function startupDiagnostics({ code, signal, stdout, stderr }) {
             /Invalid Bento task entry configuration or listener unavailable\./,
             'task-entry-startup-failed',
         ],
-        [/Bento task entry \(mock\) listening on/, 'task-entry-listening'],
+        [/Bento task entry \(http\) listening on/, 'task-entry-listening'],
         [/ERR_MODULE_NOT_FOUND/, 'node-module-not-found'],
         [
             /Bento local OIDC discovery did not become ready\./,
@@ -414,6 +448,7 @@ try {
     try {
         await stopEntry();
     } finally {
+        execution.close();
         await fixture.close();
     }
 }
