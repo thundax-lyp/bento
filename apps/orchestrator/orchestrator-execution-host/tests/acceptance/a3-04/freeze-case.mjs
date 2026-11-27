@@ -11,11 +11,11 @@ import { tmpdir } from 'node:os';
 import process from 'node:process';
 import { clearTimeout, setTimeout } from 'node:timers';
 import { pathToFileURL, URL } from 'node:url';
-import { SingleHostExecution } from './apps/orchestrator/orchestrator-execution-host/src/openshell/single-host.ts';
+import { SingleHostExecution } from '@orchestrator/openshell/single-host.ts';
 import {
     schemaDecoder,
     schemaExecEventDecoder,
-} from './apps/orchestrator/orchestrator-execution-host/src/execution-service/command-host.ts';
+} from '@orchestrator/execution-service/command-host.ts';
 const raw = '/candidate/sdk/dist/raw.js';
 const schemas = await import(raw);
 const { create, toBinary } = await import(

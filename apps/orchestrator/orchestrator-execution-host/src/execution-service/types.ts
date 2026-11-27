@@ -4,13 +4,13 @@ import type {
     Binding,
     WorkerRequest,
     WorkerResult,
-} from '@/apps/worker/src/protocol.ts';
+} from '@bento/worker/protocol.ts';
 export type {
     Binding,
     Grant,
     WorkerRequest,
     WorkerResult,
-} from '@/apps/worker/src/protocol.ts';
+} from '@bento/worker/protocol.ts';
 import type {
     SingleHostExecution,
     SingleHostSandbox,

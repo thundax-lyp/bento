@@ -8,15 +8,15 @@ import {
     runUrl,
     taskListQuery,
     tasksUnavailable,
-} from '@/apps/workspace/workspace-web/src/api.ts';
-import type { Draft } from '@/apps/workspace/workspace-web/src/draft.ts';
+} from '@workspace-web/api.ts';
+import type { Draft } from '@workspace-web/draft.ts';
 import {
     loadDraft,
     prepareSubmission,
     saveDraft,
-} from '@/apps/workspace/workspace-web/src/draft.ts';
-import { TaskComposer } from '@/apps/workspace/workspace-web/src/pages/tasks/composer/index.tsx';
-import { Button, Notice } from '@/apps/workspace/workspace-web/src/ui.tsx';
+} from '@workspace-web/draft.ts';
+import { TaskComposer } from '@workspace-web/pages/tasks/composer/index.tsx';
+import { Button, Notice } from '@workspace-web/ui.tsx';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { FormEvent } from 'react';
 import { useState } from 'react';

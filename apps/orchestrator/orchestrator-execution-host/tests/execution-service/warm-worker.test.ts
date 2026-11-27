@@ -3,8 +3,8 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { prewarmedWorker } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/warm-worker.ts';
-import type { WorkerRequest } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/types.ts';
+import { prewarmedWorker } from '@orchestrator/execution-service/warm-worker.ts';
+import type { WorkerRequest } from '@orchestrator/execution-service/types.ts';
 import { until } from './fixtures/service.ts';
 
 test(

@@ -24,7 +24,7 @@ const leasePath = join(root, 'lease.json');
 const project = 'bento-worker-a-web-a10';
 const candidates = [
     'apps/workspace/workspace-web/src/pages/tasks/details/index.tsx',
-    'apps/workspace/workspace-web/playwright.web-a10.config.ts',
+    'apps/workspace/workspace-web/tests/playwright/playwright.web-a10.config.ts',
     'apps/workspace/workspace-web/tests/acceptance/web-a10.spec.ts',
     'apps/workspace/workspace-web/tests/acceptance/web-a10-hook.ts',
     'apps/orchestrator/orchestrator-execution-host/tests/acceptance/web-a10/run.mjs',

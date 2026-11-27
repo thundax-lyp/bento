@@ -4,20 +4,17 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
-import { serveExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
-import { mockAccounts } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/account-store.ts';
-import {
-    demoAccounts,
-    sessionAuth,
-} from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/auth.ts';
-import { httpBackend } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/execution-service-http.ts';
-import { taskEntryServer } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/server.ts';
-import { mySpace } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/space/index.ts';
+import { localHost } from '@orchestrator/execution-service/local.ts';
+import { serveExecution } from '@orchestrator/execution-service/service.ts';
+import { mockAccounts } from '@workspace-api-fixture/account-store.ts';
+import { demoAccounts, sessionAuth } from '@workspace-api-fixture/auth.ts';
+import { httpBackend } from '@workspace-api-fixture/execution-service-http.ts';
+import { taskEntryServer } from '@workspace-api-fixture/server.ts';
+import { mySpace } from '@workspace-api-fixture/space/index.ts';
 import {
     spaceObjectKey,
     spaceStorage,
-} from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/space/storage.ts';
+} from '@workspace-api-fixture/space/storage.ts';
 
 // Identity, saved object bytes and Worker are synthetic; API, freezing and SQLite are production.
 export async function startTaskSubmissionFixture() {

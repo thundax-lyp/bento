@@ -6,14 +6,14 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test, type TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
+import { localHost } from '@orchestrator/execution-service/local.ts';
 import {
     executionBindingDigest,
     sha256Digest,
     type ExecutionHost,
     type WorkerExitObservation,
     type WorkerRequest,
-} from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/types.ts';
+} from '@orchestrator/execution-service/types.ts';
 import {
     barrier,
     client,

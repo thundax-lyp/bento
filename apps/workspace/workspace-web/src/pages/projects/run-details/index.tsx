@@ -1,4 +1,4 @@
-import type { Run } from '@/apps/workspace/workspace-web/src/api.ts';
+import type { Run } from '@workspace-web/api.ts';
 import {
     ApiError,
     cancelRun,
@@ -7,17 +7,12 @@ import {
     runLabels,
     runQuery,
     runsQuery,
-} from '@/apps/workspace/workspace-web/src/api.ts';
+} from '@workspace-web/api.ts';
 import {
     isOnline,
     subscribeOnline,
-} from '@/apps/workspace/workspace-web/src/pages/shared/online.ts';
-import {
-    Button,
-    Notice,
-    ReadFailure,
-    RunResult,
-} from '@/apps/workspace/workspace-web/src/ui.tsx';
+} from '@workspace-web/pages/shared/online.ts';
+import { Button, Notice, ReadFailure, RunResult } from '@workspace-web/ui.tsx';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSyncExternalStore } from 'react';
 import { Link, useLoaderData, useOutletContext } from 'react-router';

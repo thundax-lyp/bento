@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
-import { spaceStorage } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/space/storage.ts';
+import { spaceStorage } from '@workspace-api-fixture/space/storage.ts';
 
 const digest = (bytes: Buffer) =>
     createHash('sha256').update(bytes).digest('base64');

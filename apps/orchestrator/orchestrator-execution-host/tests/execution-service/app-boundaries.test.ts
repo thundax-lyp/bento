@@ -7,8 +7,8 @@ import { join, resolve } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { test, type TestContext } from 'node:test';
-import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
-import { serveExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
+import { localHost } from '@orchestrator/execution-service/local.ts';
+import { serveExecution } from '@orchestrator/execution-service/service.ts';
 import {
     client,
     project,

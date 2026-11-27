@@ -19,9 +19,9 @@ import { setTimeout as delay } from 'node:timers/promises';
 import type { TLSSocket } from 'node:tls';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { SingleHostExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/openshell/single-host.ts';
+import { SingleHostExecution } from '@orchestrator/openshell/single-host.ts';
 import type { PreparedSdk } from '@/apps/orchestrator/orchestrator-execution-host/tests/openshell/binding-grants/sdk.ts';
-import type { WorkerRequest } from '@/apps/worker/src/protocol.ts';
+import type { WorkerRequest } from '@worker/protocol.ts';
 import {
     observeSdk,
     sha256,

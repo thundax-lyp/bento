@@ -1,6 +1,16 @@
 {
     "compilerOptions": {
-        "paths": { "@/*": ["./*"] },
+        "paths": {
+            "@/*": ["./*"],
+            "@worker/*": ["./apps/worker/src/*"],
+            "@orchestrator/*": [
+                "./apps/orchestrator/orchestrator-execution-host/src/*"
+            ],
+            "@workspace-web/*": ["./apps/workspace/workspace-web/src/*"],
+            "@workspace-api-fixture/*": [
+                "./apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/*"
+            ]
+        },
         "target": "ES2023",
         "module": "NodeNext",
         "moduleResolution": "NodeNext",

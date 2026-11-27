@@ -6,13 +6,13 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
-import { Store } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/store/index.ts';
-import { snapshotSha256 } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
+import { localHost } from '@orchestrator/execution-service/local.ts';
+import { Store } from '@orchestrator/execution-service/store/index.ts';
+import { snapshotSha256 } from '@orchestrator/execution-service/service.ts';
 import {
     executionBindingDigest,
     type WorkerRequest,
-} from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/types.ts';
+} from '@orchestrator/execution-service/types.ts';
 import {
     readme,
     barrier,

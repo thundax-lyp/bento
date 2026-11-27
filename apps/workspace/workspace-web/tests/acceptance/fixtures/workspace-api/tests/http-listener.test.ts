@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { connect } from 'node:net';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { httpListener } from '../src/http-listener.ts';
+import { httpListener } from '@workspace-api-fixture/http-listener.ts';
 
 for (const shutdown of [false, true]) {
     for (const partial of [

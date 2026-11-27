@@ -5,10 +5,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { mockBackend } from '../src/mock.ts';
-import { projectInput, RequestError } from '../src/protocol.ts';
-import { mySpace } from '../src/space/index.ts';
-import { spaceObjectKey, spaceStorage } from '../src/space/storage.ts';
+import { mockBackend } from '@workspace-api-fixture/mock.ts';
+import { projectInput, RequestError } from '@workspace-api-fixture/protocol.ts';
+import { mySpace } from '@workspace-api-fixture/space/index.ts';
+import {
+    spaceObjectKey,
+    spaceStorage,
+} from '@workspace-api-fixture/space/storage.ts';
 import { noBody, errorIs, notFound } from './fixtures/space-assertions.ts';
 
 test('direct text import enforces the snapshot limits', () => {

@@ -7,7 +7,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { connectGoRunLedger } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/go-run-ledger.ts';
+import { connectGoRunLedger } from '@orchestrator/execution-service/go-run-ledger.ts';
 
 test('TS commands are persisted by the Go Run ledger controller', async (t) => {
     const dir = await mkdtemp(join(tmpdir(), 'bento-go-run-ledger-'));

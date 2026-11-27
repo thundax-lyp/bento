@@ -12,13 +12,13 @@ import { Worker } from 'node:worker_threads';
 import {
     localEnvironmentVersion,
     localHost,
-} from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
-import { Store } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/store/index.ts';
+} from '@orchestrator/execution-service/local.ts';
+import { Store } from '@orchestrator/execution-service/store/index.ts';
 import {
     type ExecutionHost,
     type WorkerRequest,
-} from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/types.ts';
-import { prewarmedWorker } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/warm-worker.ts';
+} from '@orchestrator/execution-service/types.ts';
+import { prewarmedWorker } from '@orchestrator/execution-service/warm-worker.ts';
 import {
     testToken,
     barrier,

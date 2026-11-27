@@ -118,6 +118,10 @@ for (const path of [
         1,
         'Expected package source missing: ' + path,
     );
+const workerRoot = 'apps/worker';
+const worker = JSON.parse(
+    readFileSync(join(root, workerRoot, 'package.json'), 'utf8'),
+);
 // Verify package-local source imports, including the backup implementation consumed by tests/driver.
 for (const path of [...sources, ...storeSources]) {
     const body = readFileSync(join(root, path), 'utf8');
@@ -129,7 +133,9 @@ for (const path of [...sources, ...storeSources]) {
             ? specifier.slice(2)
             : specifier.startsWith('.')
               ? posix.normalize(posix.join(posix.dirname(path), specifier))
-              : null;
+              : specifier.startsWith('@bento/worker/')
+                ? resolveWorkerExport(specifier)
+                : null;
         if (target)
             assert(
                 files.includes(target),
@@ -137,6 +143,13 @@ for (const path of [...sources, ...storeSources]) {
             );
     }
 }
+function resolveWorkerExport(specifier) {
+    const subpath = './' + specifier.slice('@bento/worker/'.length);
+    const target = worker.exports?.[subpath];
+    assert.equal(typeof target, 'string', 'Expected Worker export: ' + subpath);
+    return posix.join(workerRoot, target);
+}
+
 const orchestrator = JSON.parse(
     readFileSync(
         join(

@@ -2,6 +2,14 @@
     "name": "@bento/worker",
     "private": true,
     "type": "module",
+    "exports": {
+        "./openshell/provider.ts": "./src/openshell/provider.ts",
+        "./protocol.ts": "./src/protocol.ts",
+        "./run-worker.ts": "./src/run-worker.ts",
+        "./runtime/dsh-worker.ts": "./src/runtime/dsh-worker.ts",
+        "./runtime/remote-session.ts": "./src/runtime/remote-session.ts",
+        "./worker-frames.ts": "./src/worker-frames.ts"
+    },
     "scripts": {
         "start": "node --import ../../register-paths.mjs src/run-worker.ts",
         "typecheck": "tsc --noEmit"

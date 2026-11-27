@@ -6,7 +6,7 @@ import {
     within,
 } from '@testing-library/react';
 import { afterEach, expect, test } from 'vitest';
-import { DiffPreview } from '../src/ui.tsx';
+import { DiffPreview } from '@workspace-web/ui.tsx';
 
 afterEach(cleanup);
 

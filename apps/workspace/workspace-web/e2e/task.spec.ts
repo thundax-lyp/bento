@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Run } from '../src/api.ts';
+import type { Run } from '@workspace-web/api.ts';
 import { randomUUID } from 'node:crypto';
 import { register } from './task-test-fixtures.ts';
 

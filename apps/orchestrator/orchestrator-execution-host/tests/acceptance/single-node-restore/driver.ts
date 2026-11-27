@@ -12,14 +12,14 @@ import {
 import { basename, dirname, isAbsolute, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
-import { commandHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/command-host.ts';
+import { commandHost } from '@orchestrator/execution-service/command-host.ts';
 import { acquireTemporal } from '@/apps/orchestrator/orchestrator-execution-host/tests/acceptance/temporal-retry/tool.ts';
 import {
     freePort,
     startServer,
     type TemporalServer,
 } from '@/apps/orchestrator/orchestrator-execution-host/tests/acceptance/temporal-retry/process.ts';
-import type { Binding } from '@/apps/worker/src/protocol.ts';
+import type { Binding } from '@worker/protocol.ts';
 import { startAcceptanceHost } from './host.ts';
 import {
     backupSqlite,

@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { PublicWorkerEvent } from '../src/protocol.ts';
+import type { PublicWorkerEvent } from '@worker/protocol.ts';
 import {
     projectTaskChecks,
     type TrustedTaskCheck,
-} from '../src/task/task-projection.ts';
+} from '@worker/task/task-projection.ts';
 
 const reply = { offset: 4, kind: 'agent_reply', text: 'base' } as const;
 const pass = { version: 1, offset: 0, outcome: 'pass' } as const;

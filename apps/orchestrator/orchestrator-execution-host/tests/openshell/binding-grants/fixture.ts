@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import { DatabaseSync, type SQLOutputValue } from 'node:sqlite';
 import type { TLSSocket } from 'node:tls';
 import { promisify } from 'node:util';
-import { SingleHostExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/openshell/single-host.ts';
+import { SingleHostExecution } from '@orchestrator/openshell/single-host.ts';
 import type { PreparedSdk, SdkMethod } from './sdk.ts';
 
 type Row = Record<string, SQLOutputValue>;

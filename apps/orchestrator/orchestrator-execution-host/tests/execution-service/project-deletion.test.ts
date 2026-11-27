@@ -14,15 +14,15 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { executionHttp } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/http.ts';
-import { dockerOpenShellPurge } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/docker-openshell-purge.ts';
-import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
-import { Store } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/store/index.ts';
-import { serveExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
+import { executionHttp } from '@orchestrator/execution-service/http.ts';
+import { dockerOpenShellPurge } from '@orchestrator/execution-service/docker-openshell-purge.ts';
+import { localHost } from '@orchestrator/execution-service/local.ts';
+import { Store } from '@orchestrator/execution-service/store/index.ts';
+import { serveExecution } from '@orchestrator/execution-service/service.ts';
 import {
     type Binding,
     type ExecutionHost,
-} from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/types.ts';
+} from '@orchestrator/execution-service/types.ts';
 import {
     testToken,
     readme,

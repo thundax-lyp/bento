@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { webcrypto } from 'node:crypto';
-import { createTask, createTaskRun } from '../src/api.ts';
+import { createTask, createTaskRun } from '@workspace-web/api.ts';
 
 let calls: { key: string; body: string; path: string }[];
 let outcome: 'network' | number;
@@ -47,7 +47,7 @@ for (const kind of ['task', 'run'] as const) {
         await expect(submit()).rejects.toThrow();
         expect(calls.at(-1)!.key).toBe(key);
         vi.resetModules();
-        const reloaded = await import('../src/api.ts');
+        const reloaded = await import('@workspace-web/api.ts');
         outcome = 200;
         await (kind === 'task'
             ? reloaded.createTask('a', 'Name', { kind: 'blank' })

@@ -2,9 +2,9 @@ import { appendFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { serveExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
-import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
-import { executionBindingDigest } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/types.ts';
+import { serveExecution } from '@orchestrator/execution-service/service.ts';
+import { localHost } from '@orchestrator/execution-service/local.ts';
+import { executionBindingDigest } from '@orchestrator/execution-service/types.ts';
 
 export type HostConfig = {
     schema: 1;

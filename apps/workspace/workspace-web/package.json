@@ -9,10 +9,10 @@
         "lint": "eslint .",
         "format:check": "prettier --check . --ignore-path ../../../.prettierignore",
         "test": "vitest run",
-        "test:e2e": "playwright test",
-        "test:space-integrity": "playwright test --config playwright.web-space-integrity.config.ts",
+        "test:e2e": "playwright test --config tests/playwright/playwright.config.ts",
+        "test:space-integrity": "playwright test --config tests/playwright/playwright.web-space-integrity.config.ts",
         "check": "pnpm typecheck && pnpm lint && pnpm format:check && pnpm test && pnpm build",
-        "test:queue-isolation": "playwright test --config playwright.web-queue-isolation.config.ts",
+        "test:queue-isolation": "playwright test --config tests/playwright/playwright.web-queue-isolation.config.ts",
         "test:api-fixtures": "node --import ../../../register-paths.mjs --test tests/acceptance/fixtures/workspace-api/tests/*.test.ts"
     },
     "dependencies": {

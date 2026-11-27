@@ -55,3 +55,5 @@ src/pages/
 ```
 
 页面专属子组件放在所属页面目录；同业务共享内容放在对应业务目录，跨业务共享的页面辅助逻辑放在 `pages/shared/`。仓库内部导入必须显式写出 `.ts` 或 `.tsx` 等实际扩展名，跨两级及以上父目录使用仓库根别名 `@/`。根 ESLint 配置检查静态导入、重导出、动态导入及类型导入。
+
+Playwright 配置集中在 `tests/playwright/`。使用 `pnpm test:e2e` 运行默认 Chromium 测试。直接调用 Playwright 时，通过 `--config tests/playwright/<配置文件>` 选择验收入口。

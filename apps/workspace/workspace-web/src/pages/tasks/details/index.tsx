@@ -10,16 +10,12 @@ import {
     taskEventsQuery,
     taskRunsQuery,
     taskUrl,
-} from '@/apps/workspace/workspace-web/src/api.ts';
+} from '@workspace-web/api.ts';
 import {
     isOnline,
     subscribeOnline,
-} from '@/apps/workspace/workspace-web/src/pages/shared/online.ts';
-import {
-    Button,
-    Notice,
-    ReadFailure,
-} from '@/apps/workspace/workspace-web/src/ui.tsx';
+} from '@workspace-web/pages/shared/online.ts';
+import { Button, Notice, ReadFailure } from '@workspace-web/ui.tsx';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState, useSyncExternalStore } from 'react';
 import {

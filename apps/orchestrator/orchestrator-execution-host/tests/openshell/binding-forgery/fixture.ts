@@ -5,8 +5,8 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import type { Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SingleHostExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/openshell/single-host.ts';
-import type { Binding, Grant } from '@/apps/worker/src/protocol.ts';
+import { SingleHostExecution } from '@orchestrator/openshell/single-host.ts';
+import type { Binding, Grant } from '@worker/protocol.ts';
 import { snapshot } from './state.ts';
 
 export type Actor = 'A' | 'B';

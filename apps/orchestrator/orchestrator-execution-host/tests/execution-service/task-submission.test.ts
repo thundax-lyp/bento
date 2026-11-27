@@ -8,8 +8,8 @@ import { test, type TestContext } from 'node:test';
 import {
     Store,
     type TaskInput,
-} from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/store/index.ts';
-import type { RunStatus } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/types.ts';
+} from '@orchestrator/execution-service/store/index.ts';
+import type { RunStatus } from '@orchestrator/execution-service/types.ts';
 
 const hash = (text: string) => createHash('sha256').update(text).digest('hex');
 const owner = 'retry-owner';

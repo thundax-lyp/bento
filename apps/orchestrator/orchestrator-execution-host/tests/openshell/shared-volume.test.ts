@@ -5,15 +5,15 @@ import {
     testToken,
     until,
 } from '@/apps/orchestrator/orchestrator-execution-host/tests/execution-service/fixtures/service.ts';
-import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
-import { serveExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
+import { localHost } from '@orchestrator/execution-service/local.ts';
+import { serveExecution } from '@orchestrator/execution-service/service.ts';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
-import { SingleHostExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/openshell/single-host.ts';
-import type { Binding } from '@/apps/worker/src/protocol.ts';
+import { SingleHostExecution } from '@orchestrator/openshell/single-host.ts';
+import type { Binding } from '@worker/protocol.ts';
 
 test('reopening a single-host ledger preserves existing Session bindings', async (t) => {
     const path = await mkdtemp(join(tmpdir(), 'bento-existing-volume-'));

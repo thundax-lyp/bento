@@ -54,15 +54,15 @@ jobs:
                       while IFS= read -r -d '' path; do
                           case "$path" in
                               *.md|assets/*|public-files.json) ;;
-                              apps/workspace/workspace-web/tests/acceptance/web-space-integrity.spec.ts|apps/workspace/workspace-web/tests/acceptance/space-integrity-fixture.ts|apps/workspace/workspace-web/playwright.web-space-integrity.config.ts)
+                              apps/workspace/workspace-web/tests/acceptance/web-space-integrity.spec.ts|apps/workspace/workspace-web/tests/acceptance/space-integrity-fixture.ts|apps/workspace/workspace-web/tests/playwright/playwright.web-space-integrity.config.ts)
                                   workspace=true
                                   space=true
                                   ;;
-                              apps/workspace/workspace-web/tests/acceptance/web-queue-isolation.spec.ts|apps/workspace/workspace-web/tests/acceptance/queue-*-fixture.ts|apps/workspace/workspace-web/playwright.web-queue-isolation.config.ts)
+                              apps/workspace/workspace-web/tests/acceptance/web-queue-isolation.spec.ts|apps/workspace/workspace-web/tests/acceptance/queue-*-fixture.ts|apps/workspace/workspace-web/tests/playwright/playwright.web-queue-isolation.config.ts)
                                   workspace=true
                                   queue=true
                                   ;;
-                              apps/workspace/workspace-web/e2e/*|apps/workspace/workspace-web/playwright.config.ts)
+                              apps/workspace/workspace-web/e2e/*|apps/workspace/workspace-web/tests/playwright/playwright.config.ts)
                                   workspace=true
                                   browser=true
                                   ;;

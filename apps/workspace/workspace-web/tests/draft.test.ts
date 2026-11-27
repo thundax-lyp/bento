@@ -1,5 +1,9 @@
 import { afterEach, expect, test } from 'vitest';
-import { loadDraft, prepareSubmission, saveDraft } from '../src/draft.ts';
+import {
+    loadDraft,
+    prepareSubmission,
+    saveDraft,
+} from '@workspace-web/draft.ts';
 
 afterEach(() => sessionStorage.clear());
 

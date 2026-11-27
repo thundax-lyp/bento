@@ -10,14 +10,14 @@ import { dirname, join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { pathToFileURL } from 'node:url';
-import { SingleHostExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/openshell/single-host.ts';
+import { SingleHostExecution } from '@orchestrator/openshell/single-host.ts';
 import { prepareReuseSdk } from '@/apps/orchestrator/orchestrator-execution-host/tests/acceptance/worker-reuse/sdk.ts';
-import { remoteSessionPersistence } from '../src/runtime/remote-session.ts';
-import { runDshWorker } from '../src/runtime/dsh-worker.ts';
-import type { WorkerRequest } from '../src/protocol.ts';
+import { remoteSessionPersistence } from '@worker/runtime/remote-session.ts';
+import { runDshWorker } from '@worker/runtime/dsh-worker.ts';
+import type { WorkerRequest } from '@worker/protocol.ts';
 import bootstrap, {
     type BaseBootstrapConfig,
-} from '../src/runtime/base-bootstrap.ts';
+} from '@worker/runtime/base-bootstrap.ts';
 
 const opts = { timeout: 120_000, concurrency: false };
 const effect: Parameters<typeof bootstrap>[1] = async (_id, _input, dispatch) =>
@@ -652,7 +652,7 @@ test(
         const { Context } = await import('@deepseek-ai/cordis');
         const { SessionStore } = await import('@deepseek-ai/dsh-session');
         const { bindWorkerSession } =
-            await import('../src/runtime/remote-session.ts');
+            await import('@worker/runtime/remote-session.ts');
         const { createServer } = await import('node:http');
         const requests: unknown[] = [];
         const server = createServer(async (request, response) => {

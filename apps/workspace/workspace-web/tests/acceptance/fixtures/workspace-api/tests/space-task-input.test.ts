@@ -6,15 +6,18 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
-import { serveExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
-import { mockAccounts } from '../src/account-store.ts';
-import { sessionAuth } from '../src/auth.ts';
-import { httpBackend } from '../src/execution-service-http.ts';
-import { taskEntryServer } from '../src/server.ts';
-import { RequestError } from '../src/protocol.ts';
-import { mySpace } from '../src/space/index.ts';
-import { spaceObjectKey, spaceStorage } from '../src/space/storage.ts';
+import { localHost } from '@orchestrator/execution-service/local.ts';
+import { serveExecution } from '@orchestrator/execution-service/service.ts';
+import { mockAccounts } from '@workspace-api-fixture/account-store.ts';
+import { sessionAuth } from '@workspace-api-fixture/auth.ts';
+import { httpBackend } from '@workspace-api-fixture/execution-service-http.ts';
+import { taskEntryServer } from '@workspace-api-fixture/server.ts';
+import { RequestError } from '@workspace-api-fixture/protocol.ts';
+import { mySpace } from '@workspace-api-fixture/space/index.ts';
+import {
+    spaceObjectKey,
+    spaceStorage,
+} from '@workspace-api-fixture/space/storage.ts';
 
 test(
     'WEB-A07 focused frozen project inputs through both HTTP boundaries',

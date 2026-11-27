@@ -9,9 +9,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
     runDshWorker,
     type DshWorkerBootstrap,
-} from '../src/runtime/dsh-worker.ts';
-import type { WorkerRequest } from '../src/protocol.ts';
-import bootstrap from '../src/task/task-bootstrap.ts';
+} from '@worker/runtime/dsh-worker.ts';
+import type { WorkerRequest } from '@worker/protocol.ts';
+import bootstrap from '@worker/task/task-bootstrap.ts';
 
 const request: WorkerRequest = {
     mode: 'execute',

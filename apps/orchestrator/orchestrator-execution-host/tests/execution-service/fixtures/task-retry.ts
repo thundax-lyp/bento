@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { snapshotSha256 } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
+import { snapshotSha256 } from '@orchestrator/execution-service/service.ts';
 import { testToken, readme } from './service.ts';
 
 export function taskRetryTestClient(url: () => string) {

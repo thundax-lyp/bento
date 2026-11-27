@@ -17,8 +17,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
     schemaDecoder,
     schemaExecEventDecoder,
-} from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/command-host.ts';
-import type { SdkIngressOptions } from '@/apps/orchestrator/orchestrator-execution-host/src/openshell/sdk-ingress.ts';
+} from '@orchestrator/execution-service/command-host.ts';
+import type { SdkIngressOptions } from '@orchestrator/openshell/sdk-ingress.ts';
 
 export const sdkRevision = 'ac7f615cd12d5cc49cb16eb1f5f10ffeb1e90f47';
 const archiveDigest =

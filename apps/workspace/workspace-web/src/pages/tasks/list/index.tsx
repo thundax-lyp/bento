@@ -1,4 +1,4 @@
-import type { Run } from '@/apps/workspace/workspace-web/src/api.ts';
+import type { Run } from '@workspace-web/api.ts';
 import {
     ApiError,
     projectsQuery,
@@ -7,8 +7,8 @@ import {
     runUrl,
     taskListQuery,
     taskUrl,
-} from '@/apps/workspace/workspace-web/src/api.ts';
-import { Button, Notice } from '@/apps/workspace/workspace-web/src/ui.tsx';
+} from '@workspace-web/api.ts';
+import { Button, Notice } from '@workspace-web/ui.tsx';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { Link, useOutletContext } from 'react-router';

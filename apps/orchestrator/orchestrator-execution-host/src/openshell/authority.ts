@@ -3,7 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { DatabaseSync } from 'node:sqlite';
 
-import type { Binding } from '@/apps/worker/src/protocol.ts';
+import type { Binding } from '@bento/worker/protocol.ts';
 type Session = Binding & {
     generation: number;
     retiring: number;

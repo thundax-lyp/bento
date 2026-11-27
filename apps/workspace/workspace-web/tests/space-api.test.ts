@@ -5,7 +5,7 @@ import {
     type TransferProgress,
     getProjectDeletionImpact,
     deleteSpaceProject,
-} from '../src/space/api.ts';
+} from '@workspace-web/space/api.ts';
 
 afterEach(() => vi.unstubAllGlobals());
 

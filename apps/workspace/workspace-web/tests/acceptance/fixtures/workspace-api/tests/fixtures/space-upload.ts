@@ -4,12 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TestContext } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
-import { mockAccounts } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/account-store.ts';
-import { sessionAuth } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/auth.ts';
-import { taskEntryServer } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/server.ts';
-import { mockBackend } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/mock.ts';
-import { mySpace } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/space/index.ts';
-import { spaceStorage } from '@/apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/src/space/storage.ts';
+import { mockAccounts } from '@workspace-api-fixture/account-store.ts';
+import { sessionAuth } from '@workspace-api-fixture/auth.ts';
+import { taskEntryServer } from '@workspace-api-fixture/server.ts';
+import { mockBackend } from '@workspace-api-fixture/mock.ts';
+import { mySpace } from '@workspace-api-fixture/space/index.ts';
+import { spaceStorage } from '@workspace-api-fixture/space/storage.ts';
 
 export const recoveryDownload = 'https://fixture.invalid/download';
 

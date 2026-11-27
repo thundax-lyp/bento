@@ -4,7 +4,7 @@ import process from 'node:process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { setInterval } from 'node:timers';
 import { setTimeout } from 'node:timers/promises';
-import { SingleHostExecution } from './src/apps/orchestrator/orchestrator-execution-host/src/openshell/single-host.ts';
+import { SingleHostExecution } from '@orchestrator/openshell/single-host.ts';
 
 const [mode, observed] = process.argv.slice(2);
 const binding = {
