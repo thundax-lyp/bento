@@ -37,7 +37,7 @@ async function localFixture(t: TestContext): Promise<AppFixture> {
     const goControl =
         process.env.BENTO_TEST_GO_CONTROL ?? join(state, 'bento-orchestrator');
     if (!process.env.BENTO_TEST_GO_CONTROL)
-        execFileSync('go', ['build', '-o', goControl, './src/control'], {
+        execFileSync('go', ['build', '-o', goControl, './cmd/control'], {
             cwd: fileURLToPath(
                 new URL('../../../orchestrator-control/', import.meta.url),
             ),

@@ -117,7 +117,7 @@ test(
                     '-v',
                     '-run',
                     '^TestDispatchPublishAgainstTemporal$',
-                    './src/control',
+                    './cmd/control',
                 ],
                 {
                     cwd: join(root, 'apps/orchestrator/orchestrator-control'),

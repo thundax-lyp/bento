@@ -365,7 +365,7 @@ export async function buildControl(
     const control = join(directory, 'bento-orchestrator');
     await runCommand(
         'go',
-        ['build', '-mod=readonly', '-o', control, './src/control'],
+        ['build', '-mod=readonly', '-o', control, './cmd/control'],
         {
             cwd: join(root, 'apps/orchestrator/orchestrator-control'),
             env: process.env,

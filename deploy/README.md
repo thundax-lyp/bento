@@ -319,7 +319,7 @@ node apps/orchestrator/orchestrator-execution-host/tests/acceptance/worker-reuse
 
 ## 管理端诊断入口
 
-[管理端镜像](admin.Dockerfile)从 `admin-api/src/` 构建 Go API，将 `admin-auth/src/` 和 `admin-web/src/` 分别复制到容器的 `/app/auth/` 和 `/app/web/`。
+[管理端镜像](admin.Dockerfile)从 `admin-api/cmd/admin-api/` 构建 Go API，将 `admin-auth/src/` 和 `admin-web/src/` 分别复制到容器的 `/app/auth/` 和 `/app/web/`。
 
 为管理端准备独立 Keycloak Realm 和启用授权码流程的机密客户端，注册精确回调 `<管理端 HTTPS origin>/auth/callback`。在同一部署配置中设置 `BENTO_ADMIN_PUBLIC_ORIGIN`、`BENTO_ADMIN_OIDC_ISSUER`、`BENTO_ADMIN_OIDC_CLIENT`、`BENTO_ADMIN_OIDC_SECRET`、`BENTO_ADMIN_SERVICE_BEARER` 和 `BENTO_ADMIN_WORKSPACE_GRANTS`。管理服务凭据须与个人端执行服务凭据不同。授权条目格式见[应用 API 与 Orchestrator](../docs/20-interfaces/APP-ORCHESTRATOR-INTERFACE.md)。
 

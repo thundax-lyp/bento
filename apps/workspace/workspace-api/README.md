@@ -22,14 +22,14 @@ go -C apps/workspace/workspace-api build -o /tmp/bento-web-api ./src
 
 ## 源码结构
 
-| 路径                         | 职责                                                  |
-| ---------------------------- | ----------------------------------------------------- |
-| `src/main.go`                | 组装依赖、启动 HTTP 服务和管理关闭                    |
-| `src/internal/api/`          | 注册项目、Run 和 Task 路由，协调账号清理              |
-| `src/internal/auth/`         | MySQL 账号仓储、Session、密码和 OIDC                  |
-| `src/internal/orchestrator/` | Orchestrator 私有 HTTP 客户端和协议编解码             |
-| `src/internal/space/`        | SQLite、S3、文件锁、上传、项目初始化与删除、快照 Task |
-| `src/internal/httpx/`        | 请求解析、响应头和错误格式                            |
+| 路径                        | 职责                                                  |
+| --------------------------- | ----------------------------------------------------- |
+| `cmd/workspace-api/main.go` | 组装依赖、启动 HTTP 服务和管理关闭                    |
+| `internal/api/`             | 注册项目、Run 和 Task 路由，协调账号清理              |
+| `internal/auth/`            | MySQL 账号仓储、Session、密码和 OIDC                  |
+| `internal/orchestrator/`    | Orchestrator 私有 HTTP 客户端和协议编解码             |
+| `internal/space/`           | SQLite、S3、文件锁、上传、项目初始化与删除、快照 Task |
+| `internal/httpx/`           | 请求解析、响应头和错误格式                            |
 
 SQLite 在服务启动时初始化。上传和清理共用进程内文件锁，后台任务凭持久化提交键重试。包内测试随对应 Go 包维护。
 

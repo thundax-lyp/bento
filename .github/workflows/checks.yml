@@ -72,7 +72,7 @@ jobs:
                                   space=true
                                   queue=true
                                   ;;
-                              apps/orchestrator/orchestrator-execution-host/tests/execution-service/*|apps/orchestrator/orchestrator-control/src/control/temporal_test.go|apps/orchestrator/orchestrator-control/src/control/temporal_fair_entry_test.go)
+                              apps/orchestrator/orchestrator-execution-host/tests/execution-service/*|apps/orchestrator/orchestrator-control/cmd/control/temporal_test.go|apps/orchestrator/orchestrator-control/cmd/control/temporal_fair_entry_test.go)
                                   workspace=true
                                   orchestrator=true
                                   queue=true
