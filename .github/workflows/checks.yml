@@ -62,7 +62,7 @@ jobs:
                                   workspace=true
                                   queue=true
                                   ;;
-                              apps/workspace/workspace-web/e2e/*|apps/workspace/workspace-web/tests/playwright/playwright.config.ts)
+                              apps/workspace/workspace-web/tests/e2e/*|apps/workspace/workspace-web/tests/playwright/playwright.config.ts)
                                   workspace=true
                                   browser=true
                                   ;;
