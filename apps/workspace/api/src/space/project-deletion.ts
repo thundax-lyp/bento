@@ -5,10 +5,10 @@ import {
     RequestError,
     type Backend,
     type ProjectDeletionBlocker,
-} from './protocol.ts';
-import { spaceObjectKey, type spaceStorage } from './space-storage.ts';
-import type { spaceExecution } from './space-execution.ts';
-import type { Upload } from './space-upload.ts';
+} from '../protocol.ts';
+import { spaceObjectKey, type spaceStorage } from './storage.ts';
+import type { spaceExecution } from './execution.ts';
+import type { Upload } from './upload.ts';
 
 const key = (row: Upload) => spaceObjectKey(row.id);
 type DeletionBlocker = 'upload_pending' | ProjectDeletionBlocker;

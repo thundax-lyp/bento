@@ -26,8 +26,8 @@ import {
 } from './fixtures/oidc-fixture.ts';
 import { keycloakAuth } from '../src/oidc.ts';
 import { taskEntryServer } from '../src/server.ts';
-import { mySpace } from '../src/space.ts';
-import { spaceObjectKey, spaceStorage } from '../src/space-storage.ts';
+import { mySpace } from '../src/space/index.ts';
+import { spaceObjectKey, spaceStorage } from '../src/space/storage.ts';
 
 test('built auth pages retain the OIDC login, logout and account closure contract', async (t) => {
     const fixture = await startOidcFixture();

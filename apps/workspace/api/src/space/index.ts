@@ -1,20 +1,16 @@
-import type { Upload } from './space-upload.ts';
+import { spaceFileDeletion } from './file-deletion.ts';
+import type { Upload } from './upload.ts';
 import {
     spaceProjectDeletion,
     projectBlocked,
     type ProjectDeletion,
-} from './space-project-deletion.ts';
-import { randomUUID } from 'node:crypto';
+} from './project-deletion.ts';
 import { DatabaseSync } from 'node:sqlite';
 import type { CompletedPart } from '@aws-sdk/client-s3';
-import { notFound, object, RequestError } from './protocol.ts';
-import type { Backend } from './protocol.ts';
-import {
-    partUrlSeconds,
-    spaceObjectKey,
-    spaceStorage,
-} from './space-storage.ts';
-import { spaceExecution } from './space-execution.ts';
+import { notFound, object, RequestError } from '../protocol.ts';
+import type { Backend } from '../protocol.ts';
+import { partUrlSeconds, spaceObjectKey, spaceStorage } from './storage.ts';
+import { spaceExecution } from './execution.ts';
 
 const quota = 200_000_000;
 const fileLimit = 100_000_000;
@@ -23,12 +19,6 @@ const partSize = 16 * 1024 * 1024;
 const lifetime = 24 * 60 * 60 * 1000;
 const statesWithSpace =
     "('preparing','uploading','completing','cleaning','saved','deleting')";
-type FileDeletion = {
-    operationId: string;
-    executionProjectId: string | null;
-    phase: 'checking' | 'deleting' | 'releasing';
-};
-
 function id(value: unknown): string {
     if (
         typeof value !== 'string' ||
@@ -116,6 +106,17 @@ export function mySpace(
         setState,
         commitDeletionChange,
     });
+
+    function commitDeletionChange(change: () => void) {
+        db.exec('BEGIN IMMEDIATE');
+        try {
+            change();
+            db.exec('COMMIT');
+        } catch (error) {
+            db.exec('ROLLBACK');
+            throw error;
+        }
+    }
 
     function projectDeletion(owner: string, spaceId: string) {
         return db
@@ -396,169 +397,18 @@ export function mySpace(
         setState(row, row.cleanup ?? outcome);
     }
 
-    const deletionUnconfirmed = () =>
-        new RequestError(
-            503,
-            'file_delete_unconfirmed',
-            '暂未确认删除结果，请刷新后重试。',
-        );
-    function fileDeletion(fileId: string) {
-        return db
-            .prepare(
-                'SELECT operationId,executionProjectId,phase FROM space_file_deletions WHERE fileId=?',
-            )
-            .get(fileId) as FileDeletion | undefined;
-    }
-
-    function commitDeletionChange(change: () => void) {
-        db.exec('BEGIN IMMEDIATE');
-        try {
-            change();
-            db.exec('COMMIT');
-        } catch (error) {
-            db.exec('ROLLBACK');
-            throw error;
-        }
-    }
-
-    async function fileDeleteHold(
-        row: Upload,
-        intent: FileDeletion,
-        kind: 'acquireTaskInputDeleteHold' | 'releaseTaskInputDeleteHold',
-    ): Promise<'held' | 'denied' | 'released'> {
-        const result = await backend(row.owner, {
-            kind,
-            spaceId: row.project,
-            fileId: row.id,
-            legacyProjectId: intent.executionProjectId,
-            operationId: intent.operationId,
-        });
-        if (!('json' in result) || !('state' in result.json))
-            throw new Error('Missing file deletion hold receipt');
-        const { state } = result.json;
-        if (state !== 'held' && state !== 'denied' && state !== 'released')
-            throw new Error('Unexpected file deletion hold state');
-        return state;
-    }
-
-    async function checkFileDeletion(row: Upload): Promise<'held' | 'denied'> {
-        const intent = fileDeletion(row.id);
-        if (intent?.phase !== 'checking')
-            throw new Error('Missing checking phase');
-        let state;
-        try {
-            state = await fileDeleteHold(
-                row,
-                intent,
-                'acquireTaskInputDeleteHold',
-            );
-        } catch (error) {
-            if (
-                error instanceof RequestError &&
-                (error.code === 'owner_closed' || error.code === 'not_found')
-            )
-                db.prepare(
-                    'DELETE FROM space_file_deletions WHERE fileId=?',
-                ).run(row.id);
-            throw error;
-        }
-        if (state === 'denied') {
-            db.prepare('DELETE FROM space_file_deletions WHERE fileId=?').run(
-                row.id,
-            );
-            return state;
-        }
-        if (state !== 'held')
-            throw new Error('Unexpected file deletion hold state');
-        commitDeletionChange(() => {
-            setState(row, 'deleting');
-            db.prepare(
-                "UPDATE space_file_deletions SET phase='deleting' WHERE fileId=?",
-            ).run(row.id);
-        });
-        return state;
-    }
-
-    async function advanceFileDeletion(row: Upload): Promise<void> {
-        const intent = fileDeletion(row.id);
-        if (!intent) return;
-        if (
-            intent.phase === 'checking' &&
-            (await checkFileDeletion(row)) === 'denied'
-        )
-            return;
-        if (intent.phase !== 'releasing') {
-            if ((await storage.size(key(row))) !== null)
-                await storage.remove(key(row));
-            db.prepare(
-                "UPDATE space_file_deletions SET phase='releasing' WHERE fileId=?",
-            ).run(row.id);
-        }
-        if (
-            (await fileDeleteHold(
-                row,
-                intent,
-                'releaseTaskInputDeleteHold',
-            )) !== 'released'
-        )
-            throw new Error('File deletion hold release unconfirmed');
-        commitDeletionChange(() => {
-            setState(row, 'deleted');
-            db.prepare('DELETE FROM space_file_deletions WHERE fileId=?').run(
-                row.id,
-            );
-        });
-    }
-
-    async function deleteFile(owner: string, fileId: string) {
-        const row = upload(owner, fileId);
-        requireWritableProject(owner, row.project);
-        if (row.state === 'deleted') return { deleteStatus: 204 } as const;
-        if (row.state === 'deleting') return { deleteStatus: 202 } as const;
-        if (row.state !== 'saved') throw notFound();
-        if (active.has(fileId)) throw deletionUnconfirmed();
-        return locked(fileId, async () => {
-            if (!fileDeletion(fileId)) {
-                commitDeletionChange(() => {
-                    requireWritableProject(owner, row.project);
-                    if (upload(owner, fileId).state !== 'saved')
-                        throw notFound();
-                    if (execution.hasTaskPin(fileId))
-                        throw new RequestError(
-                            409,
-                            'project_busy',
-                            '文件正在被未结束的任务使用。',
-                        );
-                    const projectId = execution.deletionProject(
-                        owner,
-                        row.project,
-                        fileId,
-                    );
-                    db.prepare(
-                        "INSERT INTO space_file_deletions VALUES (?,?,?,'checking')",
-                    ).run(fileId, randomUUID(), projectId);
-                });
-            }
-            const decision = await checkFileDeletion(row).catch(
-                (error: unknown) => {
-                    if (
-                        error instanceof RequestError &&
-                        (error.code === 'owner_closed' ||
-                            error.code === 'not_found')
-                    )
-                        throw error;
-                    throw deletionUnconfirmed();
-                },
-            );
-            if (decision === 'denied')
-                throw new RequestError(
-                    409,
-                    'project_busy',
-                    '文件正在被未结束的任务使用。',
-                );
-            return { deleteStatus: 202 } as const;
-        });
-    }
+    const { advanceFileDeletion, deleteFile } = spaceFileDeletion({
+        db,
+        backend,
+        storage,
+        upload,
+        requireWritableProject,
+        setState,
+        locked,
+        active,
+        execution,
+        commitDeletionChange,
+    });
 
     async function sweep() {
         const rows = db

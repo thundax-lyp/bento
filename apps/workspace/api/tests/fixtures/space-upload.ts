@@ -8,8 +8,8 @@ import { mockAccounts } from '@/apps/workspace/api/src/account-store.ts';
 import { sessionAuth } from '@/apps/workspace/api/src/auth.ts';
 import { taskEntryServer } from '@/apps/workspace/api/src/server.ts';
 import { mockBackend } from '@/apps/workspace/api/src/mock.ts';
-import { mySpace } from '@/apps/workspace/api/src/space.ts';
-import { spaceStorage } from '@/apps/workspace/api/src/space-storage.ts';
+import { mySpace } from '@/apps/workspace/api/src/space/index.ts';
+import { spaceStorage } from '@/apps/workspace/api/src/space/storage.ts';
 
 export const recoveryDownload = 'https://fixture.invalid/download';
 

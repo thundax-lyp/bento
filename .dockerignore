@@ -25,6 +25,8 @@ apps/workspace/web/src/**/*.test.tsx
 !apps/workspace/api/package.json
 !apps/workspace/api/src/
 !apps/workspace/api/src/*.ts
+!apps/workspace/api/src/space/
+!apps/workspace/api/src/space/*.ts
 !deploy/
 !deploy/workspace/
 !deploy/workspace/nginx.conf

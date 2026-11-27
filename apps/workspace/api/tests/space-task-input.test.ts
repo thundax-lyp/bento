@@ -13,8 +13,8 @@ import { sessionAuth } from '../src/auth.ts';
 import { httpBackend } from '../src/execution-service-http.ts';
 import { taskEntryServer } from '../src/server.ts';
 import { RequestError } from '../src/protocol.ts';
-import { mySpace } from '../src/space.ts';
-import { spaceObjectKey, spaceStorage } from '../src/space-storage.ts';
+import { mySpace } from '../src/space/index.ts';
+import { spaceObjectKey, spaceStorage } from '../src/space/storage.ts';
 
 test(
     'WEB-A07 focused frozen project inputs through both HTTP boundaries',
