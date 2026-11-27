@@ -149,6 +149,8 @@
         "apps/orchestrator/src/execution-service/go-run-ledger.ts",
         "apps/orchestrator/acceptance/go-run-ledger/bridge.test.ts",
         "apps/orchestrator/src/control/main.go",
+        "apps/orchestrator/src/control/dispatch.go",
+        "apps/orchestrator/src/control/dispatch_test.go",
         "apps/orchestrator/src/control/temporal.go",
         "apps/orchestrator/src/control/temporal_test.go",
         "apps/orchestrator/src/control/temporal_fair_entry_test.go",

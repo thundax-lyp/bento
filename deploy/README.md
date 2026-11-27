@@ -239,7 +239,7 @@ pnpm --filter @bento/web exec playwright test --config playwright.web-a13.config
 
 ## Temporal 配置
 
-在 `debug-workspace/execution.env` 设置 `BENTO_TEMPORAL_ADDRESS`、`BENTO_TEMPORAL_NAMESPACE` 和 `BENTO_TEMPORAL_TASK_QUEUE`。正式环境填写受信网络内的 Temporal 服务地址。每个控制器使用独占 Task Queue，重启时保持状态卷、Namespace 和队列名。
+在 `debug-workspace/execution.env` 设置 `BENTO_TEMPORAL_ADDRESS`、`BENTO_TEMPORAL_NAMESPACE` 和 `BENTO_TEMPORAL_TASK_QUEUE`。正式环境填写受信网络内的 Temporal 服务地址。每个控制器使用独占 Task Queue，重启时保持状态卷、Namespace 和队列名。常驻 Go 控制进程直接读取同一状态卷的 `business.sqlite`，从已持久预约的 Run 恢复发布。部署时使用同一版本的 TypeScript 入口和 Go 控制程序。
 
 本机开发可使用同一 Compose 的 `dev` profile，将 `BENTO_TEMPORAL_ADDRESS` 设为 `temporal:7233`，Namespace 设为 `default`。如果启用测试邮件，在 Keycloak 将 SMTP 配置为 `mailpit:1025`。
 

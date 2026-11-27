@@ -75,7 +75,9 @@ test('tenant queue limits and selected reservations survive restart and count re
         reserve(b0);
         store.close();
         store = new Store(file, 2);
-        assert.deepEqual(store.schedulableRuns(), [a0, b0]);
+        assert.equal(store.findRun(a0).status, 'recovering');
+        assert.equal(store.findRun(b0).status, 'queued');
+        assert.equal(store.dispatchReserved(b0), true);
         assert.equal(store.reserveDispatch(a2, 2), false);
         startRun(b0);
         done(b0);

@@ -1,6 +1,5 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import type { Store } from './store/index.ts';
 
 export type TemporalRunOptions = {
     address: string;
@@ -18,6 +17,7 @@ type Message = {
 export async function temporalRuns(
     options: TemporalRunOptions,
     slots: 1 | 2,
+    businessPath: string,
     advance: (runId: string, signal: AbortSignal) => Promise<void>,
 ) {
     const child = spawn(
@@ -64,7 +64,7 @@ export async function temporalRuns(
         });
         const timer = setTimeout(
             () => {
-                // A timed-out publication or callback has an unknown result.
+                // A timed-out control request has an unknown result.
                 // Kill this controller and let persistent Run state drive recovery.
                 fail();
                 child.kill('SIGKILL');
@@ -132,7 +132,7 @@ export async function temporalRuns(
         else waiter.resolve(message.value);
     });
     try {
-        await request('start', { ...options, slots });
+        await request('start', { ...options, slots, businessPath });
         ready = true;
     } catch (error) {
         child.kill('SIGKILL');
@@ -140,15 +140,6 @@ export async function temporalRuns(
         throw error;
     }
     return {
-        async choose(snapshot: ReturnType<Store['dispatchSnapshot']>) {
-            const result = await request('choose', snapshot);
-            if (typeof result !== 'string')
-                throw new Error('Invalid dispatch selection');
-            return result;
-        },
-        async enqueue(runId: string) {
-            await request('enqueue', runId);
-        },
         async purgeClosed(runId: string) {
             return (await request('purge', runId)) === true;
         },

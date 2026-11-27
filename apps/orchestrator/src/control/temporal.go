@@ -137,43 +137,12 @@ func bentoRun(ctx workflow.Context, runID string) error {
 	return workflow.ExecuteActivity(ctx, "advanceRun", runID).Get(ctx, nil)
 }
 
-type dispatchSnapshot struct {
-	Slots    int `json:"slots"`
-	Occupied []struct {
-		Owner  string `json:"owner"`
-		Status string `json:"status"`
-	} `json:"occupied"`
-	Queued []struct {
-		ID    string `json:"id"`
-		Owner string `json:"owner"`
-	} `json:"queued"`
-}
-
-// The host supplies FIFO order and atomically validates the chosen reservation.
-func chooseRun(snapshot dispatchSnapshot) string {
-	if len(snapshot.Occupied) >= snapshot.Slots {
-		return ""
-	}
-	busy, reserved := map[string]bool{}, map[string]bool{}
-	for _, run := range snapshot.Occupied {
-		busy[run.Owner] = true
-		if run.Status == "queued" {
-			reserved[run.Owner] = true
-		}
-	}
-	fallback := ""
-	for _, run := range snapshot.Queued {
-		if reserved[run.Owner] {
-			continue
-		}
-		if !busy[run.Owner] {
-			return run.ID
-		}
-		if fallback == "" {
-			fallback = run.ID
-		}
-	}
-	return fallback
+type temporalConfig struct {
+	Address      string `json:"address"`
+	Namespace    string `json:"namespace"`
+	TaskQueue    string `json:"taskQueue"`
+	Slots        int    `json:"slots"`
+	BusinessPath string `json:"businessPath"`
 }
 
 func runTemporal() error {
@@ -194,12 +163,7 @@ func runTemporal() error {
 	if err != nil || init.Method != "start" {
 		return errors.New("Temporal control configuration required")
 	}
-	var cfg struct {
-		Address   string `json:"address"`
-		Namespace string `json:"namespace"`
-		TaskQueue string `json:"taskQueue"`
-		Slots     int    `json:"slots"`
-	}
+	var cfg temporalConfig
 	if err := json.Unmarshal(init.Value, &cfg); err != nil {
 		return err
 	}
@@ -210,6 +174,13 @@ func runTemporal() error {
 		cfg.Namespace = "default"
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	db, conn, err := openDispatchLedger(ctx, cfg.BusinessPath)
+	if err != nil {
+		cancel()
+		return err
+	}
+	defer db.Close()
+	defer conn.Close()
 	c, err := client.DialContext(ctx, client.Options{
 		HostPort: cfg.Address, Namespace: cfg.Namespace,
 		Logger: sdklog.NewStructuredLogger(slog.Default()),
@@ -239,8 +210,11 @@ func runTemporal() error {
 	if err := b.send(message{ID: init.ID, Value: json.RawMessage("null")}); err != nil {
 		return err
 	}
+	dispatch := runDispatcher{db: conn, publisher: c, queue: cfg.TaskQueue, slots: cfg.Slots}
+	stopDispatch := dispatch.start()
 	var commands sync.WaitGroup
 	defer commands.Wait()
+	defer stopDispatch()
 	for {
 		m, err := read()
 		if errors.Is(err, io.EOF) {
@@ -259,6 +233,7 @@ func runTemporal() error {
 			continue
 		}
 		if m.Method == "close" {
+			stopDispatch()
 			commands.Wait()
 			stopWorker()
 			return b.send(message{ID: m.ID, Value: json.RawMessage("null")})
@@ -266,7 +241,9 @@ func runTemporal() error {
 		commands.Add(1)
 		go func(m message) {
 			defer commands.Done()
-			value, err := temporalCommand(c, cfg.Namespace, cfg.TaskQueue, m)
+			dispatch.publication.Lock()
+			value, err := temporalCommand(c, cfg.Namespace, m)
+			dispatch.publication.Unlock()
 			if err != nil {
 				_ = b.send(message{ID: m.ID, Error: "Temporal control request failed"})
 				return
@@ -277,13 +254,9 @@ func runTemporal() error {
 	}
 }
 
-func temporalCommand(c client.Client, namespace, queue string, m message) (any, error) {
-	if m.Method == "choose" {
-		var snapshot dispatchSnapshot
-		if err := json.Unmarshal(m.Value, &snapshot); err != nil || snapshot.Slots < 1 || snapshot.Slots > 2 {
-			return nil, errors.New("invalid dispatch snapshot")
-		}
-		return chooseRun(snapshot), nil
+func temporalCommand(c client.Client, namespace string, m message) (any, error) {
+	if m.Method != "purge" {
+		return nil, errors.New("unknown control request")
 	}
 	var runID string
 	if err := json.Unmarshal(m.Value, &runID); err != nil || runID == "" {
@@ -291,29 +264,21 @@ func temporalCommand(c client.Client, namespace, queue string, m message) (any, 
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	id := "bento-run-" + runID
-	switch m.Method {
-	case "enqueue":
-		return nil, publishRunWorkflow(ctx, c, queue, id, runID)
-	case "purge":
-		description, err := c.DescribeWorkflowExecution(ctx, id, "")
-		var missing *serviceerror.NotFound
-		if errors.As(err, &missing) {
-			return true, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		if description.WorkflowExecutionInfo.Status == enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING {
-			return false, nil
-		}
-		_, err = c.WorkflowService().DeleteWorkflowExecution(ctx, &workflowservice.DeleteWorkflowExecutionRequest{
-			Namespace: namespace, WorkflowExecution: description.WorkflowExecutionInfo.Execution,
-		})
-		return false, err
-	default:
-		return nil, errors.New("unknown control request")
+	description, err := c.DescribeWorkflowExecution(ctx, workflowID(runID), "")
+	var missing *serviceerror.NotFound
+	if errors.As(err, &missing) {
+		return true, nil
 	}
+	if err != nil {
+		return nil, err
+	}
+	if description.WorkflowExecutionInfo.Status == enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING {
+		return false, nil
+	}
+	_, err = c.WorkflowService().DeleteWorkflowExecution(ctx, &workflowservice.DeleteWorkflowExecutionRequest{
+		Namespace: namespace, WorkflowExecution: description.WorkflowExecutionInfo.Execution,
+	})
+	return false, err
 }
 
 type workflowPublisher interface {
