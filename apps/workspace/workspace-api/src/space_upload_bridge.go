@@ -12,9 +12,10 @@ import (
 // uploads, deletion, and background cleanup. It holds that lock through this call.
 func registerSpaceUploadBridge(mux *http.ServeMux, db *sql.DB, storage *spaceStorage, backend projectService) {
 	service := spaceUploads{db: db, storage: storage, now: time.Now}
+	locks := &spaceLocks{}
 	mux.HandleFunc("POST /internal/space/upload/{action}", func(w http.ResponseWriter, r *http.Request) {
 		if err := service.uploadBridge(w, r, spaceFileDeletion{db: db, storage: storage, hold: backend.fileHold},
-			spaceSnapshots{db: db, read: storage.read}); err != nil {
+			spaceSnapshots{db: db, read: storage.read, backend: backend}, locks); err != nil {
 			var failure *snapshotFailure
 			if errors.As(err, &failure) {
 				body := map[string]any{"code": failure.code, "message": failure.message}
@@ -29,7 +30,7 @@ func registerSpaceUploadBridge(mux *http.ServeMux, db *sql.DB, storage *spaceSto
 	})
 }
 
-func (s spaceUploads) uploadBridge(w http.ResponseWriter, r *http.Request, deletion spaceFileDeletion, snapshots spaceSnapshots) error {
+func (s spaceUploads) uploadBridge(w http.ResponseWriter, r *http.Request, deletion spaceFileDeletion, snapshots spaceSnapshots, locks *spaceLocks) error {
 	fields, err := readProjectJSON(w, r, 64*1024)
 	if err != nil {
 		return err
@@ -68,9 +69,45 @@ func (s spaceUploads) uploadBridge(w http.ResponseWriter, r *http.Request, delet
 		authJSON(w, http.StatusOK, map[string]bool{"complete": complete})
 		return nil
 	}
+	if action == "enroll-snapshot" {
+		key, _ := projectString(fields["key"])
+		name, _ := projectString(fields["name"])
+		var source snapshotSelection
+		if json.Unmarshal(fields["source"], &source) != nil {
+			return badTask
+		}
+		if err := snapshots.enroll(ctx, owner, key, name, source); err != nil {
+			return err
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return nil
+	}
 	id, _ := projectString(fields["id"])
 	if !taskUUID.MatchString(id) {
 		return notFound
+	}
+	token, _ := projectString(fields["token"])
+	switch action {
+	case "lock":
+		if !taskUUID.MatchString(token) || !locks.acquire(id, token) {
+			return spaceConflict("操作处理中，请稍后查看状态。")
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return nil
+	case "unlock":
+		if !taskUUID.MatchString(token) {
+			return notFound
+		}
+		locks.release(id, token)
+		w.WriteHeader(http.StatusNoContent)
+		return nil
+	case "prepare", "finish", "clean", "sign", "delete", "advance-delete", "purge-file":
+		if !locks.owns(id, token) {
+			return spaceConflict("操作处理中，请稍后查看状态。")
+		}
+	}
+	if action == "submit-snapshot" {
+		return snapshots.submit(w, r, owner, id)
 	}
 	if action == "freeze-snapshot" {
 		if err := snapshots.freeze(ctx, owner, id); err != nil {

@@ -136,12 +136,16 @@ export function spaceTaskInputs({
         return input;
     }
 
-    function enrollTask(
+    async function enrollTask(
         owner: string,
         key: string,
         name: string,
         source: Extract<TaskSource, { kind: 'space_snapshot' }>,
     ) {
+        if (goUpload) {
+            await goUpload('enroll-snapshot', { owner, key, name, source });
+            return taskIntent(owner, key)!;
+        }
         const canonical = { name, source };
         const hash = createHash('sha256')
             .update(JSON.stringify(canonical))
@@ -339,11 +343,16 @@ export function spaceTaskInputs({
             changeTaskState(row, 'abandoned');
             return undefined;
         }
-        if (row.state === 'frozen')
+        if (!goUpload && row.state === 'frozen')
             db.prepare(
                 "UPDATE space_tasks SET state='submitted' WHERE id=?",
             ).run(row.id);
         try {
+            if (goUpload)
+                return await goUpload<Result>('submit-snapshot', {
+                    owner: row.owner,
+                    id: row.id,
+                });
             return verifyTaskReceipt(
                 row,
                 input,
@@ -381,7 +390,7 @@ export function spaceTaskInputs({
         name: string,
         source: Extract<TaskSource, { kind: 'space_snapshot' }>,
     ) {
-        const row = enrollTask(owner, key, name, source);
+        const row = await enrollTask(owner, key, name, source);
         const result = await reconcileTask(row);
         if (!result)
             throw new RequestError(409, 'owner_closed', '账号已注销。');

@@ -217,6 +217,8 @@
         "apps/workspace/workspace-api/src/tasks_test.go",
         "apps/workspace/workspace-api/src/space_purge.go",
         "apps/workspace/workspace-api/src/space_purge_test.go",
+        "apps/workspace/workspace-api/src/space_locks.go",
+        "apps/workspace/workspace-api/src/space_locks_test.go",
         "apps/workspace/workspace-api/src/space_reads.go",
         "apps/workspace/workspace-api/src/space_reads_test.go",
         "apps/workspace/workspace-api/src/space_snapshot.go",

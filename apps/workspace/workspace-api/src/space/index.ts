@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { spaceFileDeletion } from './file-deletion.ts';
 import type { Upload } from './upload.ts';
 import {
@@ -58,8 +59,12 @@ export async function goSpaceUpload<T>(
         | 'delete'
         | 'advance-delete'
         | 'freeze-snapshot'
+        | 'enroll-snapshot'
+        | 'submit-snapshot'
         | 'purge-file'
-        | 'purge-metadata',
+        | 'purge-metadata'
+        | 'lock'
+        | 'unlock',
     input: object,
 ): Promise<T> {
     const response = await fetch(
@@ -73,7 +78,12 @@ export async function goSpaceUpload<T>(
     );
     if (response.status === 204) return undefined as T;
     const data: unknown = await response.json();
-    if (response.ok) return data as T;
+    if (response.ok)
+        return (
+            action === 'submit-snapshot'
+                ? { status: response.status, json: data }
+                : data
+        ) as T;
     const failure = object(object(data).error);
     if (typeof failure.code !== 'string' || typeof failure.message !== 'string')
         throw new Error('Invalid Go upload response');
@@ -91,8 +101,20 @@ export function mySpace(
     dbPath: string,
     storage: ReturnType<typeof spaceStorage>,
     backend: Backend,
-    goUpload?: typeof goSpaceUpload,
+    remoteUpload?: typeof goSpaceUpload,
 ) {
+    const lockTokens = new Map<string, string>();
+    const goUpload: typeof goSpaceUpload | undefined = remoteUpload
+        ? <T>(action: Parameters<typeof goSpaceUpload>[0], input: object) => {
+              const id = 'id' in input ? input.id : undefined;
+              const token =
+                  typeof id === 'string' ? lockTokens.get(id) : undefined;
+              return remoteUpload<T>(
+                  action,
+                  token ? { ...input, token } : input,
+              );
+          }
+        : undefined;
     const db = new DatabaseSync(dbPath);
     db.exec(`
         PRAGMA journal_mode = WAL;
@@ -220,10 +242,29 @@ export function mySpace(
         if (active.has(uploadId))
             throw conflict('操作处理中，请稍后查看状态。');
         active.add(uploadId);
+        const token = remoteUpload ? randomUUID() : undefined;
         try {
+            if (remoteUpload && token) {
+                await remoteUpload('lock', {
+                    id: uploadId,
+                    owner: 'workspace',
+                    token,
+                });
+                lockTokens.set(uploadId, token);
+            }
             return await action();
         } finally {
-            active.delete(uploadId);
+            try {
+                if (remoteUpload && token)
+                    await remoteUpload('unlock', {
+                        id: uploadId,
+                        owner: 'workspace',
+                        token,
+                    });
+            } finally {
+                lockTokens.delete(uploadId);
+                active.delete(uploadId);
+            }
         }
     }
 

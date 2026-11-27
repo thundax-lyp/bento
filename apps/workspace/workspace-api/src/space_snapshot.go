@@ -9,16 +9,20 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf16"
 	"unicode/utf8"
+
+	"github.com/google/uuid"
 )
 
 type spaceSnapshots struct {
-	db   *sql.DB
-	read func(context.Context, string, int64) ([]byte, error)
+	db      *sql.DB
+	read    func(context.Context, string, int64) ([]byte, error)
+	backend projectService
 }
 
 type snapshotIssue struct {
@@ -201,4 +205,173 @@ func (s spaceSnapshots) freeze(ctx context.Context, owner, id string) error {
 	_, err = s.db.ExecContext(ctx, "UPDATE space_tasks SET state='frozen',canonicalBody=? WHERE id=? AND owner=? AND state='pinned'",
 		string(body), id, owner)
 	return err
+}
+
+type snapshotSelection struct {
+	Kind    string   `json:"kind"`
+	SpaceID string   `json:"spaceId"`
+	FileIDs []string `json:"fileIds"`
+}
+
+func (s spaceSnapshots) enroll(ctx context.Context, owner, key, name string, source snapshotSelection) error {
+	if !taskUUID.MatchString(key) ||
+		source.Kind != "space_snapshot" || len(source.FileIDs) == 0 || len(source.FileIDs) > 100 ||
+		strings.TrimSpace(name) != name || name == "" || utf8.RuneCountInString(name) > 120 {
+		return badTask
+	}
+	if !taskUUID.MatchString(source.SpaceID) {
+		return notFound
+	}
+	for i, id := range source.FileIDs {
+		if !taskUUID.MatchString(id) {
+			return notFound
+		}
+		if i > 0 && source.FileIDs[i-1] >= id {
+			return badTask
+		}
+	}
+	fileIDs, err := json.Marshal(source.FileIDs)
+	if err != nil {
+		return err
+	}
+	var canonical bytes.Buffer
+	canonical.WriteString(`{"name":`)
+	appendSnapshotString(&canonical, name)
+	canonical.WriteString(`,"source":{"kind":"space_snapshot","spaceId":`)
+	appendSnapshotString(&canonical, source.SpaceID)
+	canonical.WriteString(`,"fileIds":`)
+	canonical.Write(fileIDs)
+	canonical.WriteString("}}")
+	digest := sha256.Sum256(canonical.Bytes())
+	hash := hex.EncodeToString(digest[:])
+
+	return spaceImmediate(ctx, s.db, func(conn *sql.Conn) error {
+		var prior string
+		err := conn.QueryRowContext(ctx, "SELECT hash FROM space_tasks WHERE owner=? AND key=?", owner, key).Scan(&prior)
+		if err == nil {
+			if prior != hash {
+				return &requestFailure{409, "idempotency_conflict", "提交键已用于其他输入。"}
+			}
+			return nil
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+
+		var blocked, projectExists bool
+		err = conn.QueryRowContext(ctx, `
+			SELECT EXISTS(SELECT 1 FROM space_project_deletions WHERE owner=? AND spaceId=?)
+				OR EXISTS(SELECT 1 FROM space_draining_owners WHERE owner=?),
+				EXISTS(SELECT 1 FROM space_projects WHERE owner=? AND id=?)`,
+			owner, source.SpaceID, owner, owner, source.SpaceID).Scan(&blocked, &projectExists)
+		if err != nil {
+			return err
+		}
+		if blocked {
+			return &requestFailure{409, "project_busy", "项目仍有未结束的任务或正在清理。"}
+		}
+		if !projectExists {
+			return notFound
+		}
+		var total int64
+		var oversized []snapshotIssue
+		for _, file := range source.FileIDs {
+			var path string
+			var bytes int64
+			err := conn.QueryRowContext(ctx, `
+				SELECT u.path,u.size FROM space_uploads u
+				WHERE u.owner=? AND u.project=? AND u.id=? AND u.state='saved'
+				AND NOT EXISTS(SELECT 1 FROM space_file_deletions d WHERE d.fileId=u.id)`,
+				owner, source.SpaceID, file).Scan(&path, &bytes)
+			if errors.Is(err, sql.ErrNoRows) {
+				return notFound
+			}
+			if err != nil {
+				return err
+			}
+			total += bytes
+			if bytes > 1024*1024 {
+				oversized = append(oversized, snapshotIssue{file, path, "too_large"})
+			}
+		}
+		if total > 1024*1024 {
+			return &snapshotFailure{requestFailure{413, "too_large", "任务快照的文本总量不能超过 1 MiB。"}, oversized}
+		}
+		task, err := uuid.NewRandom()
+		if err != nil {
+			return err
+		}
+		_, err = conn.ExecContext(ctx, `
+			INSERT INTO space_tasks (id,owner,spaceId,key,hash,name,fileIds,state)
+			VALUES (?,?,?,?,?,?,?,'pinned')`, task.String(), owner, source.SpaceID, key, hash, name, string(fileIDs))
+		if err != nil {
+			return err
+		}
+		for _, file := range source.FileIDs {
+			if _, err := conn.ExecContext(ctx, "INSERT INTO space_task_inputs VALUES (?,?,1)", task.String(), file); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s spaceSnapshots) submit(w http.ResponseWriter, r *http.Request, owner, id string) error {
+	ctx := r.Context()
+	var space, key, state string
+	var body, lastError sql.NullString
+	err := s.db.QueryRowContext(ctx, `
+		SELECT spaceId,key,state,canonicalBody,lastError FROM space_tasks WHERE owner=? AND id=?`, owner, id).
+		Scan(&space, &key, &state, &body, &lastError)
+	if errors.Is(err, sql.ErrNoRows) {
+		return notFound
+	}
+	if err != nil {
+		return err
+	}
+	if state == "abandoned" {
+		code := lastError.String
+		if code == "" {
+			code = "owner_closed"
+		}
+		return &requestFailure{409, code, "原任务提交无法继续。"}
+	}
+	if !body.Valid {
+		return backendUnavailable
+	}
+	var input struct {
+		Digest string `json:"inputDigest"`
+	}
+	if json.Unmarshal([]byte(body.String), &input) != nil || !taskHex.MatchString(input.Digest) {
+		return backendUnavailable
+	}
+	if state == "frozen" {
+		result, err := s.db.ExecContext(ctx, `
+			UPDATE space_tasks SET state='submitted' WHERE id=? AND owner=? AND state='frozen'`, id, owner)
+		if err := requireOneSpaceUpdate(result, err); err != nil {
+			return err
+		}
+	}
+	op := taskRequest{action: "create", key: key, path: "/v1/tasks", input: json.RawMessage(body.String)}
+	op.accept = func(value any) error {
+		task := value.(map[string]any)["task"].(map[string]any)
+		if task["id"] != id || task["sourceSpaceId"] != space || task["inputDigest"] != input.Digest {
+			return backendUnavailable
+		}
+		next := task["status"].(string)
+		if next != "ready" && next != "failed" {
+			return nil
+		}
+		return spaceImmediate(ctx, s.db, func(conn *sql.Conn) error {
+			_, err := conn.ExecContext(ctx, "UPDATE space_tasks SET state=?,lastError=NULL WHERE id=? AND owner=?", next, id, owner)
+			if err != nil {
+				return err
+			}
+			if next == "ready" {
+				_, err = conn.ExecContext(ctx, "UPDATE space_task_inputs SET readPinned=0 WHERE taskId=?", id)
+			}
+			return err
+		})
+	}
+	return s.backend.forwardTask(w, r, owner, op)
 }

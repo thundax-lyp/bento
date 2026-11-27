@@ -74,3 +74,57 @@ func TestGoFreezeSnapshotPreservesCanonicalInput(t *testing.T) {
 		t.Fatalf("frozen retry should be idempotent: %v", err)
 	}
 }
+
+func TestGoEnrollSnapshotPinsAndPreservesIdempotency(t *testing.T) {
+	uploads, _, _ := uploadFixture(t)
+	ctx := t.Context()
+	const space = "00000000-0000-4000-8000-000000000049"
+	const key = "00000000-0000-4000-8000-000000000050"
+	if _, err := uploads.db.Exec(`
+		CREATE TABLE space_tasks (
+			id TEXT PRIMARY KEY, owner TEXT, spaceId TEXT, key TEXT, hash TEXT,
+			name TEXT, fileIds TEXT, state TEXT, canonicalBody TEXT, lastError TEXT,
+			UNIQUE(owner,key)
+		);
+		CREATE TABLE space_task_inputs (
+			taskId TEXT, fileId TEXT, readPinned INTEGER, PRIMARY KEY(taskId,fileId)
+		);
+		CREATE TABLE space_file_deletions (fileId TEXT PRIMARY KEY);
+		INSERT INTO space_projects VALUES ('00000000-0000-4000-8000-000000000049','owner','Space');
+	`); err != nil {
+		t.Fatal(err)
+	}
+	row, err := uploads.reserve(ctx, "owner", space, uploadReservation{
+		id: uploadFixtureID, path: "file.txt", manifest: "[]",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := uploads.transition(ctx, &row, "saved"); err != nil {
+		t.Fatal(err)
+	}
+	service := spaceSnapshots{db: uploads.db}
+	selection := snapshotSelection{Kind: "space_snapshot", SpaceID: space, FileIDs: []string{row.ID}}
+	if _, err := uploads.db.Exec("INSERT INTO space_file_deletions VALUES (?)", row.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.enroll(ctx, "owner", key, "Snapshot", selection); !errors.Is(err, notFound) {
+		t.Fatalf("enrolled deleting file: %v", err)
+	}
+	if _, err := uploads.db.Exec("DELETE FROM space_file_deletions WHERE fileId=?", row.ID); err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if err := service.enroll(ctx, "owner", key, "Snapshot", selection); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := service.enroll(ctx, "owner", key, "Changed name", selection); err == nil || err.Error() != "idempotency_conflict" {
+		t.Fatalf("accepted updated input for an existing key: %v", err)
+	}
+	var count int
+	err = uploads.db.QueryRow("SELECT count(*) FROM space_task_inputs WHERE fileId=? AND readPinned=1", row.ID).Scan(&count)
+	if err != nil || count != 1 {
+		t.Fatalf("expected one persistent file pin: %d %v", count, err)
+	}
+}

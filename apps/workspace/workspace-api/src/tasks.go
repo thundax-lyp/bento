@@ -31,6 +31,8 @@ type taskRequest struct {
 	query                  url.Values
 	prompt                 string
 	name                   string
+	input                  json.RawMessage
+	accept                 func(any) error
 }
 
 func parseGoTask(w http.ResponseWriter, r *http.Request) (taskRequest, error) {
@@ -401,7 +403,7 @@ func (s projectService) forwardTask(w http.ResponseWriter, r *http.Request, owne
 		upstream += "?" + op.query.Encode()
 	}
 	var input map[string]any
-	if op.action == "create" {
+	if op.action == "create" && op.input == nil {
 		hash := sha256.Sum256([]byte("[]"))
 		input = map[string]any{
 			"id": nil, "name": op.name, "sourceSpaceId": nil, "inputFiles": []any{},
@@ -411,7 +413,9 @@ func (s projectService) forwardTask(w http.ResponseWriter, r *http.Request, owne
 		input = map[string]any{"prompt": op.prompt}
 	}
 	var body io.Reader
-	if input != nil {
+	if op.input != nil {
+		body = bytes.NewReader(op.input)
+	} else if input != nil {
 		raw, err := json.Marshal(input)
 		if err != nil {
 			return err
@@ -496,6 +500,11 @@ func (s projectService) forwardTask(w http.ResponseWriter, r *http.Request, owne
 	value, err := op.projectResponse(raw)
 	if err != nil {
 		return err
+	}
+	if op.accept != nil {
+		if err := op.accept(value); err != nil {
+			return err
+		}
 	}
 	authJSON(w, status, value)
 	return nil
