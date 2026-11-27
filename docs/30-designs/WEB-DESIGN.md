@@ -315,7 +315,7 @@ Task 使用稳定详情地址，按事件 sequence 恢复历史和持续读取�
 
 ## 源码职责与监听生命周期
 
-个人端 API 的 `http-listener.ts` 通过 Node 公开 API 在创建监听器时设置接收期限；`server.ts` 保持认证、路由与账号清理协调职责。关闭监听后，未完成请求仍受接收期限约束，完整请求等待处理结束。空间 API 入口位于 `apps/workspace/api/src/space/index.ts`。同目录的 `project-deletion.ts` 共用入口提供的连接、事务和执行来源服务。
+个人端 API 的 `http-listener.ts` 通过 Node 公开 API 在创建监听器时设置接收期限；`server.ts` 保持认证、路由与账号清理协调职责。关闭监听后，未完成请求仍受接收期限约束，完整请求等待处理结束。空间 API 入口位于 `apps/workspace/api/src/space/index.ts`。同目录的 `project-deletion.ts` 共用入口提供的连接、事务和执行来源服务。空间页面和上传规划位于 `apps/workspace/web/src/space/`。
 
 Orchestrator 的 `service.ts` 组合执行服务。`task-retry-recovery.ts` 管理 Task 停止证据复验与恢复推进；`task-run-view.ts` 生成 Task Run 视图及重试原因。`store/index.ts` 提供执行账本入口，`store/task-evidence.ts` 负责证据、检查点和关闭审计，复用 Store 的 SQLite 连接及事务函数，不引入独立数据库或事务边界。
 

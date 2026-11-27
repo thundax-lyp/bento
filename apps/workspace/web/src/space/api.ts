@@ -1,5 +1,5 @@
 import { queryOptions } from '@tanstack/react-query';
-import { ApiError, json, post, request } from './api.ts';
+import { ApiError, json, post, request } from '../api.ts';
 
 export type Upload = {
     id: string;

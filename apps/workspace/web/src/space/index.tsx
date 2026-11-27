@@ -1,6 +1,15 @@
+import {
+    droppedChoices,
+    hasReleasedPath,
+    planUpload,
+    type UploadChoice,
+    type UploadItem,
+    type UploadRow,
+} from './upload-plan.ts';
+import { FilePreview, savedFileTree, SavedFiles } from './files.tsx';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
-import type { ChangeEvent, DragEvent, FormEvent, ReactNode } from 'react';
+import type { ChangeEvent, DragEvent, FormEvent } from 'react';
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router';
 import {
     cancelUpload,
@@ -8,17 +17,15 @@ import {
     deleteSpaceFile,
     deleteSpaceProject,
     getProjectDeletionImpact,
-    downloadFileUrl,
     getUpload,
     prepareWorkspace,
-    previewFile,
     spaceProjectQuery,
     spaceQuery,
     transferFile,
-} from './space-api.ts';
-import type { PreviewResult, Space, Upload } from './space-api.ts';
-import { ApiError, createTask, taskListQuery, taskUrl } from './api.ts';
-import { Button, Notice } from './ui.tsx';
+} from './api.ts';
+import type { Space, Upload } from './api.ts';
+import { ApiError, createTask, taskListQuery, taskUrl } from '../api.ts';
+import { Button, Notice } from '../ui.tsx';
 
 function message(error: unknown) {
     return error instanceof Error ? error.message : '操作失败，请稍后重试。';
@@ -140,200 +147,11 @@ export function CloudProjectRoute() {
     );
 }
 
-type UploadChoice =
-    { path: string; file: File } | { path: string; file: null; reason: string };
-type UploadItem = { path: string; file: File; uploadId?: string };
-type UploadRow = {
-    path: string;
-    status: string;
-    parts?: { confirmedParts: number; totalParts: number };
-};
-
-function droppedChoices(items: DataTransferItemList): UploadChoice[] {
-    return Array.from(items)
-        .filter((item) => item.kind === 'file')
-        .map((item) => {
-            const entry = item.webkitGetAsEntry?.();
-            if (entry?.isDirectory)
-                return {
-                    path: entry.name,
-                    file: null,
-                    reason: '请用文件夹选择入口。',
-                };
-            const file = entry?.isFile ? item.getAsFile() : null;
-            return file
-                ? { path: file.name, file }
-                : {
-                      path: entry?.name ?? '拖入项',
-                      file: null,
-                      reason: '无法读取拖入项，请使用选择入口。',
-                  };
-        });
-}
-
-function hasReleasedPath(state: Space['uploads'][number]['state']) {
-    return state === 'cancelled' || state === 'expired' || state === 'failed';
-}
-
-function pathPrefixes(path: string) {
-    const prefixes: string[] = [];
-    for (
-        let end = path.indexOf('/');
-        end !== -1;
-        end = path.indexOf('/', end + 1)
-    )
-        prefixes.push(path.slice(0, end));
-    return prefixes;
-}
-
-function planUpload(choices: UploadChoice[], config: Space, project: string) {
-    const rows = choices.map((choice) => {
-        const { path, file } = choice;
-        let reason = '';
-        if (!file) reason = choice.reason;
-        else if (
-            path.length > 1024 ||
-            /[\\\p{Cc}\p{Surrogate}]/u.test(path) ||
-            path.split('/').some((segment) => ['', '.', '..'].includes(segment))
-        )
-            reason = '文件路径无效。';
-        else if (file.size > config.fileLimit)
-            reason = `单文件最多 ${config.fileLimit / 1e6} MB。`;
-        return { ...choice, reason };
-    });
-    const paths = new Map<string, number>();
-    const directories = new Set<string>();
-    for (const { path, reason } of rows) {
-        if (reason) continue;
-        paths.set(path, (paths.get(path) ?? 0) + 1);
-        for (const prefix of pathPrefixes(path)) directories.add(prefix);
-    }
-    const existing = config.uploads.filter(
-        (item) => item.project === project && !hasReleasedPath(item.state),
-    );
-    const available = config.quota - config.saved - config.reserved;
-    let remaining = available;
-    const selected: UploadItem[] = [];
-    const checklist = rows.map(({ path, file, reason }) => {
-        let label = reason;
-        if (file && !label) {
-            const prior = existing.find(
-                (item) =>
-                    item.path === path ||
-                    item.path.startsWith(path + '/') ||
-                    path.startsWith(item.path + '/'),
-            );
-            if ((paths.get(path) ?? 0) > 1) label = '清单内目标路径重复。';
-            else if (
-                directories.has(path) ||
-                pathPrefixes(path).some((prefix) => paths.has(prefix))
-            )
-                label = '清单内文件与目录路径冲突。';
-            else if (prior) {
-                if (
-                    prior.path !== path ||
-                    prior.state === 'saved' ||
-                    prior.state === 'cleaning' ||
-                    prior.state === 'deleting'
-                )
-                    label = '目标路径已被占用。';
-                else if (prior.size !== file.size)
-                    label = '请选择同一上传的原文件。';
-                else {
-                    selected.push({ path, file, uploadId: prior.id });
-                    label = '待校验续传';
-                }
-            } else if (file.size > remaining) label = '账号可用额度不足。';
-            else {
-                remaining -= file.size;
-                selected.push({ path, file });
-                label = '待上传';
-            }
-        }
-        return { path, size: file?.size, label };
-    });
-    return { available, checklist, selected };
-}
-
-function FilePreview({
-    id,
-    path,
-    onClose,
-}: {
-    id: string;
-    path: string;
-    onClose: () => void;
-}) {
-    const [result, setResult] = useState<PreviewResult>();
-    useEffect(() => {
-        const controller = new AbortController();
-        void previewFile(id, controller.signal).then((preview) => {
-            if (!controller.signal.aborted) setResult(preview);
-        });
-        return () => controller.abort();
-    }, [id]);
-    return (
-        <section
-            aria-label="文本预览"
-            className="space-y-2 rounded border border-zinc-200 p-3"
-        >
-            <div className="flex items-center justify-between gap-3">
-                <h3 className="break-all font-medium">{path}</h3>
-                <Button type="button" onClick={onClose}>
-                    关闭预览
-                </Button>
-            </div>
-            {result?.kind === 'text' ? (
-                result.text === '' ? (
-                    <p>空文件</p>
-                ) : (
-                    <pre className="max-h-96 overflow-auto">{result.text}</pre>
-                )
-            ) : (
-                <p role="status">
-                    {result
-                        ? {
-                              too_large: '文件超过 256 KiB，无法预览',
-                              not_utf8: '文件不是有效的 UTF-8 文本',
-                              unavailable: '预览暂不可用',
-                          }[result.kind]
-                        : '正在读取预览…'}
-                </p>
-            )}
-        </section>
-    );
-}
-
 const deletionBlockerText = {
     upload_pending: '请先取消并清理未完成的上传。',
     project_importing: '请等待工作区初始化结束。',
     project_busy: '项目仍有未结束的任务或文件清理。',
 };
-
-type SavedFileDirectory = {
-    directories: Map<string, SavedFileDirectory>;
-    files: Upload[];
-};
-
-function savedFileTree(uploads: Upload[]): SavedFileDirectory {
-    const root: SavedFileDirectory = { directories: new Map(), files: [] };
-    for (const file of uploads) {
-        if (file.state !== 'saved') continue;
-        const segments = file.path.split('/');
-        segments.pop();
-        let directory = root;
-        for (const segment of segments) {
-            let child = directory.directories.get(segment);
-            if (!child) {
-                child = { directories: new Map(), files: [] };
-                directory.directories.set(segment, child);
-            }
-            directory = child;
-        }
-        directory.files.push(file);
-    }
-    return root;
-}
 
 function CloudProject({ account, id }: { account: string; id: string }) {
     const client = useQueryClient();
@@ -654,80 +472,6 @@ function CloudProject({ account, id }: { account: string; id: string }) {
             file.state !== 'saved',
     );
 
-    function renderSavedFiles(
-        directory: SavedFileDirectory,
-        label: string,
-    ): ReactNode {
-        return (
-            <ul aria-label={label} className="divide-y divide-zinc-200">
-                {[...directory.directories].map(([segment, child]) => (
-                    <li key={segment} className="space-y-1 py-2 pl-4">
-                        <span className="font-medium">{segment}</span>
-                        {renderSavedFiles(child, segment)}
-                    </li>
-                ))}
-                {directory.files.map((file) => (
-                    <li
-                        key={file.id}
-                        className="flex justify-between gap-3 py-2"
-                    >
-                        {selectable ? (
-                            <label className="flex items-center gap-2">
-                                <input
-                                    type="checkbox"
-                                    checked={files.includes(file.id)}
-                                    onChange={(event) =>
-                                        setFiles(
-                                            event.target.checked
-                                                ? [...files, file.id]
-                                                : files.filter(
-                                                      (value) =>
-                                                          value !== file.id,
-                                                  ),
-                                        )
-                                    }
-                                />
-                                {file.path}
-                            </label>
-                        ) : (
-                            <span>{file.path}</span>
-                        )}
-                        <span className="text-sm text-zinc-600">
-                            {file.size} 字节
-                        </span>
-                        <div className="flex items-center gap-2">
-                            <Button
-                                type="button"
-                                onClick={() => setPreviewId(file.id)}
-                            >
-                                预览文本
-                            </Button>
-                            <a
-                                className="text-sm underline"
-                                href={downloadFileUrl(file.id)}
-                            >
-                                下载文件
-                            </a>
-                            <Button
-                                type="button"
-                                disabled={remove.isPending}
-                                onClick={() => {
-                                    remove.reset();
-                                    setDeleteTarget({
-                                        id: file.id,
-                                        path: file.path,
-                                    });
-                                }}
-                            >
-                                删除文件
-                            </Button>
-                        </div>
-                    </li>
-                ))}
-            </ul>
-        );
-    }
-
     const choices = [...fileChoices, ...folderChoices];
     const { available, checklist, selected } = planUpload(choices, config, id);
     function pick(
@@ -931,8 +675,21 @@ function CloudProject({ account, id }: { account: string; id: string }) {
                         {executionLabels[execution.state]}
                     </p>
                 )}
-                {(tree.directories.size > 0 || tree.files.length > 0) &&
-                    renderSavedFiles(tree, '已保存文件')}
+                {(tree.directories.size > 0 || tree.files.length > 0) && (
+                    <SavedFiles
+                        directory={tree}
+                        label="已保存文件"
+                        selectable={selectable}
+                        files={files}
+                        setFiles={setFiles}
+                        setPreviewId={setPreviewId}
+                        deleting={remove.isPending}
+                        onDelete={(file) => {
+                            remove.reset();
+                            setDeleteTarget({ id: file.id, path: file.path });
+                        }}
+                    />
+                )}
                 <ul className="divide-y divide-zinc-200">
                     {pendingUploads.map((file) => (
                         <li

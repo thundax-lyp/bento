@@ -25,7 +25,7 @@ import {
     Workspace,
     Workbench,
 } from './pages/index.ts';
-import { CloudProjectRoute } from './space.tsx';
+import { CloudProjectRoute } from './space/index.tsx';
 import './style.css';
 
 const externalAuth = import.meta.env.VITE_BENTO_KEYCLOAK_AUTH === '1';
