@@ -3,6 +3,9 @@ set -euo pipefail
 
 # The API port and bind address are private to this container.
 export BENTO_ONE_PORT=4101
+if [[ -n "${BENTO_MYSQL_HOST:-}" ]]; then
+    export BENTO_GO_AUTH=1
+fi
 nginx -t -c /etc/nginx/bento.conf
 
 go_pid=

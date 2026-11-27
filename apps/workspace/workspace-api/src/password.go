@@ -294,12 +294,16 @@ func registerSessionRoute(mux *http.ServeMux, sessions *webSessions) {
 	})
 }
 
-func (a *passwordAuth) routes(mux *http.ServeMux) {
+func (a *passwordAuth) sessionRoutes(mux *http.ServeMux) {
 	registerSessionRoute(mux, a.sessions)
 	mux.HandleFunc("POST /api/logout", a.post(func(w http.ResponseWriter, r *http.Request) {
 		http.SetCookie(w, a.sessions.logout(r))
 		authJSON(w, 200, struct{}{})
 	}))
+}
+
+func (a *passwordAuth) routes(mux *http.ServeMux) {
+	a.sessionRoutes(mux)
 	mux.HandleFunc("POST /api/register", a.withCredentials(func(w http.ResponseWriter, r *http.Request, input credentials) error {
 		row, err := a.register(r.Context(), input)
 		if err == nil {

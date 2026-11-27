@@ -6,6 +6,8 @@ import { taskEntryServer } from './server.ts';
 import { httpBackend } from './execution-service-http.ts';
 import { mySpace } from './space/index.ts';
 import { spaceStorage } from './space/storage.ts';
+import { RequestError } from './protocol.ts';
+import type { IncomingMessage } from 'node:http';
 
 function positiveInteger(value: string, max: number, label: string): number {
     const result = Number(value);
@@ -23,6 +25,35 @@ function origin(value: string): URL {
         throw new Error('Invalid origin');
     }
     return url;
+}
+
+async function goAccount(request: IncomingMessage) {
+    if (!request.headers.cookie) {
+        throw new RequestError(401, 'login_required', '请使用受邀账号登录。');
+    }
+    const response = await fetch('http://127.0.0.1:4103/internal/session', {
+        headers: { cookie: request.headers.cookie },
+        redirect: 'error',
+        signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) {
+        await response.body?.cancel();
+        if (response.status === 401) {
+            throw new RequestError(
+                401,
+                'login_required',
+                '请使用受邀账号登录。',
+            );
+        }
+        throw new Error('Workspace session unavailable');
+    }
+    const result = (await response.json()) as Record<string, unknown>;
+    if (
+        typeof result.ownerId !== 'string' ||
+        typeof result.account !== 'string'
+    )
+        throw new Error('Invalid Workspace session response');
+    return { ownerId: result.ownerId, account: result.account };
 }
 
 async function main() {
@@ -51,6 +82,7 @@ async function main() {
 
     const mysql = env.BENTO_MYSQL_HOST ? mysqlAccounts() : undefined;
     const issuer = env.BENTO_OIDC_ISSUER;
+    const goAuth = env.BENTO_GO_AUTH === '1';
     if (env.BENTO_AUTH_MODE === 'keycloak' && !issuer)
         throw new Error('Keycloak issuer is required');
     if (issuer && !mysql)
@@ -90,7 +122,7 @@ async function main() {
         !!issuer,
     );
     const oidc =
-        issuer && mysql
+        issuer && mysql && !goAuth
             ? await keycloakAuth({
                   issuer,
                   origin: publicUrl,
@@ -140,6 +172,7 @@ async function main() {
         origin: publicUrl.origin,
         backend,
         auth,
+        ...(goAuth ? { account: goAccount } : {}),
         ...(oidc ? { oidc } : {}),
         ...(space ? { space } : {}),
     });

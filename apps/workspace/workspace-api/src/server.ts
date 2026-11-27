@@ -18,6 +18,7 @@ type Options = {
     port: number;
     origin: string;
     auth: ReturnType<typeof sessionAuth>;
+    account?: ReturnType<typeof sessionAuth>['account'];
     oidc?: Awaited<ReturnType<typeof keycloakAuth>>;
     backend: Backend;
     space?: ReturnType<typeof mySpace>;
@@ -148,6 +149,7 @@ export async function taskEntryServer({
     port,
     origin,
     auth,
+    account: readAccount = auth.account,
     oidc,
     backend,
     space,
@@ -280,7 +282,7 @@ export async function taskEntryServer({
                 sweepAccounts();
                 return json(response, 200, {});
             }
-            const account = await auth.account(request);
+            const account = await readAccount(request);
             activeOwner = account.ownerId;
             inFlight.set(activeOwner, (inFlight.get(activeOwner) ?? 0) + 1);
             if (request.method === 'GET' && path === '/api/session') {

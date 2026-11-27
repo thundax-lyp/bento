@@ -232,6 +232,12 @@ async function login(grant) {
         'Authenticated API session',
     );
     assert.deepEqual(await current.json(), { account: oidcFixtureEmail });
+    const projects = await status(
+        request('/api/projects', { headers: { Cookie: value } }),
+        200,
+        'Go session accepted by the Workspace business API',
+    );
+    assert.ok(Array.isArray((await projects.json()).projects));
     return value;
 }
 
@@ -393,10 +399,9 @@ try {
         const result = await waitExit();
         assert.ok(Number.isInteger(result.code) && result.code !== 0);
         assert.equal(result.signal, null);
-        assert.ok(
-            result.stderr
-                .split('\n')
-                .includes('Workspace auth build artifacts are unavailable'),
+        assert.match(
+            result.stderr,
+            /^(?:\d{4}\/\d{2}\/\d{2} \d{2}:\d{2}:\d{2} )?Workspace auth build artifacts are unavailable$/m,
         );
         console.log('Missing auth artifacts rejected at image startup');
     } else {
