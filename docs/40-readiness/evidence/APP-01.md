@@ -5,7 +5,7 @@
 2026-11-26，本 checkout 的 TS Orchestrator，独占临时状态目录，Node 22 本地执行夹具。
 
 ```sh
-node --import ./register-paths.mjs --experimental-strip-types --test apps/orchestrator/tests/execution-service/app-boundaries.test.ts
+node --import ./register-paths.mjs --experimental-strip-types --test apps/orchestrator/orchestrator-execution-host/tests/execution-service/app-boundaries.test.ts
 ```
 
 用例通过。分别以个人端和管理端服务凭据提交两个 Run，再走各自的内部查询接口，并只读 SQL 回读同一业务账本中的两个独立 Run，核对 ID、项目和成功状态。管理端同键重试得到原 Run。分别用个人端身份调用管理路由、管理端请求未授权方法、管理端提交和查询未授权 Workspace，获得对应的三个拒绝码。每次拒绝后比较业务和执行授权库的快照。管理诊断查询也拒绝读取同一 Workspace 内的普通 Run。

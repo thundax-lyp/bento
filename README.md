@@ -12,17 +12,17 @@
 
 ## 当前代码入口
 
-| 目录                                                                                            | 当前职责                                                               |
-| ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| [`apps/workspace/workspace-auth`](apps/workspace/workspace-auth/package.json)                   | 个人端独立构建的认证页面，由个人端 API 提供                            |
-| [`apps/workspace/workspace-web`](apps/workspace/workspace-web/README.md)                        | 个人端 `/` 工作区，包含本地启动和浏览器验收命令                        |
-| [`apps/workspace/workspace-api`](apps/workspace/workspace-api/README.md)                        | 个人端 HTTP API，Go 提供入口和 MySQL 账号仓储，TypeScript 处理业务请求 |
-| [`apps/admin/admin-api/src`](apps/admin/admin-api/src/main.go)                                  | 管理端 Go API                                                          |
-| [`apps/admin/admin-auth/src`](apps/admin/admin-auth/src/login.html)                             | 管理端登录页面                                                         |
-| [`apps/admin/admin-web/src`](apps/admin/admin-web/src/index.html)                               | 管理端 Workspace 诊断页面                                              |
-| [`apps/orchestrator`](apps/orchestrator/go.mod)                                                 | Go Temporal 编排模块                                                   |
-| [`apps/worker`](apps/worker/run-worker.ts)                                                      | DSH Worker 进程入口                                                    |
-| [`apps/orchestrator/src/execution-service`](apps/orchestrator/src/execution-service/service.ts) | 当前的执行 HTTP 服务和 Run 权威账本                                    |
+| 目录                                                                                                          | 当前职责                                                               |
+| ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| [`apps/workspace/workspace-auth`](apps/workspace/workspace-auth/package.json)                                 | 个人端独立构建的认证页面，由个人端 API 提供                            |
+| [`apps/workspace/workspace-web`](apps/workspace/workspace-web/README.md)                                      | 个人端 `/` 工作区，包含本地启动和浏览器验收命令                        |
+| [`apps/workspace/workspace-api`](apps/workspace/workspace-api/README.md)                                      | 个人端 HTTP API，Go 提供入口和 MySQL 账号仓储，TypeScript 处理业务请求 |
+| [`apps/admin/admin-api/src`](apps/admin/admin-api/src/main.go)                                                | 管理端 Go API                                                          |
+| [`apps/admin/admin-auth/src`](apps/admin/admin-auth/src/login.html)                                           | 管理端登录页面                                                         |
+| [`apps/admin/admin-web/src`](apps/admin/admin-web/src/index.html)                                             | 管理端 Workspace 诊断页面                                              |
+| [`apps/orchestrator/orchestrator-control`](apps/orchestrator/orchestrator-control/go.mod)                     | Go Temporal 编排、Run 与授权账本                                       |
+| [`apps/worker`](apps/worker/run-worker.ts)                                                                    | DSH Worker 进程入口                                                    |
+| [`apps/orchestrator/orchestrator-execution-host`](apps/orchestrator/orchestrator-execution-host/package.json) | TypeScript 执行 HTTP 服务、Worker 管理和 OpenShell 适配                |
 
 [部署手册](deploy/README.md)说明如何通过[统一 Compose](deploy/compose.yaml)启动 Bento，以及如何接入 OpenShell 和 Temporal。启动 Orchestrator 前需按手册生成和配置执行环境版本。
 
@@ -48,7 +48,7 @@ pnpm format
 
 可按工程运行 `pnpm check:workspace`（个人端认证、API 和 Web）、`pnpm check:orchestrator`（Run 编排与执行宿主）或 `pnpm check:worker`（独立 Worker）。
 
-Orchestrator 的 TypeScript 测试按模块放在 [`apps/orchestrator/tests/`](apps/orchestrator/tests/)，可通过 `pnpm --filter @bento/orchestrator test` 运行。Go Temporal 控制端位于 `apps/orchestrator/src/control/`，从 `apps/orchestrator` 运行 `go build ./src/control` 构建。
+Orchestrator 的 TypeScript 测试按模块放在 [`apps/orchestrator/orchestrator-execution-host/tests/`](apps/orchestrator/orchestrator-execution-host/tests/)，可通过 `pnpm --filter @bento/orchestrator test` 运行。Go Temporal 控制端位于 `apps/orchestrator/orchestrator-control/src/control/`，从 `apps/orchestrator/orchestrator-control` 运行 `go build ./src/control` 构建。
 
 CI 按完整变更范围选择检查：Web 常规回归、空间完整性和队列隔离分别触发；Orchestrator 或 Worker 变更同时触发使用其真实执行宿主的队列验收。公共配置和未知路径执行全量检查。浏览器安装使用 Ubuntu 官方 HTTPS 软件源，保留 Chromium 与系统依赖校验。
 

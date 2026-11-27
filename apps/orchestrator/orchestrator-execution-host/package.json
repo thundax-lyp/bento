@@ -1,0 +1,34 @@
+{
+    "name": "@bento/orchestrator",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "typecheck": "tsc --noEmit",
+        "test": "node --import ../../../register-paths.mjs --experimental-strip-types --test tests/execution-service/*.test.ts tests/openshell/*.test.ts",
+        "check": "pnpm check:core && pnpm test:temporal-retry && node acceptance/temporal-retry/check-package.mjs",
+        "check:core": "pnpm check:core:fast && pnpm test:worker-reuse",
+        "check:core:fast": "pnpm typecheck && pnpm test && pnpm test:single-node-restore:local && go -C ../orchestrator-control test ./... && go -C ../orchestrator-control vet ./... && node tests/openshell/binding-grants/check-package.mjs && pnpm test:worker-runtime && node acceptance/worker-reuse/check-package.mjs && node tests/openshell/binding-forgery/check-package.mjs && node acceptance/single-node-restore/check-package.mjs",
+        "test:go-run-ledger": "node --import ../../../register-paths.mjs --experimental-strip-types --test acceptance/go-run-ledger/bridge.test.ts",
+        "test:temporal-retry": "node --import ../../../register-paths.mjs --experimental-strip-types --test --test-concurrency=1 --test-timeout=1200000 acceptance/temporal-retry/real-retry.test.ts",
+        "test:worker-runtime": "node --import ../../../register-paths.mjs --experimental-strip-types --test ../../worker/sdk-transport.test.ts ../../worker/base-bootstrap.test.ts",
+        "test:worker-reuse": "node --import ../../../register-paths.mjs --experimental-strip-types --test --test-concurrency=1 --test-timeout=1200000 acceptance/worker-reuse/sdk.test.ts acceptance/worker-reuse/fixture.test.ts acceptance/worker-reuse/real-reuse.test.ts",
+        "test:single-node-restore:local": "node --import ../../../register-paths.mjs --experimental-strip-types --test acceptance/single-node-restore/backup.test.ts acceptance/single-node-restore/audit.test.ts acceptance/single-node-restore/resources.test.ts acceptance/single-node-restore/driver.test.ts",
+        "test:single-node-restore": "node acceptance/single-node-restore/run.mjs"
+    },
+    "dependencies": {
+        "@bento/worker": "workspace:*",
+        "@deepseek-ai/dsh-session-persistence": "0.2.1-rc.4"
+    },
+    "devDependencies": {
+        "@deepseek-ai/cordis": "4.0.5",
+        "@deepseek-ai/dsh-agent": "0.2.1-rc.4",
+        "@deepseek-ai/dsh-agent-loop": "0.2.1-rc.4",
+        "@deepseek-ai/dsh-llm": "0.2.1-rc.4",
+        "@deepseek-ai/dsh-scope": "0.2.1-rc.4",
+        "@deepseek-ai/dsh-session": "0.2.1-rc.4",
+        "@deepseek-ai/dsh-session-checkpoint-policy": "0.2.1-rc.4",
+        "@deepseek-ai/dsh-session-projection": "0.2.1-rc.4",
+        "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.4",
+        "@deepseek-ai/dsh-tools": "0.2.1-rc.4"
+    }
+}

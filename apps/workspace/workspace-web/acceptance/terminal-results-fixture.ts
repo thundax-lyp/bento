@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
-import { serveExecution } from '@/apps/orchestrator/src/execution-service/service.ts';
-import { Store } from '@/apps/orchestrator/src/execution-service/store/index.ts';
+import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
+import { serveExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
+import { Store } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/store/index.ts';
 import { projectTaskChecks } from '@/apps/worker/task-projection.ts';
 import { mockAccounts } from '@/apps/workspace/workspace-api/src/account-store.ts';
 import {

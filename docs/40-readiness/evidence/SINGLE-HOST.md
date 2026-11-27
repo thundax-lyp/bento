@@ -47,7 +47,7 @@
 
 每个场景独立核对 Docker 容器 ID 一致、目标计数文件只有一条记录，并以 SQLite 只读查询确认只有一条第 2 代启动预约。租约容器已全部清理。
 
-复跑入口为 [A3-07 Docker 探针](../../../apps/orchestrator/acceptance/a3-07/run.sh)。在测试服务器创建新的私有目录并放入脚本、同目录的 `case.mjs`、Linux/amd64 Go 控制程序 `control` 及受测源码 `src/`。源码目录需包含可解析的 Orchestrator 运行依赖。进入该目录后执行 `bash run.sh`，使用服务器已有的 `node:24.19.0-bookworm-slim` 镜像。
+复跑入口为 [A3-07 Docker 探针](../../../apps/orchestrator/orchestrator-execution-host/acceptance/a3-07/run.sh)。在测试服务器创建新的私有目录并放入脚本、同目录的 `case.mjs`、Linux/amd64 Go 控制程序 `control` 及受测源码 `src/`。源码目录需包含可解析的 Orchestrator 运行依赖。进入该目录后执行 `bash run.sh`，使用服务器已有的 `node:24.19.0-bookworm-slim` 镜像。
 
 ### 真实 OpenShell 启动在途复验
 
@@ -55,7 +55,7 @@
 
 在 B 专属 Gateway 中新建沙盒和可挂载卷。控制器写入启动预约后，先重投一次并确认沙盒未运行、原 Run 保留且未放行。随后由独立受信 broker 发出真实 SDK `StartSandbox`，仅终止该租约的控制器。以派发时刻为基准，Docker 确认控制器已退出时为 122 毫秒，最后一条目标 Docker `start` 事件发生在 437 毫秒，SDK 确认 READY 在 1,879 毫秒。每个活动目标容器 ID 恰好对应一条 Docker 启动事件，挂载独占卷。重启后由命令宿主独立查询 Gateway，发布第 2 代 READY。容器集合保持一致，启动派发标记一次，账本只保留原启动预约。沙盒、卷及测试容器已清理。
 
-在同一类私有验收目录中放入 [OpenShell 探针](../../../apps/orchestrator/acceptance/a3-07/sdk-run.sh) 和同目录的 `sdk-case.mjs`、`sdk-control.mjs`，在测试服务器设置 `BENTO_A307_GATEWAY_DIR` 和 `BENTO_A307_GATEWAY_NAMESPACE` 后执行 `bash sdk-run.sh`。Gateway 目录提供 `client/` 与固定 SDK 的 `sdk/`。可用 `BENTO_A307_GATEWAY_URL` 指定专属 Gateway 回环地址。
+在同一类私有验收目录中放入 [OpenShell 探针](../../../apps/orchestrator/orchestrator-execution-host/acceptance/a3-07/sdk-run.sh) 和同目录的 `sdk-case.mjs`、`sdk-control.mjs`，在测试服务器设置 `BENTO_A307_GATEWAY_DIR` 和 `BENTO_A307_GATEWAY_NAMESPACE` 后执行 `bash sdk-run.sh`。Gateway 目录提供 `client/` 与固定 SDK 的 `sdk/`。可用 `BENTO_A307_GATEWAY_URL` 指定专属 Gateway 回环地址。
 
 未覆盖整套 Web/Temporal 链路和 A3 其他故障场景。MASTER 候选合入时如修改受测路径，按 A8-03 复验。
 
