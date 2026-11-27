@@ -2,6 +2,9 @@
     "name": "@bento/worker",
     "private": true,
     "type": "module",
+    "exports": {
+        "./runtime/dsh-worker.ts": "./src/runtime/dsh-worker.ts"
+    },
     "scripts": {
         "start": "node --import ../../register-paths.mjs src/run-worker.ts",
         "typecheck": "tsc --noEmit"
