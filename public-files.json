@@ -2,6 +2,7 @@
     "files": [
         "apps/orchestrator/orchestrator-execution-host/tests/openshell/sdk-cache.test.ts",
         "register-paths.mjs",
+        "source-aliases.mjs",
         "shared/text-snapshot.ts",
         ".agents/skills/bento-codex-comment-fix/SKILL.md",
         ".agents/skills/bento-codex-comment-fix/agents/openai.yaml",

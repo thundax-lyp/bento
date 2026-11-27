@@ -1,6 +1,8 @@
 **
 !package.json
 !register-paths.mjs
+!source-aliases.mjs
+!tsconfig.json
 !pnpm-lock.yaml
 !pnpm-workspace.yaml
 !apps/

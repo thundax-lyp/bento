@@ -353,6 +353,8 @@ test('execution proof rejects changed live source, host wiring and private adapt
         'apps/worker/src/worker.ts': 'export const worker = 1;',
         'shared/value.ts': 'export const value = 1;',
         'register-paths.mjs': '// loader',
+        'source-aliases.mjs': '// aliases',
+        'tsconfig.json': '{}',
         'package.json': '{}',
         'pnpm-lock.yaml': 'lock',
         'deploy/orchestrator/Dockerfile': 'FROM scratch',

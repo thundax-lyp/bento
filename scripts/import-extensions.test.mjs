@@ -112,3 +112,21 @@ test('applies the public entry rule to JavaScript source too', async () => {
     );
     assert(result.some((item) => item.ruleId === boundaryRule));
 });
+
+test('rejects a JavaScript suffix for an existing TypeScript source', async () => {
+    const result = await messages("import './execution-service/service.js';");
+    assert(result.some((item) => item.messageId === 'typescriptExtension'));
+});
+
+test('enforces workspace exports for static template imports', async () => {
+    const result = await messages('import(`@worker/protocol.ts`);');
+    assert(result.some((item) => item.ruleId === boundaryRule));
+});
+
+test('keeps same-package fixtures out of production source', async () => {
+    const source = "import '@workspace-api-fixture/space/index.ts';";
+    const web = 'apps/workspace/workspace-web';
+    const production = await messages(source, web + '/src/main.tsx');
+    assert(production.some((item) => item.messageId === 'testDependency'));
+    assert.deepEqual(await messages(source, web + '/tests/probe.test.ts'), []);
+});

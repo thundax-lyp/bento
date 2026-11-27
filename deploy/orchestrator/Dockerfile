@@ -20,7 +20,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/orchestrator/orchestrator-execution-host/package.json ./apps/orchestrator/orchestrator-execution-host/
 COPY apps/worker/package.json ./apps/worker/
 RUN pnpm --filter @bento/orchestrator... install --prod --frozen-lockfile
-COPY register-paths.mjs ./
+COPY register-paths.mjs source-aliases.mjs tsconfig.json ./
 COPY shared/text-snapshot.ts ./shared/
 COPY apps/orchestrator/orchestrator-execution-host/src/index.ts ./apps/orchestrator/orchestrator-execution-host/src/
 COPY apps/orchestrator/orchestrator-execution-host/src/execution-service/*.ts ./apps/orchestrator/orchestrator-execution-host/src/execution-service/

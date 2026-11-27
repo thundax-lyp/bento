@@ -218,6 +218,8 @@ export async function executionSourceDigest(root: string): Promise<string> {
         await walk(path);
     for (const path of [
         'register-paths.mjs',
+        'source-aliases.mjs',
+        'tsconfig.json',
         'package.json',
         'pnpm-lock.yaml',
         'deploy/orchestrator/Dockerfile',

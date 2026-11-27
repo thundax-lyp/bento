@@ -2,18 +2,9 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { URL, fileURLToPath } from 'node:url';
 
-const root = fileURLToPath(new URL('../', import.meta.url));
-const tsconfig = JSON.parse(readFileSync(join(root, 'tsconfig.json'), 'utf8'));
-const aliases = Object.entries(tsconfig.compilerOptions.paths)
-    .filter(
-        ([alias, targets]) =>
-            alias.endsWith('*') &&
-            targets.length === 1 &&
-            targets[0].endsWith('*'),
-    )
-    .map(([alias, [target]]) => [alias.slice(0, -1), target.slice(0, -1)])
-    .sort(([a], [b]) => b.length - a.length);
+import { sourceAliases } from '../source-aliases.mjs';
 
+const root = fileURLToPath(new URL('../', import.meta.url));
 function discoverPackages(directory) {
     const manifest = join(directory, 'package.json');
     if (existsSync(manifest)) {
@@ -32,6 +23,8 @@ function discoverPackages(directory) {
 
 const packages = discoverPackages(join(root, 'apps'));
 const localExtension = /\.(?:[cm]?[jt]sx?|json|css|svg|png|webp|woff2?)$/;
+const testPath =
+    /(?:^|[/\\])(?:tests|__tests__|e2e)[/\\]|\.(?:test|spec)\.[^.]+$/;
 const relativeImport = /^\.\.?\//;
 
 function inside(directory, file) {
@@ -44,7 +37,9 @@ function inside(directory, file) {
 }
 
 function identify(filename, specifier) {
-    const alias = aliases.find(([prefix]) => specifier.startsWith(prefix));
+    const alias = sourceAliases.find(([prefix]) =>
+        specifier.startsWith(prefix),
+    );
     if (alias) {
         return {
             file: resolve(root, alias[1] + specifier.slice(alias[0].length)),
@@ -73,6 +68,13 @@ function identify(filename, specifier) {
 function visitImports(check) {
     function inspect(node) {
         if (typeof node?.value === 'string') check(node, node.value);
+        else if (
+            node?.type === 'TemplateLiteral' &&
+            node.expressions.length === 0
+        ) {
+            const value = node.quasis[0].value.cooked;
+            if (value !== null) check(node, value);
+        }
     }
     return {
         ImportDeclaration: (node) => inspect(node.source),
@@ -87,6 +89,8 @@ const publicWorkspaceImports = {
     meta: {
         schema: [],
         messages: {
+            testDependency:
+                'Production source cannot import test files or fixtures.',
             usePublicEntry:
                 'Cross-package source imports must use an exported entry of {{packageName}}.',
         },
@@ -96,16 +100,13 @@ const publicWorkspaceImports = {
         const owner = packages.find((pkg) =>
             file.startsWith(join(pkg.directory, 'src') + sep),
         );
-        if (
-            !owner ||
-            /(?:^|[/\\])(?:tests|__tests__)[/\\]|\.(?:test|spec)\.[^.]+$/.test(
-                relative(owner.directory, file),
-            )
-        ) {
-            return {};
-        }
+        if (!owner || testPath.test(relative(owner.directory, file))) return {};
         return visitImports((node, specifier) => {
             const target = identify(file, specifier);
+            if (target.file && testPath.test(relative(root, target.file))) {
+                context.report({ node, messageId: 'testDependency' });
+                return;
+            }
             const destination =
                 target.workspace ??
                 (target.file &&
@@ -130,6 +131,8 @@ const repositoryImportPaths = {
         schema: [],
         messages: {
             extension: 'Use an explicit file extension for repository imports.',
+            typescriptExtension:
+                'Use the actual TypeScript source extension for repository imports.',
             sourceAlias:
                 'Use a configured @ alias or a package export instead of spelling a src/ path.',
             parentAlias:
@@ -142,6 +145,16 @@ const repositoryImportPaths = {
             if (!target.sourcePath && !target.subpath) return;
             if (!localExtension.test(specifier)) {
                 context.report({ node, messageId: 'extension' });
+            }
+            if (
+                target.sourcePath &&
+                /\.[cm]?jsx?$/.test(specifier) &&
+                !existsSync(target.file) &&
+                ['.ts', '.tsx', '.mts', '.cts'].some((extension) =>
+                    existsSync(target.file.replace(/\.[cm]?jsx?$/, extension)),
+                )
+            ) {
+                context.report({ node, messageId: 'typescriptExtension' });
             }
             if (target.sourcePath && /(?:^|\/)src\//.test(specifier)) {
                 context.report({ node, messageId: 'sourceAlias' });

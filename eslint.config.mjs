@@ -6,9 +6,8 @@ import imports from './scripts/import-rules.mjs';
 export default tseslint.config(
     {
         ignores: [
-            'dist/**',
-            'coverage/**',
-            '**/DRAFT.md',
+            '**/dist/**',
+            '**/coverage/**',
             'debug-workspace/**',
             '**/.idea/**',
             '**/cache/**',
