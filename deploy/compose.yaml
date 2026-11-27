@@ -11,10 +11,11 @@ services:
                 COPY apps/workspace/workspace-api/go.mod apps/workspace/workspace-api/go.sum ./
                 RUN --mount=type=cache,id=bento-go-mod-1.25,target=/go/pkg/mod \
                     go mod download
-                COPY apps/workspace/workspace-api/src/ ./src/
+                COPY apps/workspace/workspace-api/cmd/ ./cmd/
+                COPY apps/workspace/workspace-api/internal/ ./internal/
                 RUN --mount=type=cache,id=bento-go-mod-1.25,target=/go/pkg/mod \
                     --mount=type=cache,id=bento-go-build-1.25,target=/root/.cache/go-build \
-                    CGO_ENABLED=0 go build -trimpath -o /out/bento-web-api ./src
+                    CGO_ENABLED=0 go build -trimpath -o /out/bento-web-api ./cmd/workspace-api
 
                 FROM $${NODE_IMAGE} AS dependencies
                 WORKDIR /app
@@ -22,12 +23,11 @@ services:
                 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 
                 FROM dependencies AS web-build
-                ENV VITE_BENTO_KEYCLOAK_AUTH=1
                 COPY tsconfig.json ./
                 COPY apps/workspace/workspace-web/package.json ./apps/workspace/workspace-web/
                 RUN pnpm --filter bento --filter @bento/workspace-web install --frozen-lockfile
                 COPY apps/workspace/workspace-web/ ./apps/workspace/workspace-web/
-                RUN pnpm --filter @bento/workspace-web build
+                RUN VITE_BENTO_KEYCLOAK_AUTH=1 pnpm --filter @bento/workspace-web build
 
                 FROM dependencies AS auth-build
                 COPY apps/workspace/workspace-auth/package.json apps/workspace/workspace-auth/build.mjs apps/workspace/workspace-auth/login.html apps/workspace/workspace-auth/account.html apps/workspace/workspace-auth/style.css ./apps/workspace/workspace-auth/

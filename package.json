@@ -16,7 +16,8 @@
         "lint": "eslint . && node --test scripts/import-extensions.test.mjs",
         "lint:fix": "eslint . --fix",
         "format": "prettier --write .",
-        "format:check": "prettier --check .",
+        "format:check": "prettier --check . && pnpm format:go:check",
+        "format:go:check": "files=$(gofmt -l apps/admin/admin-api apps/orchestrator/orchestrator-control apps/workspace/workspace-api) || exit; if test -n \"$files\"; then printf \"%s\\n\" \"$files\"; exit 1; fi",
         "check:workspace-api": "cd apps/workspace/workspace-api && go test ./... && go vet ./..."
     },
     "devDependencies": {
@@ -30,6 +31,8 @@
     },
     "files": [
         "register-paths.mjs",
+        "source-aliases.mjs",
+        "tsconfig.json",
         "shared/text-snapshot.ts",
         "apps/orchestrator",
         "apps/admin",

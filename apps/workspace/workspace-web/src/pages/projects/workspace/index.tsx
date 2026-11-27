@@ -1,5 +1,5 @@
 import { ApiError, createProject, projectsQuery } from '@workspace-web/api.ts';
-import { SpaceList } from '@workspace-web/space/index.tsx';
+import { SpaceList } from '@workspace-web/space/space-list.tsx';
 import { Button, Notice } from '@workspace-web/ui.tsx';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { FormEvent } from 'react';

@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import { conflict, missing, RequestError } from '../input.ts';
 import {
@@ -602,7 +602,91 @@ export function runStore({
         }
     }
 
+    function readPhysicalStopProof(runId: string, generation: number) {
+        return db
+            .prepare(
+                'SELECT canonicalJson,sha256 FROM physical_stop_proofs WHERE runId=? AND generation=?',
+            )
+            .get(runId, generation);
+    }
+
+    function recordPhysicalStopProof(
+        runId: string,
+        generation: number,
+        canonicalJson: string,
+    ) {
+        const digest = createHash('sha256').update(canonicalJson).digest('hex');
+        db.prepare('INSERT INTO physical_stop_proofs VALUES (?,?,?,?)').run(
+            runId,
+            generation,
+            canonicalJson,
+            digest,
+        );
+    }
+
+    function completeAmbiguousRecovery(
+        id: string,
+        generation: number,
+        summary: string,
+    ) {
+        if (
+            business('complete-ambiguous', {
+                run: id,
+                generation,
+                summary,
+            }) !== undefined
+        )
+            return;
+        write(() => {
+            const proof = readPhysicalStopProof(id, generation);
+            if (
+                !proof ||
+                proof.sha256 !==
+                    createHash('sha256')
+                        .update(String(proof.canonicalJson))
+                        .digest('hex')
+            )
+                throw new Error('Physical stop proof is unavailable');
+            db.prepare(
+                "INSERT OR IGNORE INTO physical_stop_consumption VALUES (?,?,'slot',?)",
+            ).run(id, generation, proof.sha256);
+            status(id, 'needs_review', summary);
+        });
+    }
+
+    function consumeUpgradeStops() {
+        const result = business('drain', {});
+        if (result !== undefined) return result === true;
+        return write(() => {
+            const pending = db
+                .prepare(
+                    `SELECT 1 FROM runs
+                     WHERE status IN ('running','recovering','cancelling')
+                     UNION ALL
+                     SELECT 1 FROM physical_stop_proofs p
+                     WHERE NOT EXISTS (
+                         SELECT 1 FROM physical_stop_consumption c
+                         WHERE c.runId=p.runId AND c.generation=p.generation
+                           AND c.consumer='slot' AND c.sha256=p.sha256
+                     ) LIMIT 1`,
+                )
+                .get();
+            if (pending) return false;
+            db.exec(
+                `INSERT OR IGNORE INTO physical_stop_consumption
+                 SELECT runId,generation,'upgrade',sha256
+                 FROM physical_stop_consumption WHERE consumer='slot'`,
+            );
+            return true;
+        });
+    }
+
     return {
+        readPhysicalStopProof,
+        recordPhysicalStopProof,
+        completeAmbiguousRecovery,
+        consumeUpgradeStops,
+
         requireRunProject,
         hasPendingProjectRun,
         addRun,

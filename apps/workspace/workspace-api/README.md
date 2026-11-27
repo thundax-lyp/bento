@@ -16,20 +16,20 @@ Go 模块提供 Workspace 的认证、项目及 Run、Task 和文件空间 API�
 
 ```sh
 pnpm --filter @bento/workspace-auth build
-go -C apps/workspace/workspace-api build -o /tmp/bento-web-api ./src
+go -C apps/workspace/workspace-api build -o /tmp/bento-web-api ./cmd/workspace-api
 /tmp/bento-web-api
 ```
 
 ## 源码结构
 
-| 路径                         | 职责                                                  |
-| ---------------------------- | ----------------------------------------------------- |
-| `src/main.go`                | 组装依赖、启动 HTTP 服务和管理关闭                    |
-| `src/internal/api/`          | 注册项目、Run 和 Task 路由，协调账号清理              |
-| `src/internal/auth/`         | MySQL 账号仓储、Session、密码和 OIDC                  |
-| `src/internal/orchestrator/` | Orchestrator 私有 HTTP 客户端和协议编解码             |
-| `src/internal/space/`        | SQLite、S3、文件锁、上传、项目初始化与删除、快照 Task |
-| `src/internal/httpx/`        | 请求解析、响应头和错误格式                            |
+| 路径                        | 职责                                                  |
+| --------------------------- | ----------------------------------------------------- |
+| `cmd/workspace-api/main.go` | 组装依赖、启动 HTTP 服务和管理关闭                    |
+| `internal/api/`             | 注册项目、Run 和 Task 路由，协调账号清理              |
+| `internal/auth/`            | MySQL 账号仓储、Session、密码和 OIDC                  |
+| `internal/orchestrator/`    | Orchestrator 私有 HTTP 客户端和协议编解码             |
+| `internal/space/`           | SQLite、S3、文件锁、上传、项目初始化与删除、快照 Task |
+| `internal/httpx/`           | 请求解析、响应头和错误格式                            |
 
 SQLite 在服务启动时初始化。上传和清理共用进程内文件锁，后台任务凭持久化提交键重试。包内测试随对应 Go 包维护。
 
@@ -63,4 +63,4 @@ Compose 设置 `BENTO_MYSQL_HOST=mysql:3306`、`BENTO_MYSQL_USER=bento`、`BENTO
 
 ## 测试
 
-运行 `pnpm check:workspace-api` 执行 Go 测试和 `go vet`。容器回归由 `deploy/workspace/auth-smoke.sh` 执行，覆盖 OIDC 生命周期、项目空间、上传与删除、快照 Task、账号清理和进程拓扑。浏览器模拟服务和相关测试位于 [Workspace Web 验收目录](../workspace-web/tests/acceptance/fixtures/workspace-api/)。
+从仓库根目录运行 `pnpm check:workspace-api` 执行 Go 测试和 `go vet`。Go 格式由仓库级 `pnpm format:go:check` 检查。容器回归由 `deploy/workspace/auth-smoke.sh` 执行，覆盖 OIDC 生命周期、项目空间、上传与删除、快照 Task、账号清理和进程拓扑。浏览器模拟服务和相关测试位于 [Workspace Web 验收目录](../workspace-web/tests/acceptance/fixtures/workspace-api/)。

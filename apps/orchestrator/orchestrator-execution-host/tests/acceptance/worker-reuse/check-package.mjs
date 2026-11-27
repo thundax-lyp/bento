@@ -14,6 +14,8 @@ const read = (path) =>
     );
 const expectedFiles = [
     'register-paths.mjs',
+    'source-aliases.mjs',
+    'tsconfig.json',
     'shared/text-snapshot.ts',
     'apps/orchestrator',
     'apps/admin',

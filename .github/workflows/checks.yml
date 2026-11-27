@@ -62,7 +62,7 @@ jobs:
                                   workspace=true
                                   queue=true
                                   ;;
-                              apps/workspace/workspace-web/e2e/*|apps/workspace/workspace-web/tests/playwright/playwright.config.ts)
+                              apps/workspace/workspace-web/tests/e2e/*|apps/workspace/workspace-web/tests/playwright/playwright.config.ts)
                                   workspace=true
                                   browser=true
                                   ;;
@@ -72,7 +72,7 @@ jobs:
                                   space=true
                                   queue=true
                                   ;;
-                              apps/orchestrator/orchestrator-execution-host/tests/execution-service/*|apps/orchestrator/orchestrator-control/src/control/temporal_test.go|apps/orchestrator/orchestrator-control/src/control/temporal_fair_entry_test.go)
+                              apps/orchestrator/orchestrator-execution-host/tests/execution-service/*|apps/orchestrator/orchestrator-control/cmd/control/temporal_test.go|apps/orchestrator/orchestrator-control/cmd/control/temporal_fair_entry_test.go)
                                   workspace=true
                                   orchestrator=true
                                   queue=true
@@ -152,10 +152,6 @@ jobs:
             - run: pnpm check:worker
               if: ${{ needs.changes.outputs.worker == 'true' }}
             - run: pnpm lint
-              if: >-
-                  ${{ needs.changes.outputs.workspace == 'true' ||
-                      needs.changes.outputs.orchestrator == 'true' ||
-                      needs.changes.outputs.worker == 'true' }}
             - run: pnpm format:check
 
     workspace:

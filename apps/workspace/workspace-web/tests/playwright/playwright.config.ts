@@ -6,7 +6,7 @@ const apiOrigin = 'http://127.0.0.1:4319';
 const root = fileURLToPath(new URL('../../../../../', import.meta.url));
 
 export default defineConfig({
-    testDir: '../../e2e',
+    testDir: '../e2e',
     outputDir: '../../test-results',
     use: { baseURL: webOrigin },
     projects: [{ name: 'chromium', use: devices['Desktop Chrome'] }],

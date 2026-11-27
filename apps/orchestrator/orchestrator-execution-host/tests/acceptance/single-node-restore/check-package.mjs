@@ -9,6 +9,8 @@ import { join, posix } from 'node:path';
 const root = fileURLToPath(new URL('../../../../../../', import.meta.url));
 const expectedFiles = [
     'register-paths.mjs',
+    'source-aliases.mjs',
+    'tsconfig.json',
     'shared/text-snapshot.ts',
     'apps/orchestrator',
     'apps/admin',
@@ -107,7 +109,9 @@ assert.equal(new Set(files).size, files.length);
 for (const path of [
     'package.json',
     'register-paths.mjs',
-    'apps/orchestrator/orchestrator-control/src/control/temporal.go',
+    'source-aliases.mjs',
+    'tsconfig.json',
+    'apps/orchestrator/orchestrator-control/cmd/control/temporal.go',
     'apps/orchestrator/orchestrator-control/go.mod',
     'apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts',
     ...sources,
