@@ -4,7 +4,12 @@ import { once } from 'node:events';
 import { readFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { expect, test, type Page, type Response } from '@playwright/test';
-import type { Session, Task, TaskResult, TaskRun } from '../src/api.ts';
+import type {
+    Session,
+    Task,
+    TaskResult,
+    TaskRun,
+} from '@/apps/workspace/workspace-web/src/api.ts';
 
 const first = 'web05-first.txt';
 const second = 'web05-second.txt';

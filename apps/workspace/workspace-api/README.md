@@ -63,4 +63,4 @@ Compose 设置 `BENTO_MYSQL_HOST=mysql:3306`、`BENTO_MYSQL_USER=bento`、`BENTO
 
 ## 测试
 
-运行 `pnpm check:workspace-api` 执行 Go 测试和 `go vet`。容器回归由 `deploy/workspace/auth-smoke.sh` 执行，覆盖 OIDC 生命周期、项目空间、上传与删除、快照 Task、账号清理和进程拓扑。浏览器模拟服务和相关测试位于 [Workspace Web 验收目录](../workspace-web/acceptance/fixtures/workspace-api/)。
+运行 `pnpm check:workspace-api` 执行 Go 测试和 `go vet`。容器回归由 `deploy/workspace/auth-smoke.sh` 执行，覆盖 OIDC 生命周期、项目空间、上传与删除、快照 Task、账号清理和进程拓扑。浏览器模拟服务和相关测试位于 [Workspace Web 验收目录](../workspace-web/tests/acceptance/fixtures/workspace-api/)。

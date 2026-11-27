@@ -10,7 +10,12 @@ import {
     type Page,
     type Response,
 } from '@playwright/test';
-import type { Session, Task, TaskResult, TaskRun } from '../src/api.ts';
+import type {
+    Session,
+    Task,
+    TaskResult,
+    TaskRun,
+} from '@/apps/workspace/workspace-web/src/api.ts';
 
 const file = 'web-a08.txt';
 const sha256 = (bytes: Buffer) =>

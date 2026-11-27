@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
-    testDir: './acceptance',
+    testDir: './tests/acceptance',
     testMatch: '**/web-queue-isolation.spec.ts',
     workers: 1,
     retries: 0,

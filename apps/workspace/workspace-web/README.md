@@ -5,7 +5,7 @@
 从仓库根目录执行 `pnpm install`，然后在两个终端分别运行：
 
 ```sh
-BENTO_ONE_PORT=4186 BENTO_ONE_ORIGIN=http://127.0.0.1:4185 node --import ./register-paths.mjs apps/workspace/workspace-web/acceptance/fixtures/workspace-api/start-mock.ts
+BENTO_ONE_PORT=4186 BENTO_ONE_ORIGIN=http://127.0.0.1:4185 node --import ./register-paths.mjs apps/workspace/workspace-web/tests/acceptance/fixtures/workspace-api/start-mock.ts
 ```
 
 ```sh
@@ -26,7 +26,7 @@ pnpm --filter @bento/workspace-web exec playwright install chromium
 pnpm --filter @bento/workspace-web test:e2e
 ```
 
-Vitest 单元与组件测试统一放在 `tests/`，与 `src/` 分离；测试通过显式路径导入源码，仍由 TypeScript 和 ESLint 检查。`pnpm test` 只发现 `tests/**/*.test.{ts,tsx}`。
+Vitest 单元与组件测试统一放在 `tests/`，与 `src/` 分离；测试通过显式路径导入源码，仍由 TypeScript 和 ESLint 检查。`pnpm test` 发现 `tests/**/*.test.{ts,tsx}`，并排除 `tests/acceptance/`。Playwright 验收与 Node 模拟 API 测试从 `tests/acceptance/` 各自的入口执行。
 
 浏览器测试位于 `e2e/`，自动启动 Vite 和 Bento 的模拟任务入口，使用独立的 4320 和 4319 端口。
 

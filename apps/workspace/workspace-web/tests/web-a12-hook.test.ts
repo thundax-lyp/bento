@@ -14,7 +14,7 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { nativeConnection } from '../acceptance/web-a12-hook.ts';
+import { nativeConnection } from './acceptance/web-a12-hook.ts';
 
 const roots: string[] = [];
 const sha = (bytes: string | Buffer) =>

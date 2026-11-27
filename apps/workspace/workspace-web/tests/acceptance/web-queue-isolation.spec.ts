@@ -4,8 +4,8 @@ import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
-import type { Task, TaskRun } from '../src/api.ts';
-import type { Space } from '../src/space/api.ts';
+import type { Task, TaskRun } from '@/apps/workspace/workspace-web/src/api.ts';
+import type { Space } from '@/apps/workspace/workspace-web/src/space/api.ts';
 import { startQueueIsolationFixture } from './queue-isolation-fixture.ts';
 
 let fixture: Awaited<ReturnType<typeof startQueueIsolationFixture>>;
