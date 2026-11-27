@@ -57,13 +57,62 @@ func openSpaceDB(database, mode string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	dsn := url.URL{Scheme: "file", Path: absolute, RawQuery: "mode=" + mode + "&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)"}
+	dsn := url.URL{Scheme: "file", Path: absolute, RawQuery: "mode=" + mode + "&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)&_pragma=synchronous(FULL)"}
 	db, err := sql.Open("sqlite", dsn.String())
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(4)
 	return db, nil
+}
+
+func initializeSpace(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, `
+        PRAGMA journal_mode = WAL;
+        CREATE TABLE IF NOT EXISTS space_projects (
+            id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS space_project_deletions (
+            spaceId TEXT PRIMARY KEY, owner TEXT NOT NULL, operationId TEXT NOT NULL UNIQUE,
+            executionProjectId TEXT, phase TEXT NOT NULL CHECK(phase IN ('holding','committing','releasing','cleaning','deleted')),
+            lastError TEXT CHECK(lastError IN ('execution_unconfirmed','storage_unconfirmed','project_busy','project_importing','owner_closed'))
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS space_draining_owners (owner TEXT PRIMARY KEY) STRICT;
+        CREATE TABLE IF NOT EXISTS space_retired_upload_ids (id TEXT PRIMARY KEY) STRICT;
+        CREATE TABLE IF NOT EXISTS space_uploads (
+            id TEXT PRIMARY KEY, project TEXT NOT NULL, owner TEXT NOT NULL,
+            path TEXT NOT NULL, size INTEGER NOT NULL, manifest TEXT NOT NULL,
+            state TEXT NOT NULL, storageId TEXT, expires INTEGER NOT NULL,
+            signedUntil INTEGER NOT NULL DEFAULT 0, cleanup TEXT
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS space_file_deletions (
+            fileId TEXT PRIMARY KEY REFERENCES space_uploads(id) ON DELETE CASCADE,
+            operationId TEXT NOT NULL, executionProjectId TEXT,
+            phase TEXT NOT NULL CHECK(phase IN ('checking','deleting','releasing'))
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS space_owner ON space_uploads(owner, state);
+        CREATE INDEX IF NOT EXISTS space_project ON space_uploads(project, state);
+
+        CREATE TABLE IF NOT EXISTS space_execution (
+            spaceId TEXT NOT NULL, owner TEXT NOT NULL, key TEXT NOT NULL,
+            state TEXT NOT NULL, inputs TEXT NOT NULL, projectId TEXT, snapshot TEXT, issues TEXT,
+            PRIMARY KEY(spaceId, key)
+        ) STRICT;
+        CREATE UNIQUE INDEX IF NOT EXISTS one_space_execution
+            ON space_execution(spaceId) WHERE state <> 'failed' OR projectId IS NOT NULL;
+
+        CREATE TABLE IF NOT EXISTS space_tasks (
+            id TEXT PRIMARY KEY, owner TEXT NOT NULL, spaceId TEXT NOT NULL,
+            key TEXT NOT NULL, hash TEXT NOT NULL, name TEXT NOT NULL, fileIds TEXT NOT NULL,
+            state TEXT NOT NULL,canonicalBody TEXT,lastError TEXT,UNIQUE(owner,key)
+        ) STRICT;
+        CREATE TABLE IF NOT EXISTS space_task_inputs (
+            taskId TEXT NOT NULL,fileId TEXT NOT NULL,readPinned INTEGER NOT NULL CHECK(readPinned IN (0,1)),
+            PRIMARY KEY(taskId,fileId)
+        ) STRICT;
+        CREATE INDEX IF NOT EXISTS space_task_file_pins ON space_task_inputs(fileId,readPinned);
+    `)
+	return err
 }
 
 func (s *spaceReader) overview(ctx context.Context, owner string) (spaceOverview, error) {

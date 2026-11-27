@@ -205,7 +205,7 @@ func (s spaceUploads) routes(mux *http.ServeMux, sessions *webSessions, backend 
 	})
 }
 
-func (s spaceUploads) startReconciliation(ctx context.Context, locks *spaceLocks, backend projectService) func() {
+func (s spaceUploads) startReconciliation(ctx context.Context, locks *spaceLocks, backend projectService, reconcileProjects func(context.Context)) func() {
 	ctx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	go func() {
@@ -218,6 +218,7 @@ func (s spaceUploads) startReconciliation(ctx context.Context, locks *spaceLocks
 				return
 			case <-ticker.C:
 				s.reconcile(ctx, locks, backend)
+				reconcileProjects(ctx)
 			}
 		}
 	}()

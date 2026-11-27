@@ -19,6 +19,7 @@ type spaceProjectDeletion struct {
 	db      *sql.DB
 	storage uploadStorage
 	backend projectService
+	locks   *spaceLocks
 }
 
 type projectDeleteIntent struct {
@@ -238,18 +239,7 @@ func (s spaceProjectDeletion) clean(ctx context.Context, owner, id string) error
 		return err
 	}
 	for _, file := range files {
-		key := spaceObjectKey(file)
-		if _, found, err := s.storage.size(ctx, key); err != nil {
-			return err
-		} else if found {
-			if err := s.storage.remove(ctx, key); err != nil {
-				return err
-			}
-		}
-		if _, found, err := s.storage.size(ctx, key); err != nil || found {
-			return projectDeleteUnconfirmed
-		}
-		if _, err := s.db.ExecContext(ctx, "UPDATE space_uploads SET state='deleted' WHERE id=? AND owner=? AND project=?", file, owner, id); err != nil {
+		if err := s.cleanFile(ctx, owner, id, file); err != nil {
 			return err
 		}
 	}
@@ -269,4 +259,202 @@ func (s spaceProjectDeletion) clean(ctx context.Context, owner, id string) error
 		}
 		return nil
 	})
+}
+
+func (s spaceProjectDeletion) cleanFile(ctx context.Context, owner, project, id string) error {
+	token := uuid.NewString()
+	if !s.locks.acquire(id, token) {
+		return projectDeleteUnconfirmed
+	}
+	defer s.locks.release(id, token)
+	key := spaceObjectKey(id)
+	if _, found, err := s.storage.size(ctx, key); err != nil {
+		return err
+	} else if found {
+		if err := s.storage.remove(ctx, key); err != nil {
+			return err
+		}
+	}
+	if _, found, err := s.storage.size(ctx, key); err != nil || found {
+		return projectDeleteUnconfirmed
+	}
+	_, err := s.db.ExecContext(ctx, "UPDATE space_uploads SET state='deleted' WHERE id=? AND owner=? AND project=?", id, owner, project)
+	return err
+}
+
+func (s spaceProjectDeletion) impact(ctx context.Context, owner, id string) (map[string]any, error) {
+	var phase, state string
+	var binding sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(d.phase,''), COALESCE(e.state,''), e.projectId
+  FROM space_projects p LEFT JOIN space_project_deletions d ON d.spaceId=p.id
+  LEFT JOIN space_execution e ON e.rowid=(SELECT rowid FROM space_execution WHERE spaceId=p.id AND owner=p.owner ORDER BY rowid DESC LIMIT 1)
+  WHERE p.id=? AND p.owner=?`, id, owner).Scan(&phase, &state, &binding)
+	if errors.Is(err, sql.ErrNoRows) || phase == "deleted" {
+		return nil, notFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	var fileCount, uploadCount int
+	err = s.db.QueryRowContext(ctx, `SELECT count(CASE WHEN state IN ('saved','deleting') THEN 1 END),
+  count(CASE WHEN state IN ('preparing','uploading','completing','cleaning') THEN 1 END)
+  FROM space_uploads WHERE owner=? AND project=?`, owner, id).Scan(&fileCount, &uploadCount)
+	if err != nil {
+		return nil, err
+	}
+	var runCount, diffCount int
+	blocked := map[string]bool{"upload_pending": uploadCount > 0, "project_importing": state == "validating" || state == "importing"}
+	if phase != "cleaning" {
+		runs, diffs, blockers, upstreamErr := s.upstreamImpact(ctx, owner, id, binding)
+		var latest string
+		err := s.db.QueryRowContext(ctx, "SELECT phase FROM space_project_deletions WHERE owner=? AND spaceId=?", owner, id).Scan(&latest)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
+		}
+		if latest == "deleted" {
+			return nil, notFound
+		}
+		if upstreamErr != nil && latest != "cleaning" {
+			return nil, projectDeleteUnconfirmed
+		}
+		if upstreamErr == nil {
+			runCount, diffCount = runs, diffs
+			for _, code := range blockers {
+				blocked[code] = true
+			}
+		}
+	}
+	blockers := []string{}
+	for _, code := range []string{"upload_pending", "project_importing", "project_busy"} {
+		if blocked[code] {
+			blockers = append(blockers, code)
+		}
+	}
+	return map[string]any{"fileCount": fileCount, "uploadCount": uploadCount, "runCount": runCount, "diffCount": diffCount, "blockers": blockers}, nil
+}
+
+func (s spaceProjectDeletion) upstreamImpact(ctx context.Context, owner, id string, binding sql.NullString) (int, int, []string, error) {
+	target := s.backend.origin + "/v1/task-sources/" + url.PathEscape(id) + "/deletion"
+	if binding.Valid {
+		target += "?" + url.Values{"legacyProjectId": {binding.String}}.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+s.backend.bearer)
+	req.Header.Set("X-Bento-Owner-Id", owner)
+	response, err := s.backend.client.Do(req)
+	if err != nil {
+		return 0, 0, nil, err
+	}
+	defer response.Body.Close()
+	media, _, _ := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	raw, err := io.ReadAll(io.LimitReader(response.Body, 65537))
+	var reply struct {
+		RunCount  *int
+		DiffCount *int
+		Blockers  []string
+	}
+	if err != nil || len(raw) > 65536 || media != "application/json" || response.StatusCode != 200 || json.Unmarshal(raw, &reply) != nil ||
+		reply.RunCount == nil || reply.DiffCount == nil || *reply.RunCount < 0 || *reply.DiffCount < 0 || reply.Blockers == nil {
+		return 0, 0, nil, projectDeleteUnconfirmed
+	}
+	for _, code := range reply.Blockers {
+		if code != "project_importing" && code != "project_busy" {
+			return 0, 0, nil, projectDeleteUnconfirmed
+		}
+	}
+	return *reply.RunCount, *reply.DiffCount, reply.Blockers, nil
+}
+
+func (s spaceProjectDeletion) advanceLocked(ctx context.Context, owner, id string, snapshots *spaceSnapshots) (int, error) {
+	token := uuid.NewString()
+	lock := "project:" + id
+	if !s.locks.acquire(lock, token) {
+		return http.StatusAccepted, nil
+	}
+	defer s.locks.release(lock, token)
+	var phase string
+	err := s.db.QueryRowContext(ctx, "SELECT phase FROM space_project_deletions WHERE owner=? AND spaceId=?", owner, id).Scan(&phase)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, notFound
+	}
+	if err != nil {
+		return 0, err
+	}
+	if phase == "holding" {
+		if err := snapshots.settleProject(ctx, owner, id); err != nil {
+			return 0, err
+		}
+	}
+	return s.advance(ctx, owner, id)
+}
+
+func (s spaceProjectDeletion) routes(mux *http.ServeMux, sessions *webSessions, origin string, snapshots *spaceSnapshots) {
+	handle := func(w http.ResponseWriter, r *http.Request) {
+		s.backend.responseHeaders(w)
+		if r.Method == http.MethodDelete && (len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != origin) {
+			authFailure(w, &requestFailure{400, "invalid_origin", "请从任务入口提交请求。"})
+			return
+		}
+		session, err := sessions.current(r)
+		id := r.PathValue("project")
+		if err == nil {
+			switch {
+			case !taskUUID.MatchString(id) || r.Method == http.MethodHead:
+				err = notFound
+			case r.Method == http.MethodGet:
+				var result map[string]any
+				result, err = s.impact(r.Context(), session.Owner, id)
+				if err == nil {
+					authJSON(w, http.StatusOK, result)
+				}
+			default:
+				err = s.enroll(r.Context(), session.Owner, id)
+				if err == nil {
+					var status int
+					status, err = s.advanceLocked(r.Context(), session.Owner, id, snapshots)
+					if err == nil {
+						if status == http.StatusNoContent {
+							w.WriteHeader(status)
+						} else {
+							authJSON(w, status, map[string]string{"state": "deleting"})
+						}
+					}
+				}
+			}
+		}
+		if err != nil {
+			authFailure(w, err)
+		}
+	}
+	mux.HandleFunc("GET /api/space/projects/{project}/deletion", handle)
+	mux.HandleFunc("DELETE /api/space/projects/{project}", handle)
+}
+
+func (s spaceProjectDeletion) reconcile(ctx context.Context, snapshots *spaceSnapshots) {
+	rows, err := s.db.QueryContext(ctx, "SELECT owner,spaceId FROM space_project_deletions WHERE phase<>'deleted'")
+	if err != nil {
+		return
+	}
+	var pending [][2]string
+	for rows.Next() {
+		var row [2]string
+		if err := rows.Scan(&row[0], &row[1]); err != nil {
+			rows.Close()
+			return
+		}
+		pending = append(pending, row)
+	}
+	rows.Close()
+	if rows.Err() != nil {
+		return
+	}
+	for _, row := range pending {
+		if ctx.Err() != nil {
+			return
+		}
+		_, _ = s.advanceLocked(ctx, row[0], row[1], snapshots)
+	}
 }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import console from 'node:console';
-import { access, mkdtemp, open, readFile, rm } from 'node:fs/promises';
+import { access, mkdtemp, open, readFile, readdir, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { tmpdir } from 'node:os';
@@ -17,13 +17,22 @@ import {
 } from './oidc-fixture.ts';
 
 const origin = 'http://127.0.0.1:8080';
-const accounts = 'http://127.0.0.1:4103/internal/accounts';
 const assets = '/app/apps/workspace/workspace-auth/';
 const missing = process.argv[2] === '--missing-artifacts';
 const spaceConfigured = process.argv[2] === '--space-reads';
 const subject = spaceConfigured ? 'fixture-space-subject' : 'fixture-subject';
 const fixture = await startOidcFixture();
 let snapshotSubmissions = 0;
+let lastProjectOwner;
+const purgedOwners = new Set();
+const executionProject = 'fixture-execution-project';
+const closedSnapshotKey = '00000000-0000-4000-8000-000000000034';
+const closedSnapshot = '00000000-0000-4000-8000-000000000035';
+const closedSnapshotDigest = '1'.repeat(64);
+let closedSnapshotReceipts = 0;
+let releaseSpacePurge = false;
+let spaceDrainStarted = false;
+let releaseSpaceDrain;
 let fileDeleteHeld = false;
 let fileDeleteReleased = false;
 const execution = createServer(async (req, res) => {
@@ -43,10 +52,66 @@ const execution = createServer(async (req, res) => {
             res.writeHead(500).end('{}');
             return;
         }
+        if (req.url === '/v1/projects')
+            lastProjectOwner = req.headers['x-bento-owner-id'];
         res.end(
             JSON.stringify(
                 req.url === '/v1/projects' ? { projects: [] } : { items: [] },
             ),
+        );
+        return;
+    }
+    if (
+        req.method === 'GET' &&
+        req.url === '/v1/tasks?creationKey=' + closedSnapshotKey
+    ) {
+        assert.ok(req.headers['user-agent']?.startsWith('Go-http-client/'));
+        closedSnapshotReceipts++;
+        res.end(
+            JSON.stringify({
+                items: [
+                    {
+                        id: closedSnapshot,
+                        name: 'Closing Snapshot',
+                        inputDigest: closedSnapshotDigest,
+                        sourceSpaceId: '00000000-0000-4000-8000-000000000031',
+                        environmentVersion: 'sha256:' + '0'.repeat(64),
+                        status: 'preparing',
+                        prepareError: null,
+                        closedReason: null,
+                        reconciliation: null,
+                        createdAt: '2026-11-27T00:00:00Z',
+                        updatedAt: '2026-11-27T00:00:00Z',
+                        inputs: [],
+                    },
+                ],
+            }),
+        );
+        return;
+    }
+    if (req.method === 'POST' && req.url === '/v1/projects') {
+        const chunks = [];
+        for await (const chunk of req) chunks.push(chunk);
+        const payload = JSON.parse(chunks.join(''));
+        if (
+            !req.headers['user-agent']?.startsWith('Go-http-client/') ||
+            !/^space-init-[a-f0-9]{64}$/.test(req.headers['idempotency-key']) ||
+            JSON.stringify(payload) !==
+                JSON.stringify({
+                    name: 'Smoke Space',
+                    files: [{ path: 'empty.txt', text: '' }],
+                })
+        ) {
+            res.writeHead(500).end('{}');
+            return;
+        }
+        res.writeHead(201).end(
+            JSON.stringify({
+                id: executionProject,
+                name: payload.name,
+                status: 'ready',
+                createdAt: '2026-11-27T00:00:00Z',
+            }),
         );
         return;
     }
@@ -134,7 +199,9 @@ const execution = createServer(async (req, res) => {
     if (
         req.method === 'DELETE' &&
         req.url ===
-            '/v1/task-sources/00000000-0000-4000-8000-000000000020?phase=hold' &&
+            '/v1/task-sources/00000000-0000-4000-8000-000000000020?legacyProjectId=' +
+                executionProject +
+                '&phase=hold' &&
         req.headers['user-agent']?.startsWith('Go-http-client/') &&
         /^[a-f0-9-]{36}$/.test(req.headers['idempotency-key'] ?? '')
     ) {
@@ -142,10 +209,25 @@ const execution = createServer(async (req, res) => {
         return;
     }
     if (
+        req.method === 'GET' &&
+        req.url ===
+            '/v1/task-sources/00000000-0000-4000-8000-000000000020/deletion?legacyProjectId=' +
+                executionProject
+    ) {
+        res.end(JSON.stringify({ runCount: 2, diffCount: 1, blockers: [] }));
+        return;
+    }
+    if (
         req.method === 'POST' &&
         req.url === '/v1/account/drain' &&
         req.headers['user-agent']?.startsWith('Go-http-client/')
     ) {
+        if (spaceConfigured && !spaceDrainStarted) {
+            spaceDrainStarted = true;
+            await new Promise((resolve) => {
+                releaseSpaceDrain = resolve;
+            });
+        }
         res.writeHead(204).end();
         return;
     }
@@ -154,7 +236,9 @@ const execution = createServer(async (req, res) => {
         req.url === '/v1/account/purge' &&
         req.headers['user-agent']?.startsWith('Go-http-client/')
     ) {
-        res.end(JSON.stringify({ complete: true }));
+        const complete = !spaceConfigured || releaseSpacePurge;
+        if (complete) purgedOwners.add(req.headers['x-bento-owner-id']);
+        res.writeHead(complete ? 200 : 202).end(JSON.stringify({ complete }));
         return;
     }
     res.writeHead(404).end('{}');
@@ -222,7 +306,6 @@ async function startEntry() {
             {
                 env: {
                     ...process.env,
-                    BENTO_ONE_MODE: 'http',
                     BENTO_ONE_TWO_URL: executionOrigin,
                     BENTO_ONE_TWO_BEARER: 'fixture-execution',
                     ...(spaceConfigured
@@ -302,11 +385,6 @@ function startupDiagnostics({ code, signal, stdout, stderr }) {
             /Workspace auth build artifacts are unavailable/,
             'auth-artifacts-unavailable',
         ],
-        [
-            /Invalid Bento task entry configuration or listener unavailable\./,
-            'task-entry-startup-failed',
-        ],
-        [/Bento task entry \(http\) listening on/, 'task-entry-listening'],
         [/ERR_MODULE_NOT_FOUND/, 'node-module-not-found'],
         [
             /Bento local OIDC discovery did not become ready\./,
@@ -336,6 +414,7 @@ async function waitReady() {
                     startupDiagnostics(result),
             );
         }
+        let ready = false;
         try {
             const statuses = await Promise.all(
                 ['/', '/api/session', '/auth'].map(async (path) => {
@@ -344,21 +423,64 @@ async function waitReady() {
                     return response.status;
                 }),
             );
-            const legacy = await globalThis.fetch(
-                'http://127.0.0.1:4101/api/space',
+            const health = await globalThis.fetch(
+                'http://127.0.0.1:4102/healthz',
                 {
                     signal: globalThis.AbortSignal.timeout(1000),
                 },
             );
-            await legacy.body?.cancel();
-            if (statuses.join(',') === '200,401,200' && legacy.status === 401)
-                return;
+            if (statuses.join(',') === '200,401,200' && health.status === 204) {
+                ready = true;
+            }
         } catch {
             // The loopback listeners may still be starting.
+        }
+        if (ready) {
+            await assertGoProcess();
+            console.log('One Go API process with legacy API ports closed');
+            return;
         }
         await delay(250);
     }
     throw new Error('Image entrypoint did not become ready');
+}
+
+async function assertGoProcess() {
+    for (const port of [4101, 4103]) {
+        await assert.rejects(
+            globalThis.fetch('http://127.0.0.1:' + port, {
+                signal: globalThis.AbortSignal.timeout(1000),
+            }),
+            (error) => error.cause?.code === 'ECONNREFUSED',
+        );
+    }
+    const processes = new Map();
+    for (const pid of await readdir('/proc')) {
+        if (!/^\d+$/.test(pid)) continue;
+        try {
+            const status = await readFile('/proc/' + pid + '/status', 'utf8');
+            const name = /^Name:\s+(\S+)/m.exec(status)?.[1];
+            const parent = /^PPid:\s+(\d+)/m.exec(status)?.[1];
+            processes.set(pid, { name, parent });
+        } catch (error) {
+            if (error.code !== 'ENOENT' && error.code !== 'ESRCH') throw error;
+        }
+    }
+    const pending = [String(entry.child.pid)];
+    const descendants = [];
+    while (pending.length) {
+        const parent = pending.pop();
+        for (const [pid, info] of processes) {
+            if (info.parent !== parent) continue;
+            pending.push(pid);
+            descendants.push(info.name);
+        }
+    }
+    assert.equal(
+        descendants.filter((name) => name === 'bento-web-api').length,
+        1,
+    );
+    assert.ok(!descendants.includes('node'));
 }
 
 async function waitExit() {
@@ -493,37 +615,15 @@ async function login(grant) {
     return value;
 }
 
-async function binding() {
-    const row = await status(
-        globalThis.fetch(accounts + '/oidc', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                issuer: fixture.issuer,
-                subject,
-                account: oidcFixtureEmail,
-            }),
-        }),
+async function binding(value) {
+    lastProjectOwner = undefined;
+    await status(
+        request('/api/projects', { headers: { Cookie: value } }),
         200,
-        'Bound account',
+        'Read projects with the persisted account',
     );
-    const identity = await row.json();
-    assert.equal(identity.account, oidcFixtureEmail);
-    assert.equal(identity.closed, false);
-    assert.match(identity.ownerId, /^[a-f0-9]{48}$/);
-    await checkOwner(identity.ownerId, false);
-    return identity.ownerId;
-}
-
-async function checkOwner(ownerId, closed) {
-    const row = await status(
-        globalThis.fetch(accounts + '/by-owner/' + ownerId),
-        200,
-        'Account by owner',
-    );
-    const result = await row.json();
-    assert.equal(result.ownerId, ownerId);
-    assert.equal(result.closed, closed);
+    assert.match(lastProjectOwner, /^[a-f0-9]{48}$/);
+    return lastProjectOwner;
 }
 
 async function checkAsset(path, file, value = '') {
@@ -597,7 +697,7 @@ async function checkRuntime() {
     await status(callback(first), 401, 'Callback replay');
     assert.equal(fixture.tokenRequests(), 1);
     await checkAsset('/auth', 'account.html', firstSession);
-    const ownerId = await binding();
+    const ownerId = await binding(firstSession);
     checkEndSession(
         await status(submit('/api/oidc/logout', firstSession), 303, 'Logout'),
     );
@@ -615,7 +715,7 @@ async function checkRuntime() {
     const afterRestart = await login(
         await authorize(request('/api/oidc/start'), 'after-restart'),
     );
-    assert.equal(await binding(), ownerId);
+    assert.equal(await binding(afterRestart), ownerId);
 
     await status(
         submit(
@@ -642,25 +742,10 @@ async function checkRuntime() {
     await waitReady();
     const closed = await authorize(request('/api/oidc/start'), 'closed');
     await status(callback(closed), 401, 'Closed identity denied after restart');
-    await checkOwner(ownerId, true);
     const deadline = Date.now() + 15_000;
-    let purgePending = true;
-    while (purgePending && Date.now() < deadline) {
-        const response = await status(
-            globalThis.fetch('http://127.0.0.1:4103/internal/account-purges'),
-            200,
-            'Account purge queue',
-        );
-        purgePending = (await response.json()).some(
-            (item) => item.ownerId === ownerId,
-        );
-        if (purgePending) await delay(200);
-    }
-    assert.equal(
-        purgePending,
-        false,
-        'Go schedules and completes account purge',
-    );
+    while (!purgedOwners.has(ownerId) && Date.now() < deadline)
+        await delay(200);
+    assert.ok(purgedOwners.has(ownerId), 'Go schedules account purge');
 }
 
 async function checkSpaceReads() {
@@ -668,14 +753,25 @@ async function checkSpaceReads() {
     const value = await login(
         await authorize(request('/api/oidc/start'), 'space-reads'),
     );
-    const owner = await binding();
+    const owner = await binding(value);
     const project = '00000000-0000-4000-8000-000000000020';
     const file = '00000000-0000-4000-8000-000000000021';
     const db = new DatabaseSync(entry.spaceDb);
     try {
-        db.prepare(
-            'INSERT INTO space_projects (id,owner,name) VALUES (?,?,?)',
-        ).run(project, owner, 'Smoke Space');
+        const projectRegistration = await status(
+            request('/api/space/projects', {
+                method: 'POST',
+                headers: {
+                    Cookie: value,
+                    Origin: origin,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ id: project, name: 'Smoke Space' }),
+            }),
+            200,
+            'Go registers a space project',
+        );
+        assert.deepEqual(await projectRegistration.json(), { id: project });
         db.prepare(
             'INSERT INTO space_uploads (id,project,owner,path,size,manifest,state,expires) VALUES (?,?,?,?,?,?,?,?)',
         ).run(
@@ -783,6 +879,57 @@ async function checkSpaceReads() {
         );
         // Give the API time to persist the ready receipt and release the pin.
         await delay(250);
+        const projectPath = '/api/space/projects/' + project;
+        const initializationHeaders = {
+            ...uploadHeaders,
+            'Idempotency-Key': 'workspace-init-smoke',
+        };
+        const initialize = () =>
+            request(projectPath + '/execution', {
+                method: 'POST',
+                headers: initializationHeaders,
+                body: JSON.stringify({ fileIds: [emptyFile] }),
+            });
+        const enrolled = await status(
+            initialize(),
+            202,
+            'Go enrolls project initialization',
+        );
+        assert.equal((await enrolled.json()).state, 'validating');
+        const initializationCutoff = Date.now() + 10_000;
+        let detail;
+        do {
+            const response = await status(
+                request(projectPath, { headers }),
+                200,
+                'Space project detail',
+            );
+            detail = await response.json();
+            if (detail.execution.state !== 'ready') await delay(250);
+        } while (
+            detail.execution.state !== 'ready' &&
+            Date.now() < initializationCutoff
+        );
+        assert.equal(detail.execution.state, 'ready');
+        assert.equal(detail.execution.projectId, executionProject);
+        const replay = await status(
+            initialize(),
+            200,
+            'Go replays project initialization',
+        );
+        assert.equal((await replay.json()).state, 'ready');
+        const impact = await status(
+            request(projectPath + '/deletion', { headers }),
+            200,
+            'Go combines local and upstream deletion impact',
+        );
+        assert.deepEqual(await impact.json(), {
+            fileCount: 2,
+            uploadCount: 0,
+            runCount: 2,
+            diffCount: 1,
+            blockers: [],
+        });
         const deleteRequest = () =>
             request('/api/space/files/' + emptyFile, {
                 method: 'DELETE',
@@ -838,6 +985,106 @@ async function checkSpaceReads() {
                 .prepare('SELECT id FROM space_retired_upload_ids WHERE id=?')
                 .get(file),
         );
+        const retainedProject = '00000000-0000-4000-8000-000000000031';
+        const retainedFile = '00000000-0000-4000-8000-000000000032';
+        db.prepare('INSERT INTO space_projects VALUES (?,?,?)').run(
+            retainedProject,
+            owner,
+            'Closing Space',
+        );
+        db.prepare(
+            `INSERT INTO space_uploads (id,project,owner,path,size,manifest,state,expires)
+            VALUES (?,?,?,'retained.txt',0,'[]','saved',0)`,
+        ).run(retainedFile, retainedProject, owner);
+        const addTask = db.prepare(`INSERT INTO space_tasks
+            (id,owner,spaceId,key,hash,name,fileIds,state,canonicalBody,lastError)
+            VALUES (?,?,?,?,?,'Closing Snapshot',?,?,?,NULL)`);
+        const pinned = '00000000-0000-4000-8000-000000000036';
+        const closing = await authorize(
+            submit('/api/oidc/close', value, 'confirmed=yes'),
+            'close-space',
+        );
+        checkEndSession(
+            await status(
+                callback(closing, value),
+                303,
+                'Close workspace with snapshot intents',
+            ),
+        );
+        await status(session(value), 401, 'Workspace session revoked');
+        const drainCutoff = Date.now() + 10_000;
+        while (!spaceDrainStarted && Date.now() < drainCutoff) await delay(250);
+        assert.ok(spaceDrainStarted, 'Go initiates Orchestrator drain');
+        assert.ok(
+            db
+                .prepare(
+                    'SELECT owner FROM space_draining_owners WHERE owner=?',
+                )
+                .get(owner),
+        );
+        addTask.run(
+            closedSnapshot,
+            owner,
+            retainedProject,
+            closedSnapshotKey,
+            'hash',
+            JSON.stringify([retainedFile]),
+            'submitted',
+            JSON.stringify({ inputDigest: closedSnapshotDigest }),
+        );
+        addTask.run(
+            pinned,
+            owner,
+            retainedProject,
+            'pinned-key',
+            'hash',
+            JSON.stringify([retainedFile]),
+            'pinned',
+            null,
+        );
+        const pin = db.prepare('INSERT INTO space_task_inputs VALUES (?,?,1)');
+        pin.run(closedSnapshot, retainedFile);
+        pin.run(pinned, retainedFile);
+        releaseSpaceDrain();
+        const reconcileCutoff = Date.now() + 10_000;
+        const task = db.prepare(
+            'SELECT state,lastError FROM space_tasks WHERE id=?',
+        );
+        while (
+            task.get(closedSnapshot)?.lastError !== 'owner_closed' &&
+            Date.now() < reconcileCutoff
+        )
+            await delay(250);
+        assert.equal(closedSnapshotReceipts, 1);
+        assert.equal(task.get(closedSnapshot)?.state, 'submitted');
+        assert.equal(task.get(pinned)?.state, 'abandoned');
+        assert.equal(
+            db
+                .prepare(
+                    'SELECT readPinned FROM space_task_inputs WHERE taskId=?',
+                )
+                .get(pinned)?.readPinned,
+            0,
+        );
+        assert.equal(purgedOwners.has(owner), false);
+        releaseSpacePurge = true;
+        const cleanupCutoff = Date.now() + 10_000;
+        const retired = db.prepare(
+            'SELECT id FROM space_retired_upload_ids WHERE id=?',
+        );
+        while (!retired.get(retainedFile) && Date.now() < cleanupCutoff)
+            await delay(250);
+        assert.ok(purgedOwners.has(owner));
+        assert.ok(retired.get(retainedFile));
+        while (task.get(closedSnapshot) && Date.now() < cleanupCutoff)
+            await delay(250);
+        assert.equal(task.get(closedSnapshot), undefined);
+        assert.equal(
+            db
+                .prepare('SELECT id FROM space_projects WHERE id=?')
+                .get(retainedProject),
+            undefined,
+        );
     } finally {
         db.close();
     }
@@ -857,7 +1104,7 @@ try {
     } else if (spaceConfigured) {
         await checkSpaceReads();
         console.log(
-            'SQLite space overview, signed read redirects and deletion protection passed',
+            'Go space registration, initialization, upload, deletion, snapshots and account cleanup passed',
         );
     } else {
         await checkRuntime();
@@ -866,6 +1113,7 @@ try {
         );
     }
 } finally {
+    releaseSpaceDrain?.();
     try {
         await stopEntry();
     } finally {

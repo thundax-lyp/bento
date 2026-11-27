@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -471,8 +472,12 @@ func (s spaceSnapshots) submit(w http.ResponseWriter, r *http.Request, owner, id
 			return nil
 		}
 		return spaceImmediate(ctx, s.db, func(conn *sql.Conn) error {
-			_, err := conn.ExecContext(ctx, "UPDATE space_tasks SET state='abandoned',lastError=? WHERE id=? AND owner=?", code, id, owner)
-			if err == nil {
+			result, err := conn.ExecContext(ctx, "UPDATE space_tasks SET state='abandoned',lastError=? WHERE id=? AND owner=? AND state='submitted'", code, id, owner)
+			if err != nil {
+				return err
+			}
+			count, err := result.RowsAffected()
+			if err == nil && count == 1 {
 				_, err = conn.ExecContext(ctx, "UPDATE space_task_inputs SET readPinned=0 WHERE taskId=?", id)
 			}
 			return err
@@ -488,15 +493,128 @@ func (s spaceSnapshots) submit(w http.ResponseWriter, r *http.Request, owner, id
 			return nil
 		}
 		return spaceImmediate(ctx, s.db, func(conn *sql.Conn) error {
-			_, err := conn.ExecContext(ctx, "UPDATE space_tasks SET state=?,lastError=NULL WHERE id=? AND owner=?", next, id, owner)
+			result, err := conn.ExecContext(ctx, `
+				UPDATE space_tasks SET state=?,lastError=NULL
+				WHERE id=? AND owner=? AND state IN ('submitted','failed')`, next, id, owner)
 			if err != nil {
 				return err
 			}
-			if next == "ready" {
+			count, err := result.RowsAffected()
+			if err == nil && count == 1 && next == "ready" {
 				_, err = conn.ExecContext(ctx, "UPDATE space_task_inputs SET readPinned=0 WHERE taskId=?", id)
 			}
 			return err
 		})
 	}
 	return s.backend.forwardTask(w, r, owner, op)
+}
+
+func (s spaceSnapshots) settleProject(ctx context.Context, owner, project string) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM space_tasks WHERE owner=? AND spaceId=? AND state IN ('pinned','frozen','submitted') AND lastError IS NOT 'owner_closed'`, owner, project)
+	if err != nil {
+		return err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	if rows.Err() != nil {
+		return rows.Err()
+	}
+	request := (&http.Request{Method: http.MethodPost}).WithContext(ctx)
+	for _, id := range ids {
+		if err := s.advance(nil, request, owner, id); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s spaceSnapshots) drainOwner(ctx context.Context, owner string) error {
+	if err := spaceImmediate(ctx, s.db, func(conn *sql.Conn) error {
+		if _, err := conn.ExecContext(ctx, `UPDATE space_task_inputs SET readPinned=0
+    WHERE taskId IN (SELECT id FROM space_tasks WHERE owner=? AND state IN ('pinned','frozen'))`, owner); err != nil {
+			return err
+		}
+		_, err := conn.ExecContext(ctx, `UPDATE space_tasks SET state='abandoned',lastError='owner_closed'
+    WHERE owner=? AND state IN ('pinned','frozen')`, owner)
+		return err
+	}); err != nil {
+		return err
+	}
+	type intent struct{ id, key, space, body string }
+	rows, err := s.db.QueryContext(ctx, `SELECT id,key,spaceId,canonicalBody FROM space_tasks
+   WHERE owner=? AND state='submitted' AND lastError IS NOT 'owner_closed'`, owner)
+	if err != nil {
+		return err
+	}
+	var pending []intent
+	for rows.Next() {
+		var row intent
+		if err := rows.Scan(&row.id, &row.key, &row.space, &row.body); err != nil {
+			rows.Close()
+			return err
+		}
+		pending = append(pending, row)
+	}
+	rows.Close()
+	if rows.Err() != nil {
+		return rows.Err()
+	}
+	request := (&http.Request{Method: http.MethodGet}).WithContext(ctx)
+	for _, row := range pending {
+		var input struct {
+			Digest string `json:"inputDigest"`
+		}
+		if json.Unmarshal([]byte(row.body), &input) != nil || !taskHex.MatchString(input.Digest) {
+			return backendUnavailable
+		}
+		var accepted bool
+		op := taskRequest{action: "list", path: "/v1/tasks", query: url.Values{"creationKey": {row.key}}}
+		op.accept = func(value any) error {
+			items := value.(map[string]any)["items"].([]any)
+			if len(items) > 1 {
+				return backendUnavailable
+			}
+			state, last := "abandoned", any("owner_closed")
+			if len(items) == 1 {
+				receipt := items[0].(map[string]any)
+				if receipt["id"] != row.id || receipt["sourceSpaceId"] != row.space || receipt["inputDigest"] != input.Digest {
+					return backendUnavailable
+				}
+				state = receipt["status"].(string)
+				if state == "ready" || state == "failed" {
+					last = nil
+				} else {
+					state = "submitted"
+				}
+			}
+			err := spaceImmediate(ctx, s.db, func(conn *sql.Conn) error {
+				changed, err := conn.ExecContext(ctx, `UPDATE space_tasks SET state=?,lastError=? WHERE owner=? AND id=? AND state='submitted'`, state, last, owner, row.id)
+				if err != nil {
+					return err
+				}
+				count, err := changed.RowsAffected()
+				if err == nil && count == 1 && (state == "abandoned" || state == "ready") {
+					_, err = conn.ExecContext(ctx, "UPDATE space_task_inputs SET readPinned=0 WHERE taskId=?", row.id)
+				}
+				return err
+			})
+			accepted = err == nil
+			return err
+		}
+		if err := s.backend.forwardTask(nil, request, owner, op); err != nil {
+			return err
+		}
+		if !accepted {
+			return backendUnavailable
+		}
+	}
+	return nil
 }

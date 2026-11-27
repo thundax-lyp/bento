@@ -5,9 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"log"
-	"net"
 	"net/http"
-	"net/http/httputil"
 	"net/url"
 	"os"
 	"os/signal"
@@ -24,82 +22,55 @@ func run() error {
 	defer stop()
 
 	mux := http.NewServeMux()
-	var database *sql.DB
-	done := make(chan error, 2)
-	proxy := httputil.NewSingleHostReverseProxy(&url.URL{Scheme: "http", Host: "127.0.0.1:4101"})
-	proxy.ErrorHandler = func(w http.ResponseWriter, _ *http.Request, _ error) {
-		http.Error(w, "Bento API unavailable", http.StatusBadGateway)
+	host := os.Getenv("BENTO_MYSQL_HOST")
+	cfg := mysql.NewConfig()
+	cfg.Net = "tcp"
+	cfg.Addr = host
+	cfg.User = os.Getenv("BENTO_MYSQL_USER")
+	cfg.Passwd = os.Getenv("BENTO_MYSQL_PASSWORD")
+	cfg.DBName = os.Getenv("BENTO_MYSQL_DATABASE")
+	cfg.Timeout, cfg.ReadTimeout, cfg.WriteTimeout = 3*time.Second, 5*time.Second, 5*time.Second
+	if host == "" || cfg.User == "" || cfg.Passwd == "" || cfg.DBName == "" {
+		return errors.New("incomplete MySQL account configuration")
 	}
-	mux.Handle("/api/", proxy)
-	mux.Handle("/auth", proxy)
-	mux.Handle("/auth/", proxy)
+	connector, err := mysql.NewConnector(cfg)
+	if err != nil {
+		return errors.New("invalid MySQL account configuration")
+	}
+	database := sql.OpenDB(connector)
+	defer database.Close()
+	database.SetMaxOpenConns(8)
+	startup, cancel := context.WithTimeout(ctx, 30*time.Second)
+	err = initializeAccounts(startup, database, os.Getenv("BENTO_ONE_ACCOUNTS_FILE"))
+	cancel()
+	if err != nil {
+		return errors.New("could not initialize MySQL accounts; check connectivity, schema and invitation file")
+	}
 
-	if host := os.Getenv("BENTO_MYSQL_HOST"); host != "" {
-		cfg := mysql.NewConfig()
-		cfg.Net = "tcp"
-		cfg.Addr = host
-		cfg.User = os.Getenv("BENTO_MYSQL_USER")
-		cfg.Passwd = os.Getenv("BENTO_MYSQL_PASSWORD")
-		cfg.DBName = os.Getenv("BENTO_MYSQL_DATABASE")
-		cfg.Timeout, cfg.ReadTimeout, cfg.WriteTimeout = 3*time.Second, 5*time.Second, 5*time.Second
-		if cfg.User == "" || cfg.Passwd == "" || cfg.DBName == "" {
-			return errors.New("incomplete MySQL account configuration")
-		}
-		connector, err := mysql.NewConnector(cfg)
-		if err != nil {
-			return errors.New("invalid MySQL account configuration")
-		}
-		db := sql.OpenDB(connector)
-		database = db
-		defer db.Close()
-		db.SetMaxOpenConns(8)
-		startup, cancel := context.WithTimeout(ctx, 30*time.Second)
-		err = initializeAccounts(startup, db, os.Getenv("BENTO_ONE_ACCOUNTS_FILE"))
-		cancel()
-		if err != nil {
-			return errors.New("could not initialize MySQL accounts; check connectivity, schema and invitation file")
-		}
-		internalMux := http.NewServeMux()
-		store := accounts{db: db}
-		store.register(internalMux)
-		if os.Getenv("BENTO_GO_AUTH") == "1" {
-			space, err := registerGoAuth(ctx, mux, internalMux, store)
-			if err != nil {
-				return err
-			}
-			if space != nil {
-				defer space.db.Close()
-				if space.stopReconciliation != nil {
-					defer space.stopReconciliation()
-				}
-			}
-			if os.Getenv("BENTO_ONE_MODE") == "http" {
-				backend, err := workspaceProjectBackend()
-				if err != nil {
-					return err
-				}
-				stopSweep := (accountSweep{store: store, backend: backend, space: space}).start(ctx)
-				defer stopSweep()
-			}
-		}
-		internal := &http.Server{Handler: internalMux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second}
-		listener, err := net.Listen("tcp", "127.0.0.1:4103")
-		if err != nil {
-			return err
-		}
-		defer internal.Close()
-		go func() { done <- internal.Serve(listener) }()
+	store := accounts{db: database}
+	backend, err := workspaceProjectBackend()
+	if err != nil {
+		return err
 	}
+	space, err := registerGoAuth(ctx, mux, store, backend)
+	if err != nil {
+		return err
+	}
+	if space != nil {
+		defer space.db.Close()
+		defer space.stopReconciliation()
+	}
+	stopSweep := (accountSweep{store: store, backend: backend, space: space}).start(ctx)
+	defer stopSweep()
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
-		if database != nil {
-			probe, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-			defer cancel()
-			if err := database.PingContext(probe); err != nil {
-				w.WriteHeader(http.StatusServiceUnavailable)
-				return
-			}
+		probe, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := database.PingContext(probe); err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
 		}
+
 		w.WriteHeader(http.StatusNoContent)
 	})
 
@@ -108,6 +79,7 @@ func run() error {
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 35 * time.Second,
 		IdleTimeout: 60 * time.Second,
 	}
+	done := make(chan error, 1)
 	go func() { done <- server.ListenAndServe() }()
 	select {
 	case err := <-done:
@@ -119,11 +91,11 @@ func run() error {
 	}
 }
 
-func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store accounts) (*spaceReader, error) {
+func registerGoAuth(ctx context.Context, public *http.ServeMux, store accounts, backend projectService) (*spaceReader, error) {
 	var space *spaceReader
 	origin := strings.TrimSuffix(os.Getenv("BENTO_ONE_ORIGIN"), "/")
 	if origin == "" {
-		origin = "http://127.0.0.1:4101"
+		origin = "http://127.0.0.1:4102"
 	}
 	publicURL, err := secureOIDCURL(origin, true)
 	if err != nil || publicURL.Path != "" || publicURL.RawQuery != "" {
@@ -142,7 +114,7 @@ func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store 
 		identity, err := newKeycloak(ctx, oidcOptions{
 			origin: origin, issuer: issuer, clientID: os.Getenv("BENTO_OIDC_CLIENT_ID"),
 			clientSecret: os.Getenv("BENTO_OIDC_CLIENT_SECRET"), organization: os.Getenv("BENTO_OIDC_ORGANIZATION"),
-			spaceRequired: spaceRequired, assetsDir: "/app/apps/workspace/workspace-auth/dist",
+			spaceRequired: spaceRequired, assetsDir: "apps/workspace/workspace-auth/dist",
 			spaceOrigin: strings.TrimSuffix(os.Getenv("BENTO_SPACE_S3_ENDPOINT"), "/"),
 		}, store, sessions)
 		if err != nil {
@@ -163,51 +135,67 @@ func registerGoAuth(ctx context.Context, public, internal *http.ServeMux, store 
 			})
 		}
 	}
-	if os.Getenv("BENTO_ONE_MODE") == "http" {
-		backend, err := workspaceProjectBackend()
+	backend.routes(public, sessions, origin)
+	var snapshots *spaceSnapshots
+	database, endpoint, bucket := os.Getenv("BENTO_SPACE_DB"), os.Getenv("BENTO_SPACE_S3_ENDPOINT"), os.Getenv("BENTO_SPACE_S3_BUCKET")
+	if database != "" || endpoint != "" || bucket != "" {
+		if database == "" || database == ":memory:" || endpoint == "" || bucket == "" {
+			return nil, errors.New("incomplete space configuration")
+		}
+		endpointURL, err := secureOIDCURL(strings.TrimSuffix(endpoint, "/"), loopback(publicURL.Hostname()))
+		if err != nil || endpointURL.Path != "" || endpointURL.RawQuery != "" ||
+			(!loopback(publicURL.Hostname()) && endpointURL.Hostname() == publicURL.Hostname()) {
+			return nil, errors.New("invalid Workspace object storage origin")
+		}
+		storage, err := newSpaceStorage(ctx, strings.TrimSuffix(endpoint, "/"), bucket, os.Getenv("AWS_REGION"))
 		if err != nil {
-			return nil, err
+			return nil, errors.New("could not initialize Workspace object storage")
 		}
-		backend.routes(public, sessions, origin)
-		var snapshots *spaceSnapshots
-		database, endpoint, bucket := os.Getenv("BENTO_SPACE_DB"), os.Getenv("BENTO_SPACE_S3_ENDPOINT"), os.Getenv("BENTO_SPACE_S3_BUCKET")
-		if database != "" || endpoint != "" || bucket != "" {
-			if database == "" || database == ":memory:" || endpoint == "" || bucket == "" {
-				return nil, errors.New("incomplete space configuration")
-			}
-			storage, err := newSpaceStorage(ctx, strings.TrimSuffix(endpoint, "/"), bucket, os.Getenv("AWS_REGION"))
-			if err != nil {
-				return nil, errors.New("could not initialize Workspace object storage")
-			}
-			db, err := openSpaceDB(database, "rw")
-			if err != nil {
-				return nil, errors.New("could not initialize Workspace space reader")
-			}
-			space = &spaceReader{db: db, storage: storage}
-			space.routes(public, sessions, backend)
-			snapshots = &spaceSnapshots{db: db, read: storage.read, backend: backend}
-			locks := &spaceLocks{}
-			space.locks = locks
-			uploads := spaceUploads{db: db, storage: storage, now: time.Now}
-			uploads.routes(public, sessions, backend, origin, locks)
-			stopUploads := uploads.startReconciliation(ctx, locks, backend)
-			stopSnapshots := snapshots.startReconciliation(ctx)
-			space.stopReconciliation = func() {
-				stopSnapshots()
-				stopUploads()
-			}
-			registerSpaceUploadBridge(internal, db, storage, backend, locks)
+		db, err := openSpaceDB(database, "rwc")
+		if err != nil {
+			return nil, errors.New("could not initialize Workspace space reader")
 		}
-		backend.taskRoutes(public, sessions, origin, snapshots)
+		if err := initializeSpace(ctx, db); err != nil {
+			db.Close()
+			return nil, errors.New("could not initialize Workspace space schema")
+		}
+		space = &spaceReader{db: db, storage: storage}
+
+		space.routes(public, sessions, backend)
+		snapshots = &spaceSnapshots{db: db, read: storage.read, backend: backend}
+		locks := &spaceLocks{}
+		space.locks = locks
+		execution := spaceExecution{db: db, storage: storage, backend: backend, wake: make(chan struct{}, 1), locks: locks}
+		execution.routes(public, sessions, origin)
+		uploads := spaceUploads{db: db, storage: storage, now: time.Now}
+		uploads.routes(public, sessions, backend, origin, locks)
+		projectDeletion := spaceProjectDeletion{db: db, storage: storage, backend: backend, locks: locks}
+		projectDeletion.routes(public, sessions, origin, snapshots)
+		stopUploads := uploads.startReconciliation(ctx, locks, backend, func(ctx context.Context) {
+			projectDeletion.reconcile(ctx, snapshots)
+		})
+		stopSnapshots := snapshots.startReconciliation(ctx)
+		stopExecution := execution.start(ctx)
+		space.stopReconciliation = func() {
+			stopExecution()
+			stopSnapshots()
+			stopUploads()
+		}
 	}
-	internal.HandleFunc("GET /internal/session", func(w http.ResponseWriter, r *http.Request) {
-		session, err := sessions.current(r)
-		if err != nil {
+	backend.taskRoutes(public, sessions, origin, snapshots)
+	public.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		backend.responseHeaders(w)
+		if r.Method == http.MethodPost && (len(r.Header.Values("Origin")) != 1 || r.Header.Get("Origin") != origin) {
+			authFailure(w, &requestFailure{400, "invalid_origin", "请从任务入口提交请求。"})
+			return
+		}
+		if _, err := sessions.current(r); err != nil {
 			authFailure(w, err)
 			return
 		}
-		authJSON(w, 200, map[string]string{"ownerId": session.Owner, "account": session.Name})
+		authFailure(w, notFound)
 	})
+	public.HandleFunc("/auth/", func(w http.ResponseWriter, r *http.Request) { authFailure(w, notFound) })
 	return space, nil
 }
 

@@ -506,9 +506,10 @@ func (s projectService) forwardTask(w http.ResponseWriter, r *http.Request, owne
 					body["reason"] = reason
 				}
 			}
-			if w != nil {
-				authJSON(w, status, map[string]any{"error": body})
+			if w == nil {
+				return &requestFailure{status, code, body["message"]}
 			}
+			authJSON(w, status, map[string]any{"error": body})
 			return nil
 		}
 		return projectBackendError(status, "")

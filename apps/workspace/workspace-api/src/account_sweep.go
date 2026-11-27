@@ -54,13 +54,15 @@ func (s accountSweep) run(ctx context.Context) {
 }
 
 func (s accountSweep) purge(ctx context.Context, row purge) bool {
-	if !s.fenceLegacy(ctx, row.Owner, false) {
-		return false
+	if s.space != nil {
+		if _, err := s.space.db.ExecContext(ctx, "INSERT OR IGNORE INTO space_draining_owners VALUES (?)", row.Owner); err != nil {
+			return false
+		}
 	}
 	if _, err := s.accountRequest(ctx, row.Owner, "/v1/account/drain", nil); err != nil {
 		return false
 	}
-	if !s.fenceLegacy(ctx, row.Owner, true) {
+	if s.space != nil && !s.drainSpace(ctx, row.Owner) {
 		return false
 	}
 	complete, err := s.accountRequest(ctx, row.Owner, "/v1/account/purge", []byte("{}"))
@@ -97,28 +99,23 @@ func (s accountSweep) purge(ctx context.Context, row purge) bool {
 	return err == nil && complete
 }
 
-// Until the remaining legacy route work is retired, its activity and Task-drain
-// counters must be consulted before cleaning an account.
-func (s accountSweep) fenceLegacy(ctx context.Context, owner string, confirmed bool) bool {
-	body, err := json.Marshal(struct {
-		Owner     string `json:"owner"`
-		Confirmed bool   `json:"confirmed"`
-	}{owner, confirmed})
-	if err != nil {
+func (s accountSweep) drainSpace(ctx context.Context, owner string) bool {
+	lock, token := "execution:"+owner, uuid.NewString()
+	if !s.space.locks.acquire(lock, token) {
 		return false
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"http://127.0.0.1:4101/internal/workspace/drain", bytes.NewReader(body))
-	if err != nil {
+	defer s.space.locks.release(lock, token)
+	snapshots := spaceSnapshots{db: s.space.db, backend: s.backend}
+	if err := snapshots.drainOwner(ctx, owner); err != nil {
 		return false
 	}
-	request.Header.Set("Content-Type", "application/json")
-	response, err := s.backend.client.Do(request)
-	if err != nil {
-		return false
-	}
-	defer response.Body.Close()
-	return response.StatusCode == http.StatusNoContent
+	var pending bool
+	err := s.space.db.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM space_project_deletions WHERE owner=? AND phase<>'deleted')
+			OR EXISTS(SELECT 1 FROM space_file_deletions d JOIN space_uploads u ON u.id=d.fileId WHERE u.owner=?)
+			OR EXISTS(SELECT 1 FROM space_tasks WHERE owner=? AND state IN ('pinned','frozen','submitted') AND lastError IS NOT 'owner_closed')`,
+		owner, owner, owner).Scan(&pending)
+	return err == nil && !pending
 }
 
 func (s accountSweep) accountRequest(ctx context.Context, owner, path string, raw []byte) (bool, error) {
