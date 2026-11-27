@@ -6,7 +6,7 @@ import test, { before, after } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { createClient } from '@connectrpc/connect';
-import { prepareReuseSdk } from '@/apps/orchestrator/acceptance/worker-reuse/sdk.ts';
+import { prepareReuseSdk } from '@/apps/orchestrator/orchestrator-execution-host/acceptance/worker-reuse/sdk.ts';
 import { createRunSdkTransport } from './sdk-transport.ts';
 import {
     openPtcProcess,

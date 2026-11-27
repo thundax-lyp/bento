@@ -17,15 +17,15 @@ RUN apt-get update \
     && corepack enable \
     && install -d -o node -g node -m 0700 /data
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/orchestrator/package.json ./apps/orchestrator/
+COPY apps/orchestrator/orchestrator-execution-host/package.json ./apps/orchestrator/orchestrator-execution-host/
 COPY apps/worker/package.json ./apps/worker/
 RUN pnpm --filter @bento/orchestrator... install --prod --frozen-lockfile
 COPY register-paths.mjs ./
 COPY shared/text-snapshot.ts ./shared/
 COPY apps/orchestrator/index.ts ./apps/orchestrator/
-COPY apps/orchestrator/src/execution-service/*.ts ./apps/orchestrator/src/execution-service/
-COPY apps/orchestrator/src/execution-service/store/*.ts ./apps/orchestrator/src/execution-service/store/
-COPY apps/orchestrator/src/openshell/*.ts ./apps/orchestrator/src/openshell/
+COPY apps/orchestrator/orchestrator-execution-host/src/execution-service/*.ts ./apps/orchestrator/orchestrator-execution-host/src/execution-service/
+COPY apps/orchestrator/orchestrator-execution-host/src/execution-service/store/*.ts ./apps/orchestrator/orchestrator-execution-host/src/execution-service/store/
+COPY apps/orchestrator/orchestrator-execution-host/src/openshell/*.ts ./apps/orchestrator/orchestrator-execution-host/src/openshell/
 COPY apps/worker/*.ts ./apps/worker/
 COPY --from=go-build /out/bento-orchestrator /usr/local/bin/bento-orchestrator
 USER node

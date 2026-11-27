@@ -9,11 +9,11 @@ import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
-import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
+import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
 import {
     serveExecution,
     snapshotSha256,
-} from '@/apps/orchestrator/src/execution-service/service.ts';
+} from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
 import test from 'node:test';
 import { mockAccounts } from '../src/account-store.ts';
 import { sessionAuth } from '../src/auth.ts';
@@ -306,7 +306,7 @@ test(
         const origin = 'http://127.0.0.1:8080';
         const controllerPath = fileURLToPath(
             new URL(
-                '../../../orchestrator/tests/execution-service/fixtures/controller.ts',
+                '../../../orchestrator/orchestrator-execution-host/tests/execution-service/fixtures/controller.ts',
                 import.meta.url,
             ),
         );

@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { setTimeout as delay } from 'node:timers/promises';
-import { localHost } from '@/apps/orchestrator/src/execution-service/local.ts';
-import { serveExecution } from '@/apps/orchestrator/src/execution-service/service.ts';
+import { localHost } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/local.ts';
+import { serveExecution } from '@/apps/orchestrator/orchestrator-execution-host/src/execution-service/service.ts';
 import { mockAccounts } from '@/apps/workspace/workspace-api/src/account-store.ts';
 import {
     demoAccounts,

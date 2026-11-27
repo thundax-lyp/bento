@@ -5,8 +5,8 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
-import type { PreparedSdk } from '@/apps/orchestrator/tests/openshell/binding-grants/sdk.ts';
-import { prepareReuseSdk } from '@/apps/orchestrator/acceptance/worker-reuse/sdk.ts';
+import type { PreparedSdk } from '@/apps/orchestrator/orchestrator-execution-host/tests/openshell/binding-grants/sdk.ts';
+import { prepareReuseSdk } from '@/apps/orchestrator/orchestrator-execution-host/acceptance/worker-reuse/sdk.ts';
 import { createRunSdkTransport } from './sdk-transport.ts';
 
 let sdk: PreparedSdk;
