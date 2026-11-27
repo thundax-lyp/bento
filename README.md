@@ -17,6 +17,9 @@
 | [`apps/workspace/workspace-auth`](apps/workspace/workspace-auth/package.json)                                 | 个人端独立构建的认证页面，由个人端 API 提供                            |
 | [`apps/workspace/workspace-web`](apps/workspace/workspace-web/README.md)                                      | 个人端 `/` 工作区，包含本地启动和浏览器验收命令                        |
 | [`apps/workspace/workspace-api`](apps/workspace/workspace-api/README.md)                                      | 个人端 HTTP API，Go 提供入口和 MySQL 账号仓储，TypeScript 处理业务请求 |
+| [`apps/admin/admin-api/src`](apps/admin/admin-api/src/main.go)                                                | 管理端 Go API                                                          |
+| [`apps/admin/admin-auth/src`](apps/admin/admin-auth/src/login.html)                                           | 管理端登录页面                                                         |
+| [`apps/admin/admin-web/src`](apps/admin/admin-web/src/index.html)                                             | 管理端 Workspace 诊断页面                                              |
 | [`apps/orchestrator/orchestrator-control`](apps/orchestrator/orchestrator-control/go.mod)                     | Go Temporal 编排、Run 与授权账本                                       |
 | [`apps/worker`](apps/worker/run-worker.ts)                                                                    | DSH Worker 进程入口                                                    |
 | [`apps/orchestrator/orchestrator-execution-host`](apps/orchestrator/orchestrator-execution-host/package.json) | TypeScript 执行 HTTP 服务、Worker 管理和 OpenShell 适配                |
